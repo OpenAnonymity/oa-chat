@@ -1568,7 +1568,9 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
             `${messageId}-${entry.laneId || entry.label || 'lane'}`,
             entry.streamingReasoning || false,
             processContentWithLatex,
-            entry.reasoningDuration
+            entry.reasoningDuration,
+            null,
+            { withheld: entry.reasoningWithheld === true }
         );
         const contentHtml = entry.response
             ? `
@@ -1699,7 +1701,9 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
             `${messageId}-synthesis`,
             synthesis.streamingReasoning || false,
             processContentWithLatex,
-            synthesis.reasoningDuration
+            synthesis.reasoningDuration,
+            null,
+            { withheld: synthesis.reasoningWithheld === true }
         );
         const contentHtml = synthesis.response
             ? `

@@ -412,8 +412,53 @@ for (const withheld of [true, false]) {
 // The header says Thinking only while thinking events arrive. A reply whose
 // text stalls with the stream still open (keep-alives only) shows a quiet
 // "Still working…" line under the answer after 1 s, gone when text resumes.
-const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const stillWorkingCalls = paints => paints.filter(call => call.name === 'setStreamingStillWorking').map(call => call.args[1]);
+
+test('returning to a stalled chat restores its line and live reasoning state, and completion releases it', async t => {
+    const restore = installBrowser();
+    t.after(restore);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { app, paints } = streamHarness(async (...args) => {
+        await args[9]('First thought.');
+        await args[3]('First answer.');
+        const [messageId] = app.streamingReplyDisplays.keys();
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, false);
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'other'), null);
+        app.state.currentSessionId = 'other';
+        t.mock.timers.tick(1000);
+        assert.deepEqual(stillWorkingCalls(paints), [], 'no paint in the other chat');
+        app.state.currentSessionId = 'one';
+        app.restoreStreamingReplyDisplays('one');
+        assert.deepEqual(stillWorkingCalls(paints), [true]);
+        await args[9](' More thought.');
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, true);
+        assert.deepEqual(stillWorkingCalls(paints), [true, false]);
+        await args[3](' More answer.');
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, false);
+        return { completionTokens: 9, finishReason: 'stop' };
+    });
+    await app.sendMessage();
+    assert.equal(app.streamingReplyDisplays.size, 0);
+    t.mock.timers.tick(2000);
+    assert.deepEqual(stillWorkingCalls(paints), [true, false]);
+});
+
+test('first hidden reasoning after answer text creates a thinking header and suppresses the stall line', async t => {
+    const restore = installBrowser();
+    t.after(restore);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { app, paints } = streamHarness(async (...args) => {
+        await args[3]('Let me search.');
+        await args[9]('', { withheld: true });
+        t.mock.timers.tick(1000);
+        assert.deepEqual(stillWorkingCalls(paints), []);
+        assert.ok(paints.some(call => call.name === 'updateWithheldReasoning' && call.args[1]));
+        await args[3](' Found it.');
+        return { completionTokens: 9, finishReason: 'stop' };
+    });
+    await app.sendMessage();
+    assert.ok(paints.some(call => call.name === 'settleThinkingHeader'));
+});
 
 test('the header settles at the first answer words for every model', async t => {
     const restore = installBrowser();
@@ -432,12 +477,13 @@ test('the header settles at the first answer words for every model', async t => 
 });
 
 test('text that stalls for 1 s shows "Still working…", and it leaves as soon as text resumes', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const restore = installBrowser();
     let duringStall = null, afterResume = null;
     const { app, paints } = streamHarness(async (...args) => {
         const chunk = args[3];
         await chunk('Here is a quick roundup.');
-        await pause(1150);
+        t.mock.timers.tick(1000);
         duringStall = stillWorkingCalls(paints);
         await chunk(' More headlines.');
         afterResume = stillWorkingCalls(paints);
@@ -451,28 +497,30 @@ test('text that stalls for 1 s shows "Still working…", and it leaves as soon a
 });
 
 test('a short pause never shows the line, and it never shows after the reply ends', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const restore = installBrowser();
     const { app, paints } = streamHarness(async (...args) => {
         const chunk = args[3];
         await chunk('One.');
-        await pause(500);
+        t.mock.timers.tick(999);
         await chunk(' Two.');
         return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
     });
     t.after(restore);
     await app.sendMessage();
-    await pause(1100);
+    t.mock.timers.tick(1001);
     assert.deepEqual(stillWorkingCalls(paints), []);
 });
 
 test('thinking during a pause is shown by the header, not the line', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const restore = installBrowser();
     const { app, paints } = streamHarness(async (...args) => {
         const [chunk, reasoning] = [args[3], args[9]];
         await reasoning('', { withheld: true });
         await chunk('I will look it up.');
         await reasoning('', { withheld: true, resumed: true });
-        await pause(1150);
+        t.mock.timers.tick(1000);
         await chunk('\n\nA few repos match.');
         return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
     });
@@ -483,15 +531,18 @@ test('thinking during a pause is shown by the header, not the line', async t => 
 });
 
 test('Stop during a stall clears the line', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const restore = installBrowser();
     const { app, paints } = streamHarness(async (...args) => {
         const [chunk, abortController] = [args[3], args[7]];
         await chunk('Partial');
-        setTimeout(() => app.stopSessionStreaming('one'), 1150);
-        return untilStopped(abortController);
+        const stopped = untilStopped(abortController);
+        t.mock.timers.tick(1000);
+        app.stopSessionStreaming('one');
+        return stopped;
     });
     t.after(restore);
     await app.sendMessage();
-    await pause(50);
+    t.mock.timers.tick(200);
     assert.deepEqual(stillWorkingCalls(paints), [true, false]);
 });
