@@ -63,6 +63,14 @@ Star/date filters are applied before text matching. Lazy
 `conversationSearchText` backfill only runs for sessions that already pass those
 session-level filters and only when a text query is present.
 
+Successful chat deletion removes the row from both the paged session list and
+the cached search/filter results before rendering. The completed-deletion ID is
+also recorded before rendering: a search reading an older database snapshot
+skips it, and checks collected matches again before publishing or caching them.
+This covers deletion while lazy indexing or a cooperative batch yield is in
+progress. Failed storage deletion keeps the chat searchable. These guards use
+the existing in-memory deletion set; no new storage or telemetry is added.
+
 ## Efficiency Tradeoff
 
 The current approach stores up to about 12k characters per session in IndexedDB.

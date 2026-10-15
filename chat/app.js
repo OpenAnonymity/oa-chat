@@ -9454,8 +9454,14 @@ class ChatApp {
         if (!this.state.sessionsById.has(sessionId)) return;
         const generation = this.sessionNavigationGeneration;
         await chatDB.deleteSessionWithMessages(sessionId);
+        // Search has its own cache and may still be scanning an older snapshot.
+        // Retire the ID before rendering or letting that scan publish results.
+        this.deletedSessionIds.add(sessionId);
         this.state.sessions = this.state.sessions.filter(session => session.id !== sessionId);
         this.state.sessionsById.delete(sessionId);
+        if (Array.isArray(this.state.sessionSearchResults)) {
+            this.state.sessionSearchResults = this.state.sessionSearchResults.filter(session => session.id !== sessionId);
+        }
         this.sessionScrollPositions.delete(sessionId);
         this.sessionPromptScrollAnchors.delete(sessionId);
         if (this.activePromptScroll?.sessionId === sessionId) this.detachPromptSlideUpEffect();
@@ -10695,6 +10701,7 @@ class ChatApp {
                     return;
                 }
                 processed += 1;
+                if (this.deletedSessionIds.has(session.id)) continue;
 
                 let sessionToMatch = session;
                 const filterMatches = this.sessionMatchesSidebarFilters(sessionToMatch);
@@ -10728,11 +10735,13 @@ class ChatApp {
             return;
         }
 
-        this.state.sessionSearchResults = results;
+        // A deletion can finish while another row's index or a batch yield is awaited.
+        const liveResults = results.filter(session => !this.deletedSessionIds.has(session.id));
+        this.state.sessionSearchResults = liveResults;
         this.state.sessionSearchResultsQuery = query;
         this.state.sessionSearchResultsKey = resultsKey;
         this.state.sessionSearchPending = false;
-        this.cacheSessions(results);
+        this.cacheSessions(liveResults);
         this.renderSessions();
     }
 
