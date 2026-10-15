@@ -177,6 +177,14 @@ function holdsPayout(record) {
         && ['closed', 'closed_unconfirmed'].includes(record.phase);
 }
 
+// Who a withdrawal pays. A sponsored one is bound to a holding address (its
+// `destination`) and names the person's address in `payout`: that is the one
+// a row says. Anything else pays its destination.
+function recordPayee(record) {
+    if (record && record.feePayer === 'payout' && /^0x[0-9a-fA-F]{40}$/.test(record.payout || '')) return record.payout;
+    return record?.destination || null;
+}
+
 // What a row of Payment history adds when there is nothing to add.
 const NO_RECORD_EXTRAS = Object.freeze({
     label: null, badge: null, noteHtml: '', actionsHtml: '', hideActions: false, hideError: false
@@ -265,6 +273,13 @@ export default class AccountModal {
         this.overlay?.addEventListener?.('toggle', rememberView, true);
         this.view = 'balance';
         this.withdrawMode = 'mutual';
+        // Who pays the network fee of the withdrawal in front of the person
+        // ('wallet' unless they chose 'payout') and the last quote for it.
+        // Nothing is asked of the relay until they choose to pay from the
+        // withdrawal; a form that is only opened sends nothing.
+        this.sponsoredChoice = 'wallet';
+        this.sponsoredQuote = null;
+        this.sponsoredSeq = 0;
         this.busy = false;
         this.status = '';
         this.statusError = false;
@@ -1607,7 +1622,8 @@ export default class AccountModal {
                 formatMoney: units => this.formatWithdrawalAmount(units),
                 compact: address => zkapiClient.compact(address, 6),
                 txUrl: hash => this.paymentTransactionUrl(hash),
-                busy: this.busy === true
+                busy: this.busy === true,
+                method: getWalletMethod() === 'address' ? 'address' : 'metamask'
             });
             if (extras && typeof extras === 'object') return { ...NO_RECORD_EXTRAS, ...extras };
         } catch { /* The fallback below. */ }
@@ -1841,7 +1857,7 @@ export default class AccountModal {
                                 <div class="flex items-start justify-between gap-3">
                                     <div>
                                         <p class="text-xs font-medium text-foreground">${closed && !returned && !held ? 'Balance closed' : `Withdrawal · ${record.mode === 'escape' ? 'Escape hatch' : 'Mutual close'}`}</p>
-                                        <p class="mt-0.5 text-[11px] text-muted-foreground">${closed && !returned && !held ? 'Payment not verified' : `${zkapiClient.formatMoney(record.finalBalance)} ${returned ? 'returned to' : ['parked', 'restored'].includes(record.phase) ? 'set aside · to' : '· to'} ${record.destination ? zkapiClient.compact(record.destination, 6) : 'your saved destination'}`}</p>
+                                        <p class="mt-0.5 text-[11px] text-muted-foreground">${closed && !returned && !held ? 'Payment not verified' : `${zkapiClient.formatMoney(record.finalBalance)} ${returned ? 'returned to' : ['parked', 'restored'].includes(record.phase) ? 'set aside · to' : '· to'} ${recordPayee(record) ? zkapiClient.compact(recordPayee(record), 6) : 'your saved destination'}`}</p>
                                         <p class="mt-1 text-[11px] text-muted-foreground">${this.escapeHtml(this.paymentDate(record.createdAt))}</p>
                                     </div>
                                     ${extras.badge ? '<div class="flex shrink-0 flex-col items-end gap-1">' : ''}<span class="rounded-full ${returned ? 'badge-status-success' : 'bg-muted text-muted-foreground'} px-2 py-1 text-[10px]" ${record.mode === 'escape' && open && deadline && record.phase === 'pending' ? `data-zkapi-withdrawal-countdown="${deadline}" data-record-id="${this.escapeHtml(record.recordId)}" data-record-phase="pending"` : ''}>${progressLabel ? '<span class="mr-1 inline-block size-2 rounded-full bg-current animate-pulse motion-reduce:animate-none" aria-hidden="true"></span>' : ''}<span data-background-progress="${this.escapeHtml(record.recordId)}" ${progressLabel ? 'role="status"' : ''}>${this.escapeHtml(progressLabel || extras.label || (parkedNeedsCheck ? 'Checking balance' : this.withdrawalRecordLabel(record)))}</span></span>${extras.badge ? `<span class="rounded-full bg-amber-100 px-2 py-1 text-[10px] text-amber-800 dark:bg-amber-500/15 dark:text-amber-200" data-zkapi-record-badge>${this.escapeHtml(extras.badge)}</span></div>` : ''}
@@ -2248,6 +2264,121 @@ export default class AccountModal {
         } catch { return false; }
     }
 
+    // -- Paying the network fee from the withdrawal -----------------------------
+    // The facade's `sponsored` answers whether this version has it and quotes
+    // it (versioning/sponsoredFees.mjs). The dialog keeps only the choice and
+    // the last quote; the markup is the helpers' (ui.sponsoredFee).
+
+    sponsoredApi() {
+        try {
+            const sponsored = versionFacade()?.sponsored;
+            return sponsored && typeof sponsored.supported === 'function' && sponsored.supported() ? sponsored : null;
+        } catch { return null; }
+    }
+
+    // What a quote is for: the balance, how it leaves and who is paid. A quote
+    // of anything else is not this form's.
+    sponsoredKeyFor(mode) {
+        let noteId = '';
+        let destination = '';
+        try { noteId = zkapiClient.note?.note_id ?? ''; } catch { noteId = ''; }
+        if (getWalletMethod() === 'address') {
+            try { destination = withdrawalDestination(this); } catch { destination = ''; }
+        }
+        return `${noteId}|${mode}|${destination}`.toLowerCase();
+    }
+
+    sponsoredViewState(mode) {
+        const key = this.sponsoredKeyFor(mode);
+        const held = this.sponsoredQuote;
+        const current = held && held.key === key ? held : null;
+        return { choice: this.sponsoredChoice, status: current?.status || 'idle', quote: current?.quote || null, key };
+    }
+
+    // The fee choice for the form in front of the person: '' where there is
+    // nothing to choose (no such payment here, a plan that is already
+    // bound to how its fee is paid, the work already running, an upgrade).
+    renderSponsoredFee({ prepared = null, submissionActive = false, showJourney = false, upgrade = false } = {}) {
+        if (upgrade || submissionActive || showJourney || prepared) return '';
+        if (!this.sponsoredApi()) return '';
+        const ui = versionFacade()?.ui;
+        if (typeof ui?.sponsoredFee !== 'function') return '';
+        try {
+            const view = this.sponsoredViewState(this.withdrawMode);
+            return String(ui.sponsoredFee({
+                choice: view.choice, status: view.status, quote: view.quote, busy: this.busy === true,
+                method: getWalletMethod() === 'address' ? 'address' : 'metamask', mode: this.withdrawMode,
+                format: units => this.formatWithdrawalAmount(units)
+            }) || '');
+        } catch { return ''; }
+    }
+
+    // One explicit gesture: choosing to pay from the withdrawal asks the relay
+    // what it would cost. A later answer for another form (another mode,
+    // another balance) is dropped.
+    async refreshSponsoredQuote(mode = this.withdrawMode) {
+        const api = this.sponsoredApi();
+        if (!api || this.busy) return;
+        const key = this.sponsoredKeyFor(mode);
+        const sequence = this.sponsoredSeq = (Number(this.sponsoredSeq) || 0) + 1;
+        this.sponsoredQuote = { key, status: 'loading', quote: null };
+        this.render();
+        let quote;
+        try {
+            let owner = null;
+            let destination = null;
+            if (getWalletMethod() === 'address') {
+                owner = addressFundingWallet.address || null;
+                destination = withdrawalDestination(this);
+            } else {
+                // The account that signs it owns the holding address, so it
+                // must be the connected one; this is the choice's own prompt.
+                owner = await zkapiClient.connectWallet();
+                destination = zkapiClient.config?.prepared_withdrawal?.payout || null;
+            }
+            quote = await api.quote({ mode, destination, owner,
+                ...(getWalletMethod() === 'address' ? { provider: addressFundingWallet } : {}) });
+        } catch (error) {
+            quote = { available: false, reason: 'unknown',
+                text: walletErrorMessage(error) || 'Paying the network fee from this withdrawal isn’t available right now.' };
+        }
+        if (sequence !== this.sponsoredSeq) return;
+        this.sponsoredQuote = { key, status: quote?.available === true ? 'ready' : 'unavailable', quote };
+        if (this.isOpen) this.render();
+    }
+
+    // How this withdrawal's fee is paid, decided when it starts. null: from
+    // the wallet, as every withdrawal always was. A plan the SDK already bound
+    // to a holding address continues that way. Otherwise a person who chose
+    // to pay from the withdrawal needs a quote of what is about to start; a
+    // form whose quote is for something else is drawn again, not acted on.
+    sponsoredPlanFor(mode) {
+        const prepared = zkapiClient.config?.prepared_withdrawal;
+        const api = this.sponsoredApi();
+        if (prepared?.fee_payer === 'payout') {
+            const url = api?.bundlerUrl?.();
+            return { options: { fees: 'payout', ...(url ? { bundlerUrl: url } : {}) }, bounds: {} };
+        }
+        if (prepared || this.sponsoredChoice !== 'payout' || !api) return null;
+        const view = this.sponsoredViewState(mode);
+        if (view.status !== 'ready' || !view.quote) {
+            return { refused: 'The network fee has to be checked for this withdrawal first. Review it below, then continue.' };
+        }
+        const plan = api.plan(view.quote);
+        if (!plan) return { refused: 'Paying the network fee from this withdrawal isn’t available right now. You can pay it from your wallet instead.' };
+        return { options: plan.options, bounds: plan.sponsored };
+    }
+
+    // The words after a sponsored withdrawal that ended. Said from the
+    // result's own figures; none is guessed.
+    sponsoredOutcomeLine(result) {
+        const amounts = result && typeof result.amounts === 'object' ? result.amounts : null;
+        const units = value => (typeof value === 'string' && /^[0-9]{1,40}$/.test(value) ? (BigInt(value) / 1_000_000_000n).toString() : null);
+        const fee = amounts ? units(amounts.chargedWei) : null;
+        const feeText = fee !== null ? this.formatWithdrawalAmount(fee) : '';
+        return feeText && !/^[—–-]$/.test(feeText.trim()) ? ` The network fee, ${feeText}, was paid from the withdrawal.` : '';
+    }
+
     submitWithdrawal() {
         // A render or cross-tab refresh while the provider/settlement is
         // awaited cannot change the operation the person just chose.
@@ -2279,6 +2410,16 @@ export default class AccountModal {
         // whichever method was selected; the choice also says what it gives up.
         const forced = exit.choice === 'zero' || exit.choice === 'bound';
         if (forced) mode = 'escape';
+        // How the network fee is paid: from the withdrawal when the person
+        // chose that and was shown its fee for exactly this one.
+        const sponsored = this.sponsoredPlanFor(mode);
+        if (sponsored?.refused) {
+            this.outcome = { tone: 'error', message: sponsored.refused, view: this.view };
+            if (this.sponsoredChoice === 'payout') this.sponsoredQuote = null;
+            this.render();
+            if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(mode);
+            return undefined;
+        }
         // A choice is spent by the attempt it started: whatever is drawn next
         // (another balance with the same figure, a retry) starts from the
         // default again, and giving something up is chosen every time.
@@ -2298,6 +2439,8 @@ export default class AccountModal {
         if (exit.concededMax !== null) details.concededMax = exit.concededMax;
         // The prepared withdrawal the person looked at, where it is known.
         if (recheck && escapeIntent?.operationId) details.operationId = escapeIntent.operationId;
+        // The bounds of a sponsored fee, which the signer holds the operation to.
+        if (sponsored) details.sponsored = sponsored.bounds;
         // The balance this attempt is about, so a refusal of it is held for it.
         const aboutNote = noteId != null && /^[0-9]+$/.test(String(noteId)) ? Number(noteId) : null;
         const attempt = Number.isSafeInteger(aboutNote) ? { about: { noteId: aboutNote } } : {};
@@ -2328,15 +2471,39 @@ export default class AccountModal {
             // Or the figure it was drawn with can have moved in the meantime
             // (another chat settled, or a new one started).
             if (this.exitFigureMovedNow(exit.choice, exit.bound)) throw new Error(STALE_EXIT_CHOICE_LINE);
-            const options = escapeIntent
+            const base = escapeIntent
                 ? { destination: escapeIntent.destination, expectedWithdrawalOperationId: escapeIntent.operationId }
                 : getWalletMethod() === 'address' ? { destination: withdrawalDestination(this) } : undefined;
+            const options = sponsored ? { ...(base || {}), ...sponsored.options } : base;
             const result = await zkapiClient.withdraw(mode, report, forced ? { ...(options || {}), concede: exit.choice } : options);
+            // Done with this withdrawal's fee choice: the next one starts
+            // from the wallet again, as giving something up is.
+            this.sponsoredChoice = 'wallet';
+            this.sponsoredQuote = null;
             this.recordWithdrawalOutcome(result);
         }, details, attempt);
     }
 
     recordWithdrawalOutcome(result) {
+        // A sponsored withdrawal can end with the payout held at the service's
+        // contract (the address would not accept it) or waiting at the holding
+        // address; both are said before the ordinary "confirmed".
+        if (result?.paymasterCredited === true || result?.fundsWaitingInTransit === true) {
+            this.withdrawalCompleted = false;
+            this.withdrawalOutcomePending = true;
+            this.view = this.view === 'upgrade' ? 'upgrade' : 'withdrawals';
+            this.setStatus(result.paymasterCredited === true
+                ? `Withdrawal closed. The payout could not be sent to the address, so it is held for you. Claim it from Payment history.${this.sponsoredOutcomeLine(result)}`
+                : 'Withdrawal closed. The payout is waiting to be collected. Collect it from Payment history.');
+            return;
+        }
+        if (result?.status === 'collected') {
+            this.withdrawalCompleted = true;
+            this.withdrawalCompletedAt = Date.now();
+            this.withdrawalOutcomePending = false;
+            this.setStatus(`Payout collected and sent to your address.${this.sponsoredOutcomeLine(result)}`);
+            return;
+        }
         // A close whose payout the payment contract could only credit (the
         // address would not take it) is not a payout sent: it is claimed from
         // Payment history. Checked first, because that close names its
@@ -2355,7 +2522,7 @@ export default class AccountModal {
             this.withdrawalOutcomePending = false;
             // An upgrade stays on its own steps: the next one is Reload.
             this.view = this.view === 'upgrade' ? 'upgrade' : 'withdrawals';
-            this.setStatus('Withdrawal confirmed. Funds sent to your saved wallet address.');
+            this.setStatus(`Withdrawal confirmed. Funds sent to your saved wallet address.${result.userOpHash ? this.sponsoredOutcomeLine(result) : ''}`);
         } else if (result?.status === 'closed') {
             this.withdrawalCompleted = false;
             this.withdrawalOutcomePending = true;
@@ -2527,6 +2694,9 @@ export default class AccountModal {
         // again once a transaction is submitted.
         const exitChoice = submissionActive ? ''
             : this.renderExitChoice(this.currentVersion(), { offerChoice: !showJourney });
+        // Who pays the network fee, where there is a choice (a version with a
+        // sponsored withdrawal and a withdrawal not yet started).
+        const sponsoredFee = this.renderSponsoredFee({ prepared, submissionActive, showJourney, upgrade });
         return `
             <div class="zkapi-stack">
                 <div class="zkapi-balance-card">
@@ -2539,7 +2709,7 @@ export default class AccountModal {
                     ${notice && !showJourney ? `<p class="zkapi-note ${submissionActive || clearanceReserved ? '' : 'zkapi-note--attention'}">${notice}</p>` : ''}
                 </div>
                 ${prepared?.destination ? `<p class="zkapi-helper">To ${this.escapeHtml(zkapiClient.compact(prepared.destination, 9))}. This saved withdrawal keeps the same destination when you switch payment methods.</p>` : ''}
-                ${getWalletMethod() === 'metamask' && !submissionActive ? '<p class="zkapi-helper">Your MetaMask wallet pays the network fee separately.</p>' : ''}
+                ${getWalletMethod() === 'metamask' && !submissionActive && !sponsoredFee ? '<p class="zkapi-helper">Your MetaMask wallet pays the network fee separately.</p>' : ''}
                 ${showJourney ? `${methodLine}${this.renderJourney(journey, { detail: busyJourney ? '' : notice })}${exitChoice}${this.renderOutcome()}` : `
                 ${showMethod ? `<fieldset class="zkapi-section zkapi-choices" ${this.busy || submissionActive ? 'disabled' : ''}>
                     <legend class="zkapi-section-title">Withdrawal method</legend>
@@ -2551,7 +2721,7 @@ export default class AccountModal {
                         <input type="radio" name="zkapi-withdraw-mode" value="escape" ${this.withdrawMode === 'escape' ? 'checked' : ''} />
                         <span><strong>Escape hatch</strong><small>Unilateral recovery. Start now, wait ${zkapiClient.escapePeriodPhrase()}, then finalize.</small></span>
                     </label>
-                </fieldset>` : ''}${exitChoice}
+                </fieldset>` : ''}${exitChoice}${sponsoredFee}
                 ${submissionActive ? '' : `<label class="zkapi-check"><input id="zkapi-withdraw-confirm" type="checkbox" /><span>${upgrade ? 'I understand that withdrawing closes this private balance, and that I deposit again to finish upgrading.' : 'I understand that withdrawing closes this private balance.'}</span></label>`}
                 ${activeLease ? '<p data-active-lease-notice class="zkapi-note">The active chat key will settle automatically before withdrawal.</p>' : ''}
                 ${this.renderOutcome()}`}
@@ -2786,7 +2956,20 @@ export default class AccountModal {
             input.addEventListener('change', () => {
                 this.withdrawMode = input.value;
                 this.render();
+                // A quote is for one way of leaving: ask again for this one.
+                if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(this.withdrawMode);
             });
+        });
+        this.overlay.querySelectorAll('input[name="zkapi-sponsored-fee"]').forEach(input => {
+            input.addEventListener('change', () => {
+                if (this.busy) return;
+                this.sponsoredChoice = input.value === 'payout' ? 'payout' : 'wallet';
+                if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote();
+                else this.render();
+            });
+        });
+        this.overlay.querySelector('[data-zkapi-sponsored-retry]')?.addEventListener('click', () => {
+            if (!this.busy) void this.refreshSponsoredQuote();
         });
         const confirm = this.overlay.querySelector('#zkapi-withdraw-confirm');
         this.overlay.querySelector('#zkapi-use-escape-btn')?.addEventListener('click', () => {
@@ -2882,10 +3065,53 @@ export default class AccountModal {
         }, { kind: 'escape-finalize', title: 'Finishing account recovery', phase: 'wallet', blocksSend: true }));
         this.overlay.querySelectorAll('[data-finalize-withdrawal]').forEach(button => {
             button.addEventListener('click', () => this.run(async (report) => {
-                const result = await zkapiClient.finalizeEscape(button.dataset.finalizeWithdrawal, report);
+                // A sponsored escape finishes through the service's relay too:
+                // always the app's own route to it.
+                const url = versionFacade()?.sponsored?.bundlerUrl?.();
+                const finalizing = zkapiClient.withdrawals.find(entry => entry.recordId === button.dataset.finalizeWithdrawal);
+                const sponsoredRecord = finalizing?.feePayer === 'payout' && url;
+                const result = await zkapiClient.finalizeEscape(button.dataset.finalizeWithdrawal, report,
+                    sponsoredRecord ? { bundlerUrl: url } : undefined);
                 this.recordWithdrawalOutcome(result);
             }, { kind: 'escape-finalize', title: 'Finishing withdrawal', phase: 'wallet', withdrawalRecordId: button.dataset.finalizeWithdrawal },
             { about: { recordId: button.dataset.finalizeWithdrawal } }));
+        });
+        // The payout a sponsored withdrawal left at its holding address: the
+        // service's sponsored collection first (no ETH needed), or one
+        // transaction from the wallet.
+        this.overlay.querySelectorAll('[data-collect-transit]').forEach(button => {
+            button.addEventListener('click', () => {
+                const recordId = button.dataset.collectTransit;
+                const url = versionFacade()?.sponsored?.bundlerUrl?.();
+                return this.run(async (report) => {
+                    const result = await zkapiClient.collectTransitBalance(recordId, report, url ? { bundlerUrl: url } : {});
+                    this.recordWithdrawalOutcome(result);
+                }, { kind: 'transit-collect', title: 'Collecting payout', phase: 'wallet', withdrawalRecordId: recordId, blocksSend: false },
+                { about: { recordId } });
+            });
+        });
+        this.overlay.querySelectorAll('[data-sweep-transit]').forEach(button => {
+            button.addEventListener('click', () => {
+                const recordId = button.dataset.sweepTransit;
+                return this.run(async (report) => {
+                    const result = await zkapiClient.sweepTransit(recordId, report);
+                    if (result?.status === 'swept') this.setStatus('Payout collected and sent to your address.');
+                }, { kind: 'transit-sweep', title: 'Collecting payout', phase: 'wallet', withdrawalRecordId: recordId, blocksSend: false },
+                { about: { recordId } });
+            });
+        });
+        this.overlay.querySelectorAll('[data-claim-gasless-credit]').forEach(button => {
+            button.addEventListener('click', () => {
+                const recordId = button.dataset.claimGaslessCredit;
+                const record = zkapiClient.withdrawals.find(entry => entry.recordId === recordId);
+                const payee = recordPayee(record);
+                if (!payee) return undefined;
+                return this.run(async (report) => {
+                    const result = await zkapiClient.claimGaslessCredit(payee, report);
+                    if (result?.status === 'claimed') this.setStatus('Payout claimed and sent to your address.');
+                }, { kind: 'transit-claim', title: 'Claiming payout', phase: 'wallet', withdrawalRecordId: recordId, blocksSend: false },
+                { about: { recordId } });
+            });
         });
         this.overlay.querySelectorAll('[data-sync-withdrawal]').forEach(button => {
             button.addEventListener('click', () => this.run(async (report) => {

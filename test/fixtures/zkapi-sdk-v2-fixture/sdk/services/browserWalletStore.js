@@ -1,4 +1,4 @@
-// FIXTURE: stand-in for sdk/services/browserWalletStore.js (zkapi 0.2.0, 82c8504).
+// FIXTURE: stand-in for sdk/services/browserWalletStore.js (zkapi 0.2.0, branch v0.2, 4b955d9).
 //
 // The declaration lines, the lock literal and the channel literal below are the
 // real store's, character for character: the host's wallet database rename
@@ -158,6 +158,34 @@ export function createWalletChannel(deploymentId, onChange) {
 }
 
 export const PARK_REQUIRES_CLEARANCE_MESSAGE = 'Only a balance whose cooperative close the server granted can be set aside. Withdraw this balance first: its escape needs nothing from the server.';
+
+export const FINALIZATION_CLAIM_LIVE_MESSAGE = 'This escape is already awaiting MetaMask in this or another tab.';
+
+// The fields a sponsored (gasless) withdrawal adds to a plan or record; the real list.
+export const GASLESS_WITHDRAWAL_FIELDS = Object.freeze([
+    'feePayer', 'payout', 'transit', 'userOpHash', 'userOpHashes', 'staleUserOpHashes', 'userOpSuccess', 'chargedWei', 'owedPaidWei',
+    'receivedWei', 'paidOutWei', 'paymasterCredited', 'paymasterCreditedWei', 'initiationDebtWei', 'finalizeUserOpHash',
+    'finalizeUserOpHashes', 'finalizeUserOpPhase', 'forwardUserOpHash', 'forwardUserOpHashes', 'forwardUserOpPhase',
+    'finalizeRevertedUserOpHashes', 'forwardRevertedUserOpHashes',
+    'forwardTransactionHash', 'sweepTransactionHash', 'transitCreateTransactionHash', 'creditClaimTransactionHash',
+    'fundsWaitingInTransit', 'transitBalanceWei'
+]);
+
+/** Whether a prepared plan or a record pays its network fee from the payout through a transit account. */
+export function isGaslessWithdrawal(value) {
+    return value?.feePayer === 'payout' && /^0x[0-9a-fA-F]{40}$/.test(value?.transit?.account || '');
+}
+
+/** The gasless fields of a plan or record a detached record carries over (none for a wallet-paid one). */
+export function gaslessRecordFields(source) {
+    if (!isGaslessWithdrawal(source)) return {};
+    const fields = {};
+    for (const field of ['feePayer', 'payout', 'transit', 'userOpHash', 'userOpHashes', 'staleUserOpHashes', 'userOpSuccess', 'chargedWei',
+        'owedPaidWei', 'receivedWei', 'paidOutWei', 'paymasterCredited', 'paymasterCreditedWei', 'initiationDebtWei']) {
+        if (source[field] !== undefined) fields[field] = structuredClone(source[field]);
+    }
+    return fields;
+}
 
 // Everything else the real store exports (see the policy in fixtureSupport.js).
 export const {

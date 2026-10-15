@@ -566,3 +566,35 @@ test('the installed facade is the default, and the welcome panel path words the 
         assert.equal(versionUi.refusalMessage(new Error('insufficient funds')), null);
     });
 });
+
+// -- Sponsored withdrawals -------------------------------------------------------
+
+test('a sponsored withdrawal\'s errors are told in the product\'s words, the signer\'s own sentence alone', async () => {
+    const { sponsoredRefusalMessage, explainZkapiError, zkapiErrorMessage } = await import('../../chat/zkapi/services/zkapiErrorCopy.mjs');
+    const { SPONSORED_FEE_REFUSAL, SPONSORED_REFUSAL_MESSAGE } = await import('../../chat/zkapi/versioning/sponsored.mjs');
+    const gasless = (code, extra = {}) => Object.assign(new Error('The bundler refused eth_sendUserOperation: AA25 invalid account nonce'),
+        { name: 'ZkapiGaslessError', code, ...extra });
+    // The SDK wraps a refusal of the host transport in its own sentence.
+    const wrapped = Object.assign(new Error(`The bundler refused eth_sendUserOperation: ${SPONSORED_FEE_REFUSAL}`),
+        { name: 'ZkapiGaslessError', code: 'bundler_rejected' });
+    assert.equal(sponsoredRefusalMessage(wrapped), SPONSORED_FEE_REFUSAL);
+    assert.equal(zkapiErrorMessage(wrapped), SPONSORED_FEE_REFUSAL);
+    const plain = Object.assign(new Error(`Something: ${SPONSORED_REFUSAL_MESSAGE}`), { code: 4100 });
+    assert.equal(sponsoredRefusalMessage(plain), SPONSORED_REFUSAL_MESSAGE);
+    // A code of the SDK's, told in words with no protocol names.
+    for (const code of ['gasless_op_expired', 'paymaster_underfunded', 'bundler_unavailable', 'escape_not_due', 'gasless_op_reverted']) {
+        const text = sponsoredRefusalMessage(gasless(code));
+        assert.ok(text, code);
+        assert.doesNotMatch(text, /bundler|paymaster|user operation|4337|AA\d\d|0x[0-9a-f]{8}/i, `${code}: ${text}`);
+    }
+    // The error is reworded in place, like the other expected states.
+    const error = gasless('gasless_op_expired');
+    assert.equal(explainZkapiError(error), error);
+    assert.match(error.message, /took too long to send and has to be prepared again/);
+    // Anything that is not one is left alone, and so is a code from another family.
+    assert.equal(sponsoredRefusalMessage(new Error('The wallet could not do that.')), null);
+    assert.equal(sponsoredRefusalMessage(Object.assign(new Error('nope'), { code: 'bundler_unavailable' })), null);
+    assert.equal(sponsoredRefusalMessage(null), null);
+    assert.equal(sponsoredRefusalMessage('text'), null);
+    assert.equal(sponsoredRefusalMessage(Object.assign(new Error('x'), { name: 'ZkapiGaslessError', code: 'some_new_code' })), null);
+});

@@ -1,3 +1,140 @@
+## 2026-10-14: Sponsored (gasless) withdrawals built into the host (dormant)
+
+A person can now choose "Paid from this withdrawal" under "Network fee" in the
+withdrawal form, and the network fee comes out of the payout through the SDK's
+ERC-4337 path (`fees: 'payout'`). It exists in code, tests and docs; **no shipped
+build offers it**, because no reviewed profile pins a `gasless` object (the
+`0.2.0` profiles carry `gasless: null`) and version 2 is still `pending`.
+The guide's [11.7](ZKAPI_VERSIONING.md#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal)
+is the full record; the trust model is in
+[PRIVACY_MODEL.md](PRIVACY_MODEL.md#sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal);
+this entry is the handoff.
+
+- **What was built.**
+  - `chat/zkapi/versioning/sponsored.mjs` (route rules, profile check, the
+    signer's refusal words), `versioning/sponsoredFees.mjs` (offer test, quote,
+    plan, refusal copy; reached as `facade.sponsored`), `components/SponsoredFee.js`
+    (the choice, via `ui.sponsoredFee`), `services/sponsoredOperation.mjs` (the
+    independent verifier) and the signer changes in
+    `services/addressFundingProvider.mjs` / `addressFunding.js`.
+  - The route: `<proxyPath>_bundler` to the profile's pinned `bundler_url`, an
+    exact-path rewrite generated *before* the version's `:path*` rewrite. The
+    page never contacts the relay directly and not before the choice is made.
+  - Rows: "Payout waiting" (Collect payout, free; Collect with my wallet),
+    "Payout held" (Claim payout), fee lines; holdings treat a pending sponsored
+    payout as a credit; the other-versions reader reads the six new fields.
+  - No new `requiredWiring` name: the feature is optional, so `WIRED` is
+    unchanged and version 2's row demands nothing new.
+- **Non-obvious things to know.**
+  - **The key signs a hash blind.** `personal_sign` receives only 32 bytes, so
+    the Send Ethereum signer cannot judge the operation when it signs. It
+    judges at `eth_sendUserOperation`, the only exit, against the running
+    action's authorization. A signature that is never sent is inert. Do not
+    "improve" this by judging inside `personal_sign`: it cannot see the operation.
+  - **A send without a running action is refused on purpose.** The SDK re-sends
+    journaled operations from background checks; those are not something the
+    person confirmed. The wording is `SPONSORED_NOT_CONFIRMED_REFUSAL`.
+  - **MetaMask mode is not verified before signing.** The wallet shows an opaque
+    hash (as upstream does) and exposes no `zkapiBundler`, so the SDK uses its
+    own transport against the app's route. The host can only pass the shown fee
+    cap and `allowExpensiveGas: false`. An upstream hook (`zkapiOperation`
+    beside `personal_sign`) is the proposed fix; it is not implemented.
+  - **Address mode has no wallet-paid transit recovery.** Collect (the service
+    pays) is offered; "Collect with my wallet" and "Claim payout" are drawn for
+    the MetaMask method only, because the signer has no authorization kind for
+    them. A held credit of an address-mode withdrawal needs MetaMask to claim.
+  - **A quote is for one balance, mode and receiving address**
+    (`sponsoredKeyFor`). Changing the mode with the choice on asks again; a start
+    without a quote for exactly this form is refused and the quote is requested.
+  - **`maxCostWei` has 50% headroom** over the quoted reservation; fees move
+    between a quote and a send. The pinned policy bounds it too.
+  - **`callProfile.sponsored` is the switch.** Remove the key from the adapter
+    and the facade, signer and rows all fall back to the wallet-paid path.
+  - The dialog's `Object.create(AccountModal.prototype)` test fixtures have no
+    constructor state; `sponsoredSeq` is read as `(Number(this.sponsoredSeq)||0)+1`.
+- **Tests.** `sponsored-operation` (Foundry vectors in
+  `test/fixtures/zkapi-sponsored-vectors.json`), `address-funding-sponsored`,
+  `sponsored-fees`, `sponsored-withdrawal-real-sdk` (needs a successor SDK) and
+  additions to the error-copy, record-extras, holdings, other-version-history and
+  version-ui-render tests. Whole suite (after rebasing onto the Sepolia-token removal): 2361 pass,
+  0 fail, 18 skipped without a successor SDK; with one, 2427 of 2430 payment
+  tests pass and the one failure is
+  the by-design SDK half of the recheck.
+- **A real build was rehearsed** with a synthetic deployed profile that pins a
+  `gasless` object: the registry check and both networks pass, the object reaches
+  `browser-config.json` unchanged, and the generated rewrites list
+  `/zkapi-deployment-v2c/_bundler` before `/zkapi-deployment-v2c/:path*`.
+- **Not proven:** a real paymaster, factory or relay (the tests use the SDK's own
+  scripted chain and bundler), the MetaMask path against a real wallet, and the
+  operator's profile.
+- **Open, unchanged:** a published revision, a deployed profile with a paymaster
+  per network, the SDK half of the recheck, the operator's manifest. Nothing
+  here is committed or pushed.
+
+## 2026-10-14: The version 2 reference moves to the `v0.2` branch (`4b955d9`)
+
+The successor SDK this work targets is no longer the `82c8504` archive: it is
+`v0.2` of the local zkapi repository at `4b955d9`, fourteen commits later and
+still unpublished. The guide's [11.6](ZKAPI_VERSIONING.md#116-the-reference-revision-82c8504-to-4b955d9)
+is the full record; this is the handoff.
+
+- **Nothing in the registry moved.** Version 2 is still `pending` with `null`
+  pins: the commit is not on GitHub, and a git dependency that cannot be
+  fetched fails `npm install` for everyone. The app a person gets is the app
+  they got before. What changed is the reference: fixtures, test expectations,
+  words and docs.
+- **What `4b955d9` changes for this host.**
+  - A `dev` bundle builds for mainnet (the SDK build's chain 1 clause is gone;
+    upstream's deploy script, operator images and companion build take
+    `ALLOW_DEV_SETUP=1`). The host's handling of the old refusal stays, for a
+    pin of an older revision, and a test variant re-inserts the clause
+    (`insertPreRelaxationMainnetRefusal`) so that path is still exercised.
+  - Gasless withdrawals over ERC-4337 exist in the SDK (`fees: 'payout'`, a
+    `gasless` profile object, `./gasless`). **This entry first left them
+    unused; the entry above it (same day) built them into the host**, dormant
+    until a deployed profile pins a paymaster. The SDK default is still
+    `fees: 'wallet'`, and the shipped profile pins none.
+  - The only non-gasless SDK change is an idempotent deposit confirmation
+    (`da9a642`): a deposit confirmed by the background reconcile no longer
+    fails the foreground `deposit()`. **It needed a host change:** it added two
+    deposit-named runtime methods, `confirmedDepositFor` and
+    `completeConfirmedDeposit`, which `confirmDeposit` calls. Unclassified,
+    deny by default wraps a `/deposit/i` method, so a closed (exit-only)
+    version would have refused them and a deposit that was already sent could
+    not have been completed there. They are in `recoveryEntryPoints.runtime` of
+    the concession adapter now, and `zkapi-deposit-guard-successor.test.mjs`
+    reads the real singletons so the next new name is found before activation.
+    The fixture alone could not find it: it only has the names someone copied
+    into it.
+  - Store: database name, version, object stores, lock and channel unchanged;
+    slot keys unchanged (the upstream store snapshot file is byte-identical);
+    `storeSha256` to pin is `f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce`.
+  - Snapshots and records only gained keys (`gasless`, `fee_payer`, `payout`,
+    `transit`, `user_op_hash`, `user_op_phase`).
+  - The SDK half of `withdrawal-operation-recheck` is still missing and the
+    same 9 of 25 hunks of `wallet-recovery-v1` match; the rehearsal's first
+    test still fails by design.
+- **What the repository now holds.**
+  - `test/fixtures/zkapi-sdk-v2-fixture/`: the fixture follows `4b955d9`
+    (its build has no chain 1 clause, profiles carry `gasless: null`, the
+    `./gasless` subpath and the new members exist, 26 name lists match the real
+    package). Its pins in the README and `real-sdk-exports.json` moved.
+  - `test/fixtures/zkapi-v2-real-shapes/`: regenerated from `4b955d9`.
+  - `zkapiVersionedBuild.test.js` covers mainnet on `dev` end to end with the
+    accepting SDK and the older refusal with the variant;
+    `zkapi-sdk-v2-fixture.test.mjs` pins the new behavior.
+- **A real build was rehearsed** in a scratch copy with a synthetic deployed
+  profile (details and limits in 11.6): the registry check passes with the two
+  `dev` warnings and no refusal line, and both networks build. It is evidence
+  about this host and the package's own build, not about a deployment.
+- **To read the reference without switching a checkout:**
+  `git -C <zkapi checkout> archive v0.2 | tar -x -C <empty dir>` and point
+  `ZKAPI_V2_SDK_DIR` at that directory.
+- **Open, unchanged:** a published revision, a deployed profile per network, the
+  SDK half of the recheck as a patch bound to the commit that is published, the
+  recovery review redone against it, the operator's manifest. Do not write the
+  patch against the moving branch.
+
 ## 2026-10-13: Single-party `dev` proof setup accepted on both networks (limitation noted)
 
 The owner decided that the host accepts the single-party development proof setup
@@ -20,14 +157,15 @@ this entry is the handoff.
     emitted), `setupId` and `proofSetup` on every `zkapi.versions[]` entry of
     `build.json` (`null` for version 1), and the registry check's stderr
     warnings, which do not change its exit code. The app itself says nothing.
-  - The SDK package's own build still refuses a `dev` bundle for chain 1
-    (`development_setup_on_mainnet`, `sdk/build.mjs` lines 108 to 111). The host
-    passes that refusal on with its own words and the SDK's error as `cause`
-    and never bypasses it, so a mainnet build of a `dev` row stops in
-    `verifyPlanOnDisk` before `dist/` is touched (a package that exports no
-    `assertDeployableProfile` is refused by its own build at emission instead).
-    The registry check probes the installed package and warns about it
-    (`--package-root` names where to look).
+  - The `82c8504` snapshot's own SDK build refused a `dev` bundle for chain 1
+    (`development_setup_on_mainnet`); `4b955d9` (branch `v0.2`) dropped that
+    clause (see the [2026-10-14 entry](#2026-10-14-the-version-2-reference-moves-to-the-v02-branch-4b955d9)).
+    The host passes a pin that still has it on with its own words and the SDK's
+    error as `cause` and never bypasses it, so a mainnet build of a `dev` row
+    on such a pin stops in `verifyPlanOnDisk` before `dist/` is touched (a
+    package that exports no `assertDeployableProfile` is refused by its own
+    build at emission instead). The registry check probes the installed package
+    and warns about it (`--package-root` names where to look).
   - The forward-only check now holds the proof setup and key pins of a live row
     (`identity_changed`): a vault on `dev` keys is not re-pinned to `mpc-1` by
     editing its profile. The way out is a further row.
@@ -78,10 +216,12 @@ this entry is the handoff.
 - **No in-app disclosure.** A person using a version on `dev` is not told. A
   disclosure would be a product change with copy on every surface that names a
   version.
-- **Upstream changes a mainnet `dev` vault needs** are listed in the guide's
-  table and are not made here. In the snapshot the ceremony has not produced
-  keys (`CEREMONY_VK_KECCAK256` is `None`), so there is no `mpc-1` bundle to
-  pin either; both options wait on upstream for different things.
+- **Upstream steps a mainnet `dev` vault needs** are listed in the guide's
+  table. Since `4b955d9` they are explicit opt-ins (`ALLOW_DEV_SETUP=1` for the
+  vault script, the operator images and the companion build) and not refusals;
+  none is made in this repository. The ceremony has not produced keys
+  (`CEREMONY_VK_KECCAK256` is `None`), so there is no `mpc-1` bundle to pin
+  either; both options wait on upstream for different things.
 
 ## 2026-10-13: A balance the page holds and cannot read
 
@@ -432,7 +572,8 @@ host write to the wallet slot in
 [ZKAPI_RECOVERY_REVIEW.md](ZKAPI_RECOVERY_REVIEW.md#boot-time-draft-discard-2026-10-10).
 
 - **State.** The versioning machinery is implemented; version 2 (circuit
-  `zkapi-v2-concession-v1`, SDK `0.2.0` at `82c8504`, unpublished) is `pending`
+  `zkapi-v2-concession-v1`, SDK `0.2.0`, reference revision `4b955d9` on the
+  local zkapi `v0.2` branch, unpublished) is `pending`
   on both networks and cannot be activated by a data edit (its host behaviors
   are implemented since the
   [2026-10-13 entry](#2026-10-13-version-2-protocol-wiring-history-and-give-up-still-dormant);
@@ -451,7 +592,7 @@ host write to the wallet slot in
   `withdrawal-operation-recheck`, `other-deployment-withdrawals`,
   `other-deployment-credits`). The row still needs an SDK commit with deployed
   profiles for the chosen proof setup (`mpc-1` or `dev`, both accepted; the
-  `0.2.0` snapshot ships a `dev` bundle and placeholder profiles), a recovery
+  `0.2.0` package ships a `dev` bundle and placeholder profiles), a recovery
   patch that provides the SDK half of the
   withdrawal recheck (`PATCH_COVERAGE`; the registry check and the build refuse
   the row without it), the operator's finalized manifest and schedule, and
@@ -538,7 +679,7 @@ host write to the wallet slot in
   [2026-10-13 entry on a balance the page cannot read](#2026-10-13-a-balance-the-page-holds-and-cannot-read).
 - **Fixture upkeep**: after any SDK snapshot change run `verify-exports.mjs`
   and `refresh-assets.mjs` in `test/fixtures/zkapi-sdk-v2-fixture/`; its
-  digests are tied to `82c8504`.
+  digests are tied to `4b955d9` (re-recorded on 2026-10-14; it was `82c8504`).
 - **Sweep-only funding scopes** release another build's saved non-sweep
   transaction only on a finalized receipt or a finalized sender nonce past it;
   the `replaced` rule needs an RPC that accepts the `finalized` tag for

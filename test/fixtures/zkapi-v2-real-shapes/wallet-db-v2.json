@@ -6,13 +6,13 @@
     "setupId": "dev",
     "sourceRevision": "e9951bacd62c6ae927d06196ad78b45db4f9c492",
     "files": {
-      "services/browserWalletRuntime.js": "4997b371db9d3ff40e7155d0fce6355d90a3d87be0c920578c0959f236b9238b",
-      "services/browserWalletStore.js": "b41f50b728d44f8b19b36566f11fd71eaad2d5ea7d581a839f171d7467e205d7",
-      "services/zkapiClient.js": "1df411aa38b3ce6c23f26da31ee012c03585edde95efb21d0017de74adc9042c",
+      "services/browserWalletRuntime.js": "3f4cf69e25017c36f4780083788d36e025a85949469fcca928f5afba419566e9",
+      "services/browserWalletStore.js": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
+      "services/zkapiClient.js": "7f4f5e5041e26f3db34415124edf26812f1270b69b25bad47c21132fd32eebd9",
       "services/zkapiExitPolicy.mjs": "e32758e461fe7dc3ed27ac91e617be2705de1980d1a30724945113cb7fb93d29",
       "services/zkapiRequestArchive.mjs": "9006b8bc590e2fe4fbf17e109be6451d4be5bc33031830543ce122fbcc90db2f",
       "services/zkapiExpiryHistory.mjs": "e544fe00977a0d4f8c9af38c0b5ad59cd09a1cf11879b5cf1c0cb864e3bb79fd",
-      "services/zkapiNativeEth.mjs": "4669d3909e42e742b7444f3c53f4b0a05e0ef2b025b2da00f72502b99dc3019b",
+      "services/zkapiNativeEth.mjs": "4d2f84b1004b7e0003a2b2af45ac0a1764bbea4d8a814819e7d74f8ad67ad1c5",
       "services/zkapiRequestCompat.mjs": "53d4c2ceaddc4b1db1145a72cd46e5fa51ca8c06729b871833a699ddb97ed161",
       "services/zkapiExitKit.mjs": "fc62ab8fe10a1df375bfaa79b91dbd62b4795a00a6e202c7b2c9a2897a45fd48"
     }

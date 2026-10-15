@@ -1,6 +1,8 @@
-// FIXTURE NOTE: verbatim copy of the real SDK sdk/build.mjs (0.2.0, 82c8504). The fixture ships
-// the same asset layout (assets/, wasm/, services/zkapiWasmWorker.js), so the real build
-// contract (result shape, key order, error codes) is exercised unchanged on tiny files.
+// FIXTURE NOTE: verbatim copy of the real SDK sdk/build.mjs (0.2.0, ethereum/zkapi branch v0.2, 4b955d9).
+// The fixture ships the same asset layout (assets/, wasm/, services/zkapiWasmWorker.js), so the real
+// build contract (result shape, key order, error codes) is exercised unchanged on tiny files.
+// Revision 82c8504 differed in one clause of assertDeployableProfile only: it refused a development
+// bundle for chain 1 (code development_setup_on_mainnet). 4b955d9 dropped it.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -15,7 +17,7 @@ export const REQUIRED_CIRCUIT_ID = 'zkapi-v2-concession-v1';
 export const ASSET_MANIFEST_SCHEMA = 2;
 /** Setups a bundle can be built for (scripts/build-browser-client.sh --setup). */
 export const BUNDLE_SETUP_IDS = Object.freeze(['dev', 'mpc-1']);
-/** The only setup a mainnet profile may use. */
+/** The ceremony setup, which the default production bundle is built for. */
 export const PRODUCTION_SETUP_ID = 'mpc-1';
 /**
  * The new build is served under its own path, next to the legacy
@@ -82,9 +84,9 @@ export async function verifyBrowserSdkAssets() {
 /**
  * Refuse a profile this bundle must not be built for: a placeholder
  * (`deployment_status: "not_deployed"`) or a status other than "deployed",
- * another circuit or setup, a mainnet
- * profile on a development setup, a vault without the concession exit, or
- * keys other than the shipped ones.
+ * another circuit or setup, a vault without the concession exit, or keys
+ * other than the shipped ones. A single-party (`dev`) profile builds on any
+ * network, mainnet included: its vault was deployed with ALLOW_DEV_SETUP=1.
  */
 export function assertDeployableProfile(config, manifest, network, hashes) {
     const trusted = config?.trusted_deployment;
@@ -107,10 +109,6 @@ export function assertDeployableProfile(config, manifest, network, hashes) {
     if (trusted.setup_id !== manifest.setupId) {
         throw codedError('setup_mismatch',
             `The ${network} profile pins setup ${trusted.setup_id}; this bundle is built for ${manifest.setupId}.`);
-    }
-    if (Number(trusted.chain_id) === 1 && manifest.setupId !== PRODUCTION_SETUP_ID) {
-        throw codedError('development_setup_on_mainnet',
-            `A mainnet profile needs the ${PRODUCTION_SETUP_ID} setup, not ${manifest.setupId}.`);
     }
     if (trusted.exit_concession !== 1) {
         throw codedError('exit_concession_required',

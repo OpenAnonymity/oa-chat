@@ -1,4 +1,4 @@
-// FIXTURE: stand-in for sdk/services/zkapiClient.js (zkapi 0.2.0, 82c8504).
+// FIXTURE: stand-in for sdk/services/zkapiClient.js (zkapi 0.2.0, branch v0.2, 4b955d9).
 //
 // The real module's public surface by name. Every instance method of
 // ZkapiClient is a stub that records its call (see fixtureSupport.js), except
@@ -230,6 +230,17 @@ class ZkapiClient extends EventTarget {
         return this.config?.prepared_withdrawal || this.withdrawal || null;
     }
 
+    // The sponsored-withdrawal timing the real client exposes (a getter over
+    // GASLESS_TIMING). This host never requests the sponsored path, so no timing
+    // is reported here.
+    get gaslessTiming() { return {}; }
+
+    get paymasterCreditedPayouts() {
+        return this.withdrawals.filter(record => record.paymasterCredited === true).map(record => ({
+            recordId: record.recordId, noteId: record.noteId, payout: record.payout, creditedWei: record.paymasterCreditedWei ?? null
+        }));
+    }
+
     get openWithdrawals() {
         return this.withdrawals.filter(record => record.phase !== 'closed'
             || record.finalizeTransactionHash
@@ -279,13 +290,29 @@ defineRecordedMethods(ZkapiClient.prototype, 'client', {
     creditedEscapePayoutRecord performClaimEscapePayout unclaimedEscapeCredits
     rememberEscapePayoutClaim recordEscapePayoutClaim recordClearedEscapePayout
     markEscapePayoutsClaimed checkEscapeDestination confirmMinedWithdrawalStatus
-    readBrowserWithdrawalStatus confirmBrowserWithdrawal ensureTestnetAccess`.split(/\s+/).filter(Boolean),
+    readBrowserWithdrawalStatus confirmBrowserWithdrawal ensureTestnetAccess
+    assertGaslessDeployment awaitReleasedUserOp buildGaslessOperation claimGaslessCredit
+    collectTransitBalance crossCheckGaslessEstimate dryRunGaslessOperation
+    findUserOperationInclusion followGaslessFinalization followGaslessWithdrawal gaslessAvailability
+    gaslessAwaitTimeWindow gaslessBlockNumber gaslessCall gaslessContext gaslessPreflight
+    gaslessPreflightSizing gaslessRecordSettlement gaslessTransactionReceipt gaslessWithdrawalQuote
+    journaledTransit markGaslessCreditsDelivered performGaslessFinalization performGaslessWithdrawal
+    performTransitForward probeBundler readPaymasterState recordUserOpInclusion
+    recoverGaslessRecordOperations recoverGaslessSubmission releaseUnpinnedFinalization
+    rememberRecordUserOpInclusion runGaslessOperation selectGaslessFees settleGaslessWithdrawal
+    settleTransitForward signGaslessOperation submitTransitForward sweepTransit transitFundsMessage
+    transitIdentity`.split(/\s+/).filter(Boolean),
     sync: `
     setWalletProvider detachWalletEvents attachWalletEvents snapshot runtimeStateSignature
     beginActivity updateActivity completeActivity failActivity cancelActivity subscribe
     subscribeClock emitClock emitChange rememberWithdrawal formatMoney formatBillingAmount
     formatExpiry compact networkName chainParameters externalRecoveryContext setExitRpcUrl
-    payoutMatchFields escapePayoutClaimed escapePeriodLabel escapePeriodPhrase escapePeriodBadge`
+    payoutMatchFields escapePayoutClaimed escapePeriodLabel escapePeriodPhrase escapePeriodBadge
+    gaslessAlreadyKnown gaslessAmountsMessage gaslessBundlerUnavailable gaslessFeeTooLow
+    gaslessReader gaslessSettledMessage gaslessSleep getBundlerUrl preparedUserOpJournal
+    recordGaslessContracts recordReaderContext recordUserOpHashes recordUserOpJournal
+    recordUserOpResume recordUserOpUnresolved requireGaslessPins requireRecordPins
+    revertedRecordUserOpFields setBundlerUrl`
         .split(/\s+/).filter(Boolean)
 });
 

@@ -181,7 +181,9 @@ function snapshotOf(overrides = {}) {
         config: { ux_proposal: 'quiet' },
         wallet: { note: {
             note_id: 7, deposit_amount: 2_000_000, current_balance: 1_610_000,
-            expiry_ts: Math.floor(Date.now() / 1000) + 86400
+            // 24 h and 15 min, not 24 h: two renders a few milliseconds apart
+            // must read the same hour, whichever way the countdown rounds.
+            expiry_ts: Math.floor(Date.now() / 1000) + 86400 + 900
         } },
         withdrawal: null, withdrawals: [], activities: [], lastError: null, loading: false,
         ...overrides

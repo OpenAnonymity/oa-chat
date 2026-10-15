@@ -40,6 +40,11 @@
 //                                           balance, how to withdraw
 //   readExitChoice(root, state?)  -> {choice, mode, bound, conceded,
 //                                     concededMax, changed}
+//   sponsoredFee(options)         -> html   the "Network fee" choice of the
+//                                           withdraw form: who pays the fee,
+//                                           and what is received when it is
+//                                           paid from the withdrawal ('' when
+//                                           the page offers no such payment)
 //   recordExtras(record, ctx?)    -> {label, badge, noteHtml, actionsHtml,
 //                                     hideActions, hideError} for one
 //                                     payment-history row of this version
@@ -75,6 +80,7 @@ import {
 } from '../components/VersionNotices.js';
 import { renderDepositsClosedView, renderHeldBalanceView, renderUpgradeView } from '../components/UpgradeView.js';
 import { renderBalanceExtras } from '../components/BalanceExtras.js';
+import { renderSponsoredFee } from '../components/SponsoredFee.js';
 import { readExitChoice as readRenderedExitChoice, renderExitChoice } from '../components/ExitChoice.js';
 import { isDeviceNotNewestRecord, recordExtras as recordExtrasFor } from '../components/RecordExtras.js';
 import {
@@ -321,6 +327,17 @@ export function createVersionUi({
                 const given = isRecord(options) ? options : {};
                 const context = { ...readContext(facade), ...given };
                 return renderExitChoice(state, context);
+            } catch {
+                return '';
+            }
+        },
+        sponsoredFee(options = {}) {
+            try {
+                const sponsored = facade ? facade.sponsored : null;
+                if (!sponsored || typeof sponsored.supported !== 'function' || !sponsored.supported()) return '';
+                const given = isRecord(options) ? options : {};
+                const format = typeof given.format === 'function' ? given.format : amountFormatter(facade);
+                return renderSponsoredFee({ ...given, ...(format ? { format } : {}) });
             } catch {
                 return '';
             }

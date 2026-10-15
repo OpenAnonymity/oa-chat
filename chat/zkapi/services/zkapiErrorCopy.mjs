@@ -5,6 +5,8 @@ import { getActiveVersion, getSelection, getVersionTable } from '../versioning/a
 import { formatLocalDateTime, gateCopyKey, serviceCopyKey, versionCopyText } from '../versioning/copy.mjs';
 import { readExitRefusal, readServiceRefusal } from '../versioning/exitRefusal.mjs';
 import { isVersioningActive, zkapiVersioning } from '../versioning/index.js';
+import { SPONSORED_HOST_REFUSALS } from '../versioning/sponsored.mjs';
+import { SPONSORED_REASON_COPY, sponsoredReasonText } from '../versioning/sponsoredFees.mjs';
 
 /** The indexer (which reads the vault from Ethereum) has not yet seen the
  *  block a proof must be built against. It catches up on its own; the SDK
@@ -251,6 +253,40 @@ export function versionRefusalMessage(error, options = {}) {
     return null;
 }
 
+// ---------------------------------------------------------------------------
+// Sponsored withdrawals
+// ---------------------------------------------------------------------------
+// A withdrawal that pays its network fee from itself can stop for reasons the
+// SDK words in its own vocabulary (a bundler, a paymaster, a user operation).
+// The words below replace them, and the sentences the host's own signer refuses
+// with are recognized inside the SDK's wrapper of a refusal and said alone.
+
+const GASLESS_ERROR_NAMES = new Set(['ZkapiGaslessError']);
+
+/**
+ * The product's words for an error of a sponsored withdrawal, or null for
+ * any other error. Never throws.
+ */
+export function sponsoredRefusalMessage(error) {
+    try {
+        if (!isRecord(error) && !(error instanceof Error)) return null;
+        const text = String(error.message || error.shortMessage || '');
+        // The signer's own words, inside "The bundler refused ...: <words>".
+        for (const known of SPONSORED_HOST_REFUSALS) {
+            if (text.includes(known)) return known;
+        }
+        const code = typeof error.code === 'string' ? error.code : null;
+        const named = GASLESS_ERROR_NAMES.has(error.name);
+        if (code && Object.hasOwn(SPONSORED_REASON_COPY, code) && code !== 'unknown'
+            && (named || isRecord(error.data) || /bundler|paymaster|sponsored|user operation/i.test(text))) {
+            return sponsoredReasonText(code);
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 // Which balance an attempt was about, when the caller knows and it was not the
 // balance in the wallet slot: `{noteId?, recordId?}` (a set-aside record being
 // finished or restored). A refusal carries no balance of its own, so without
@@ -298,7 +334,7 @@ export function explainZkapiError(error, options = {}) {
         } catch { /* frozen error: the message getters below still apply */ }
     } else if (error && typeof error === 'object') {
         noteRefusal(error, options);
-        const text = versionRefusalMessage(error, options);
+        const text = versionRefusalMessage(error, options) || sponsoredRefusalMessage(error);
         if (text) {
             try {
                 error.message = text;
@@ -313,5 +349,7 @@ export function zkapiErrorMessage(error, fallback = 'The wallet could not comple
     if (isIndexerLag(error)) return INDEXER_LAG_MESSAGE;
     const version = versionRefusalMessage(error);
     if (version) return version;
+    const sponsored = sponsoredRefusalMessage(error);
+    if (sponsored) return sponsored;
     return error?.shortMessage || error?.message || fallback;
 }

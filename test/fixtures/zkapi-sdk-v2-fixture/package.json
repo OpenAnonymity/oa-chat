@@ -24,6 +24,7 @@
     "./request-archive": "./sdk/services/zkapiRequestArchive.mjs",
     "./exit-kit": "./sdk/services/zkapiExitKit.mjs",
     "./gas": "./sdk/services/zkapiGas.mjs",
+    "./gasless": "./sdk/services/zkapiGasless.mjs",
     "./contract-error": "./sdk/services/zkapiContractError.mjs",
     "./wallet-error": "./sdk/services/zkapiWalletError.mjs",
     "./package.json": "./package.json"

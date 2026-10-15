@@ -1,4 +1,4 @@
-// FIXTURE: stand-in for sdk/services/browserWalletRuntime.js (zkapi 0.2.0, 82c8504).
+// FIXTURE: stand-in for sdk/services/browserWalletRuntime.js (zkapi 0.2.0, branch v0.2, 4b955d9).
 //
 // The real module's public surface by name: every instance method of
 // BrowserWalletRuntime is a stub that records its call in the shared log
@@ -58,6 +58,7 @@ class BrowserWalletRuntime extends EventTarget {
         this.lastLeaseProgress = null;
         this.retirementPromise = null;
         this.requestProverWarmup = null;
+        this.liveGaslessClaims = new Set();
         this.settlementTimer = null;
         this.legacyMigrationInProgress = false;
         this.channel = null;
@@ -158,7 +159,11 @@ defineRecordedMethods(BrowserWalletRuntime.prototype, 'runtime', {
     markWithdrawalFinalizationMissingReceipts releaseWithdrawalFinalizationReplacementClaim
     markWithdrawalFinalizationAmbiguous markWithdrawalFinalizationUnknown
     resolveChallengedWithdrawalFinalization authorizeWithdrawalFinalizationRetry
-    restoreWithdrawal archiveNote`.split(/\s+/).filter(Boolean),
+    restoreWithdrawal archiveNote
+    claimPreparedWithdrawalUserOp completeConfirmedDeposit currentWithdrawalNullifier
+    releasePreparedWithdrawalUserOp rememberPreparedWithdrawalUserOp
+    rememberPreparedWithdrawalUserOpOutcome rememberPreparedWithdrawalUserOpSubmission
+    touchPreparedWithdrawalUserOp`.split(/\s+/).filter(Boolean),
     sync: `
     selectedManifestUrl rememberManifestUrl pinnedManifest startPinnedRpcChecks checkNativeVault
     serviceStatus preemptForExit deploymentProxyUrl validateManifest validateTrustedProfile
@@ -171,7 +176,10 @@ defineRecordedMethods(BrowserWalletRuntime.prototype, 'runtime', {
     noteExitRpcChain walletOnVaultChain getExitRpcUrl setExitRpcUrl exitRecordsAt
     exitLockedError lateSuccessorsAt reusablePlan settlementPendingError clearanceAnswerAt
     withdrawalProvingKey decoratePlan validateExistingWithdrawal assertOwnershipProof
-    withdrawalRecordId backgroundWithdrawalIdentity`.split(/\s+/).filter(Boolean)
+    withdrawalRecordId backgroundWithdrawalIdentity
+    bundlerRpc confirmedDepositFor effectiveBundlerUrl endGaslessClaim gaslessClaimLive gaslessPins
+    gaslessReader gaslessSnapshot getBundlerUrl noteBundlerChain noteGaslessStatus
+    preparedSubmissionMatches setBundlerUrl`.split(/\s+/).filter(Boolean)
 });
 
 const browserWalletRuntime = new BrowserWalletRuntime();

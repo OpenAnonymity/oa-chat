@@ -188,3 +188,71 @@ test('unsafe native pending and changed prepared operations cannot fall back to 
     await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /saved deposit changed/);
     assert.deepEqual(authorizations, []);
 });
+
+// -- Sponsored withdrawals -------------------------------------------------------
+//
+// A withdrawal that pays its network fee out of itself is bound to a holding
+// address (its record's `destination`) and names who is paid in `payout`. The
+// signer must hold the operation to the person's own address, never to the
+// holding address, and to the figures that were shown.
+
+const payee = '0x6666666666666666666666666666666666666666';
+const holding = '0x7777777777777777777777777777777777777777';
+
+test('a new sponsored withdrawal is authorized for the typed address, with the bounds that were shown', async t => {
+    const { owner, authorizations } = fixture(t);
+    await runAddressAction(owner, { kind: 'withdraw', sponsored: { feeCapWei: '10000000000000', maxCostWei: '49125000000000000' } },
+        () => {}, async () => {});
+    assert.equal(authorizations.length, 1);
+    assert.deepEqual(authorizations[0], {
+        kind: 'withdrawal', destination: recipient, mode: 'mutual', noteId: 7,
+        sponsored: { feeCapWei: '10000000000000', maxCostWei: '49125000000000000' }
+    });
+    // Anything that is not a decimal amount is dropped: the signer then holds
+    // to the paymaster's own pinned figures, not to a string it cannot read.
+    authorizations.length = 0;
+    await runAddressAction(owner, { kind: 'withdraw', sponsored: { feeCapWei: '1e9', maxCostWei: -1, extra: 'x' } }, () => {}, async () => {});
+    assert.deepEqual(authorizations[0].sponsored, {});
+    // A withdrawal with no sponsored plan carries no such field at all.
+    authorizations.length = 0;
+    await runAddressAction(owner, { kind: 'withdraw' }, () => {}, async () => {});
+    assert.equal('sponsored' in authorizations[0], false);
+});
+
+test('a saved sponsored plan or record is authorized for its payee, not its holding address', async t => {
+    const { owner, authorizations } = fixture(t);
+    // The prepared plan of the page.
+    zkapiClient.config = { funding, prepared_withdrawal: { mode: 'mutual', phase: 'prepared', note_id: 7, fee_payer: 'payout',
+        destination: holding, payout: payee } };
+    await runAddressAction(owner, { kind: 'withdraw', sponsored: {} }, () => {}, async () => {});
+    assert.equal(authorizations[0].destination, payee);
+    assert.equal(authorizations[0].mode, 'mutual');
+    // A record of a sponsored escape: authorization to finish it names the
+    // payee too, and is sponsored.
+    zkapiClient.config = { funding };
+    zkapiClient.withdrawals = [{ recordId: 'r-1', noteId: 7, mode: 'escape', feePayer: 'payout', destination: holding, payout: payee,
+        transit: { account: holding } }];
+    authorizations.length = 0;
+    await runAddressAction(owner, { kind: 'escape-finalize', withdrawalRecordId: 'r-1' }, () => {}, async () => {});
+    assert.deepEqual(authorizations[0], { kind: 'finalization', noteId: 7, destination: payee, sponsored: {} });
+    // A wallet-paid record is as it was: no destination, nothing sponsored.
+    zkapiClient.withdrawals = [{ recordId: 'r-2', noteId: 7, mode: 'escape', destination: recipient }];
+    authorizations.length = 0;
+    await runAddressAction(owner, { kind: 'escape-finalize', withdrawalRecordId: 'r-2' }, () => {}, async () => {});
+    assert.deepEqual(authorizations[0], { kind: 'finalization', noteId: 7 });
+});
+
+test('collecting a payout is authorized for the record\'s payee and its own holding address, and only for such a record', async t => {
+    const { owner, authorizations } = fixture(t);
+    zkapiClient.withdrawals = [{ recordId: 'r-3', noteId: 7, mode: 'mutual', feePayer: 'payout', destination: holding, payout: payee,
+        transit: { account: holding }, fundsWaitingInTransit: true }];
+    await runAddressAction(owner, { kind: 'transit-collect', withdrawalRecordId: 'r-3', sponsored: { feeCapWei: '5' } }, () => {}, async () => {});
+    assert.deepEqual(authorizations[0], { kind: 'collection', destination: payee,
+        sponsored: { feeCapWei: '5', transitAccount: holding } });
+    // A record without a holding address, or one that is wallet-paid, has none.
+    zkapiClient.withdrawals = [{ recordId: 'r-4', noteId: 7, mode: 'mutual', destination: recipient }];
+    await assert.rejects(runAddressAction(owner, { kind: 'transit-collect', withdrawalRecordId: 'r-4' }, () => {}, async () => {}),
+        /Choose the withdrawal to collect first/);
+    await assert.rejects(runAddressAction(owner, { kind: 'transit-collect', withdrawalRecordId: 'missing' }, () => {}, async () => {}),
+        /Choose the withdrawal to collect first/);
+});

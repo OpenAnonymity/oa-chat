@@ -15,16 +15,22 @@ package fixture and must not be edited).
 
 ## Provenance
 
-- Generated from the SDK snapshot `0.2.0` (asset manifest `sourceRevision`
+- Generated from the SDK `0.2.0` of the local zkapi repository's `v0.2` branch
+  at `4b955d9` (asset manifest `sourceRevision`
   `e9951bacd62c6ae927d06196ad78b45db4f9c492`, circuit `zkapi-v2-concession-v1`,
-  setup `dev`). The snapshot carries no 40-digit package revision yet; every
-  file therefore records, under `source.files`, the SHA-256 of each SDK module
-  it was generated from, so a changed SDK is detected by comparing those, not
-  by trusting a version string.
+  setup `dev`). The revision is not published, so the package has no 40-digit
+  pin in this repository yet; every file therefore records, under
+  `source.files`, the SHA-256 of each SDK module it was generated from, so a
+  changed SDK is detected by comparing those, not by trusting a version string.
+  An earlier generation came from the `82c8504` snapshot; the only differences
+  are additive: a `gasless` object on every snapshot (`supported: false` while
+  the profile pins none) and the sponsored-withdrawal fields of a withdrawal
+  record (`fee_payer: "wallet"`, `payout`, `transit`, `user_op_hash` and
+  `user_op_phase`, null for a wallet-paid exit).
 - The proof setup in `source` is the SDK snapshot's own (`dev`). The host
   accepts `mpc-1` and `dev` on every network (the single-party development
-  setup is reported, not blocked); only the SDK package's own build refuses
-  `dev` for chain 1. The fixtures drive SDK runtime code only and never pass
+  setup is reported, not blocked); the SDK package's own build accepts `dev`
+  for chain 1 since `4b955d9` (the `82c8504` snapshot refused it). The fixtures drive SDK runtime code only and never pass
   through the host's profile validation.
 - Hosts, addresses and keys are the SDK's placeholders or the host fixtures'
   (`test/zkapi/_registryFixtures.mjs`). The three deployments of `deployments`

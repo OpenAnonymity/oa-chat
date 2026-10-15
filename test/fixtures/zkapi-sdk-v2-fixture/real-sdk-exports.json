@@ -1,9 +1,9 @@
 {
-  "source": "zkapi browser SDK 0.2.0 (82c8504, unpublished). Re-record: verify-exports.mjs <real SDK root> --update",
+  "source": "zkapi browser SDK 0.2.0 (ethereum/zkapi branch v0.2, 4b955d9, unpublished). Re-record: verify-exports.mjs <real SDK root> --update",
   "lists": {
     "package": {
-      "count": 19,
-      "sha256": "901802de14ea9cdad465b90757dd16f60852fded4b51478c2ae17a4a861a18cf"
+      "count": 20,
+      "sha256": "1c0855a1c8f23cb2a80ebb71f79938f5382c3fa4653f09f0889c663a9a918006"
     },
     "exports .": {
       "count": 8,
@@ -22,12 +22,12 @@
       "sha256": "f537c270cb14f7f98db3d9c45a71890d8e98dbb8ddc9c14fdf19f7bac3f70471"
     },
     "exports ./store": {
-      "count": 51,
-      "sha256": "decb9127687a3c55eb0f6c915f347d718a05371c3ff50d73838f3d73605e768c"
+      "count": 55,
+      "sha256": "c71c8f062e163b7fbd896576990a89d566ac8450cc1b042954ac4a93d2616739"
     },
     "exports ./wallet": {
-      "count": 30,
-      "sha256": "ba08ece95aaae56a64a7983f4d0fc22fef13764609635368873c2cf1a4c776a9"
+      "count": 36,
+      "sha256": "ee9bd6fddd149438a9d11b5fd9ccc7bb49fb08083af1d04c558a8554247f866d"
     },
     "exports ./build": {
       "count": 11,
@@ -61,45 +61,49 @@
       "count": 3,
       "sha256": "74620e8d5de1c1fef158519e721f038fe9ee9e8707477df43a0c502de8618886"
     },
+    "exports ./gasless": {
+      "count": 91,
+      "sha256": "82d51256ca82f0c4b4f1ed02bb59607cb16cf6f94cf27656336c55067391b725"
+    },
     "exports ./contract-error": {
-      "count": 2,
-      "sha256": "597a05c6bc8d7214659e2409a550d0228e13888c32dab48ade4f08074c5a1541"
+      "count": 6,
+      "sha256": "fc53a1af470b4d20985bd5d72edce8ab16995ed73dc5ed3f12d43de81be4b59c"
     },
     "exports ./wallet-error": {
       "count": 2,
       "sha256": "368e7903182111621a88d0b521ab8774384bdb357a9479fb07efaaa26532ac20"
     },
     "client methods": {
-      "count": 112,
-      "sha256": "3b87d2d92a7cc839cc498df37ce956e251d70d576278a6407b4be07e74b12a9d"
+      "count": 172,
+      "sha256": "3a045674c7495781893203879fb8f1dd21162b10d188bacc526ce88f4c0da407"
     },
     "client asyncMethods": {
-      "count": 84,
-      "sha256": "a740561e8205587e5a39486e99107eae47f833e3d044ec9ebf301a00afd98640"
+      "count": 125,
+      "sha256": "35d44a5910ecc47a134a628be1b8a0eb5665e8ff3179f6aab9e5c1d48ec4b381"
     },
     "client getters": {
-      "count": 23,
-      "sha256": "e497ba09740f6631a79bbc2a240ae7716ddde1615bc0ab516fa14a9be9c1539a"
+      "count": 25,
+      "sha256": "4968b42615a9fdb04457843b699afd07021c2a6c1e844c65c5b723bf1047f4c2"
     },
     "client fields": {
       "count": 24,
       "sha256": "d312d3b22dabc14456dd31972590035c6f6b509bda103874b2ee624220e4399a"
     },
     "runtime methods": {
-      "count": 192,
-      "sha256": "bb849d1a99650178f8c699695c4722efeac7248e2e9f0058e9f08b8f4eedda4a"
+      "count": 213,
+      "sha256": "de64487c30b6e0b111d869ba99449f3e850653da1bd079364209c81a824f2574"
     },
     "runtime asyncMethods": {
-      "count": 138,
-      "sha256": "708533ddd0303c68cd821c6241f7ce2e47e21a3e5fac25ef36da07bf79bbfb96"
+      "count": 146,
+      "sha256": "b1d5695b06753664591ebd4cc91e1898524c75faeef01c76166cc975ad1230cf"
     },
     "runtime getters": {
       "count": 0,
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     "runtime fields": {
-      "count": 33,
-      "sha256": "bd93efc82150565f01de13853cd37e6ea33ea9f386a74f50c4d051c0b679f9a7"
+      "count": 34,
+      "sha256": "40bb3e493c1074473d65083d84569da055d05977bedfde731d6cf465a73c200b"
     }
   }
 }

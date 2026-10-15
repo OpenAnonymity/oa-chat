@@ -1,4 +1,4 @@
-// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiWithdrawalRoot.mjs (0.2.0, 82c8504).
+// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiWithdrawalRoot.mjs (0.2.0, branch v0.2, 4b955d9).
 export function sameFelt(left, right) {
     try {
         return BigInt(left) === BigInt(right);

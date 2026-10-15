@@ -55,6 +55,25 @@ export function formatFundingAmount(value, decimals = 6) {
     try { return formatUnits(String(value), decimals); } catch { return '—'; }
 }
 
+// Who a sponsored withdrawal pays: the `payout` of its record, or of the
+// prepared plan the page holds, and null for anything wallet-paid. The
+// record's own `destination` is the transit account of such a withdrawal.
+function sponsoredPayee(record = null) {
+    if (record) return record.feePayer === 'payout' && /^0x[0-9a-fA-F]{40}$/.test(record.payout || '') ? record.payout : null;
+    const prepared = zkapiClient.config?.prepared_withdrawal;
+    return prepared?.fee_payer === 'payout' && /^0x[0-9a-fA-F]{40}$/.test(prepared.payout || '') ? prepared.payout : null;
+}
+
+// The numbers the signer holds a sponsored operation to, as decimal strings
+// (anything else is dropped: the signer then uses the paymaster's pinned ones).
+function sponsoredBounds(given) {
+    const bounds = {};
+    for (const key of ['feeCapWei', 'maxCostWei']) {
+        if (typeof given?.[key] === 'string' && /^[0-9]{1,78}$/.test(given[key])) bounds[key] = given[key];
+    }
+    return bounds;
+}
+
 export function withdrawalDestination(owner, recordId = null) {
     const record = recordId ? zkapiClient.withdrawals.find(entry => entry.recordId === recordId) : null;
     const saved = record?.destination || zkapiClient.config?.prepared_withdrawal?.destination
@@ -93,7 +112,13 @@ export async function runAddressAction(owner, details, report, action) {
             feeLimitWei: intent.feeLimitWei, feeQuoteExpiresAt: intent.feeQuoteExpiresAt };
     } else if (kind === 'withdraw' || kind === 'escape') {
         const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : null;
-        authorization = { kind: 'withdrawal', destination: withdrawalDestination(owner, details.withdrawalRecordId),
+        // A sponsored plan or record is bound to a transit account (its
+        // `destination`) and names who is paid in `payout`: that is the
+        // address the person confirmed, and the one the signer holds the
+        // operation to.
+        const payee = sponsoredPayee(record);
+        authorization = { kind: 'withdrawal',
+            destination: payee ? fundingDestination(payee, undefined, { denied: [] }) : withdrawalDestination(owner, details.withdrawalRecordId),
             // An explicit escape choice can replace an unsubmitted mutual
             // plan. The SDK rechecks that transition under its wallet lock.
             mode: record?.mode || (kind === 'escape' ? 'escape' : zkapiClient.config?.prepared_withdrawal?.mode || owner.withdrawMode),
@@ -121,6 +146,11 @@ export async function runAddressAction(owner, details, report, action) {
         // The prepared withdrawal the person looked at. The signer refuses a
         // call for another one.
         if (details.operationId != null) authorization.operationId = String(details.operationId);
+        // Paying the network fee from the withdrawal itself (an ERC-4337
+        // operation signed by this address and sent through the app's relay
+        // route). The bounds are what the person was shown; the signer holds
+        // the operation to them, and to this destination, note and mode.
+        if (details.sponsored) authorization.sponsored = sponsoredBounds(details.sponsored);
     } else if (kind === 'payout-claim') {
         // Delivering a credited escape payout. Only a protocol that credits
         // payouts has this call; the destination is the saved record's, which
@@ -134,6 +164,23 @@ export async function runAddressAction(owner, details, report, action) {
     } else if (kind === 'escape-finalize') {
         const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : zkapiClient.withdrawal;
         authorization = { kind: 'finalization', noteId: record?.noteId ?? record?.note_id };
+        // The finalization of a sponsored escape is paid the same way, and the
+        // signer then also knows who the payout is for.
+        const payee = sponsoredPayee(record);
+        if (payee) {
+            authorization.destination = fundingDestination(payee, undefined, { denied: [] });
+            authorization.sponsored = sponsoredBounds(details.sponsored || {});
+        }
+    } else if (kind === 'transit-collect') {
+        // Collecting the payout a transit account holds (a sponsored forward).
+        // Only a record that names its transit account and its payee has one.
+        const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : null;
+        const payee = sponsoredPayee(record);
+        if (!payee || !/^0x[0-9a-fA-F]{40}$/.test(record?.transit?.account || '')) {
+            throw new Error('Choose the withdrawal to collect first.');
+        }
+        authorization = { kind: 'collection', destination: fundingDestination(payee, undefined, { denied: [] }),
+            sponsored: { ...sponsoredBounds(details.sponsored || {}), transitAccount: record.transit.account } };
     }
     if (!authorization) {
         // A user's explicit status check may replay a saved signed transaction.

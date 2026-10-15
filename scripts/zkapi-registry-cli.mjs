@@ -36,8 +36,9 @@
 //       prints a warning on stderr for each one and still succeeds. When the
 //       SDK package of such a version is installed (under --package-root, this
 //       repository by default) and its own build would refuse that profile for
-//       mainnet (development_setup_on_mainnet), a second warning says the build
-//       of that network stops there; the exit code is unchanged.
+//       mainnet (development_setup_on_mainnet; a revision before 4b955d9 of the
+//       SDK does, later ones do not), a second warning says the build of that
+//       network stops there; the exit code is unchanged.
 //       --file defaults to deployments/zkapi/registry.json of this repository.
 //
 //   node scripts/zkapi-registry-cli.mjs --help
@@ -97,9 +98,9 @@ const HELP = `${USAGE}
       forge proofs and take every deposit of the vault, and a vault on dev keys
       cannot later be switched to mpc-1 (that is a new vault and a user
       migration). If the version's SDK package is installed and its own build
-      refuses the profile for mainnet (development_setup_on_mainnet), one more
-      warning says the build of that network stops there. The exit code is not
-      changed by either.
+      refuses the profile for mainnet (development_setup_on_mainnet, which an
+      SDK revision before 4b955d9 does), one more warning says the build of
+      that network stops there. The exit code is not changed by either.
 
       --file                    registry to check; default deployments/zkapi/registry.json
       --allow-identity-change   accept a changed deployment id, chain id, vault,

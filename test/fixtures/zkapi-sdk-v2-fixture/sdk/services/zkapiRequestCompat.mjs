@@ -1,4 +1,4 @@
-// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiRequestCompat.mjs (0.2.0, 82c8504).
+// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiRequestCompat.mjs (0.2.0, branch v0.2, 4b955d9).
 // Reviewed public spending buckets, never the user's exact private balance.
 // Host applications map their model tiers to these protocol-supported caps.
 export const CHAT_SPENDING_TIER_USD = Object.freeze([1, 2, 3, 4.5, 6]);

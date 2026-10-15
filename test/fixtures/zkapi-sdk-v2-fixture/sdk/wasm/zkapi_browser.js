@@ -1,4 +1,4 @@
-/* FIXTURE: stand-in for the wasm-bindgen glue sdk/wasm/zkapi_browser.js (zkapi 0.2.0, 82c8504).
+/* FIXTURE: stand-in for the wasm-bindgen glue sdk/wasm/zkapi_browser.js (zkapi 0.2.0, branch v0.2, 4b955d9).
  * Only the identity surface the SDK build and the worker read: initSync,
  * the default init, browser_circuit_id and browser_setup_id. The bundle's
  * setup is mpc-1 so one fixture can stand in for a deployed profile on both

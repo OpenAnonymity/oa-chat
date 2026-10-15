@@ -246,9 +246,10 @@ async function emitVersion({ plan, version, outDir, build, packageRoot }) {
             publicPath: version.publicPath
         });
     } catch (error) {
-        // The SDK package's own refusal of a development bundle for mainnet is
-        // not this host's rule (the host accepts that setup on every network);
-        // say so. Any other failure is reported as the SDK wrote it.
+        // An SDK revision before 4b955d9 refuses a development bundle for
+        // mainnet itself; that is not this host's rule (the host accepts that
+        // setup on every network), so say so. Any other failure is reported
+        // as the SDK wrote it.
         if (error?.code === 'development_setup_on_mainnet') {
             throw sdkRefusalError(error, `zkAPI ${version.id} (${version.sdk.alias})`);
         }
@@ -311,9 +312,10 @@ async function emitVersion({ plan, version, outDir, build, packageRoot }) {
  * emitted, `warn` (console.warn by default) gets one WARNING per such version
  * (developmentSetupWarning). Nothing is printed for a ceremony setup, for a
  * family with no setup id (version 1) or for a build that is not versioned.
- * The SDK package's own refusal of a development bundle for mainnet
- * (development_setup_on_mainnet) is passed on with the host's explanation
- * (sdkRefusalError), from the on-disk verification or from emission.
+ * The refusal of a development bundle for mainnet by an SDK revision before
+ * 4b955d9 (development_setup_on_mainnet) is passed on with the host's
+ * explanation (sdkRefusalError), from the on-disk verification or from
+ * emission.
  */
 export async function buildZkapiAssets({
     network, outDir, repoRoot, build, deployment = process.env.OA_ZKAPI_DEPLOYMENT || '', plan: suppliedPlan, packageRoot,

@@ -171,6 +171,37 @@ export function isUnclaimedPayoutCredit(record) {
         && ['closed_unconfirmed', 'closed'].includes(record.phase);
 }
 
+/**
+ * Whether a withdrawal record is a sponsored one (its network fee was paid
+ * out of the withdrawal: it names `feePayer: "payout"` and the person's
+ * address in `payout`) that closed without the payout having reached that
+ * address: it waits at the holding address the proof was bound to
+ * (`fundsWaitingInTransit`), or the paymaster holds it as a credit because
+ * the address would not take the payment (`paymasterCredited`). Either way
+ * money is owed to the person and only this deployment's contracts can
+ * deliver it, so such a record is a credit for the holdings: it keeps its
+ * version loaded and is told about like a payout the vault holds.
+ */
+export function isSponsoredPayoutPending(record) {
+    return isRecord(record) && record.feePayer === 'payout'
+        && typeof record.payout === 'string' && /^0x[0-9a-fA-F]{40}$/.test(record.payout)
+        && ['closed_unconfirmed', 'closed'].includes(record.phase)
+        && (record.fundsWaitingInTransit === true || record.paymasterCredited === true);
+}
+
+// What a pending sponsored payout is worth, in ledger units (gwei), or null:
+// the credit's amount when the paymaster holds one, else what the holding
+// address reported. Decimal wei strings are what the SDK writes.
+function sponsoredPayoutUnits(record) {
+    for (const field of ['paymasterCreditedWei', 'transitBalanceWei']) {
+        const value = record[field];
+        if (typeof value === 'string' && /^[0-9]{1,40}$/.test(value) && BigInt(value) > 0n) {
+            return (BigInt(value) / 1_000_000_000n).toString();
+        }
+    }
+    return null;
+}
+
 function deploymentIdOf(value) {
     return isRecord(value) && typeof value.deploymentId === 'string' && value.deploymentId
         ? value.deploymentId : null;
@@ -222,13 +253,17 @@ function withdrawalHolding(record, expiryTs) {
 }
 
 function creditHolding(record) {
+    // A sponsored withdrawal is bound to a holding address (its
+    // `destination`); the person's own address is `payout`.
+    const sponsored = isSponsoredPayoutPending(record);
     return {
         recordId: typeof record.recordId === 'string' ? record.recordId : '',
         noteId: record.noteId == null ? null : Number(record.noteId),
         chainId: record.chainId == null ? null : Number(record.chainId),
         contractAddress: record.contractAddress || null,
-        destination: record.destination || null,
-        creditedAmount: record.creditedAmount == null ? null : String(record.creditedAmount)
+        destination: sponsored ? record.payout : record.destination || null,
+        creditedAmount: record.creditedAmount != null ? String(record.creditedAmount)
+            : sponsored ? sponsoredPayoutUnits(record) : null
     };
 }
 
@@ -284,7 +319,7 @@ export function classifyHoldings(raw) {
             const expiryTs = recorded !== undefined ? recorded : positiveTimestamp(record?.state?.expiry_ts);
             entry(deploymentId).withdrawals.push(withdrawalHolding(record, expiryTs));
         }
-        if (isRecord(record) && isUnclaimedPayoutCredit(record)) {
+        if (isRecord(record) && (isUnclaimedPayoutCredit(record) || isSponsoredPayoutPending(record))) {
             entry(deploymentId).credits.push(creditHolding(record));
         }
     }

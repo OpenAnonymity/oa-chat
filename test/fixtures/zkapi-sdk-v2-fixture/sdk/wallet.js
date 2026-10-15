@@ -1,4 +1,4 @@
-// FIXTURE: stand-in for sdk/wallet.js (zkapi 0.2.0, 82c8504, vault revision 3).
+// FIXTURE: stand-in for sdk/wallet.js (zkapi 0.2.0, branch v0.2, 4b955d9, vault revision 3).
 //
 // The real module is the vault ABI codec. This one exports the same names:
 // the constants carry their real values, abiWord, addressWord and callData are
@@ -59,6 +59,13 @@ const {
     parseEscapePayoutClaim, parseNoteDeposited, parseWithdrawalReceipt
 } = unsupportedExports('wallet');
 
+// The sponsored-withdrawal additions of branch v0.2. GASLESS_ABI is an object of selectors in the
+// real module; here it fails loudly like the encoders (this host never builds sponsored calldata).
+const PACKED_USER_OPERATION_TUPLE = '(address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)';
+const {
+    GASLESS_ABI, encodeClaimCredit, encodeCreateAccount, encodeSweep, encodeTransitWithdraw
+} = unsupportedExports('wallet');
+
 const walletCodec = Object.freeze({
     ABI,
     ESCAPE_PAYOUT_GAS,
@@ -66,6 +73,12 @@ const walletCodec = Object.freeze({
     WITHDRAWAL_CALLDATA_BYTES,
     WITHDRAWAL_KIND,
     WITHDRAWAL_TUPLE,
+    PACKED_USER_OPERATION_TUPLE,
+    GASLESS_ABI,
+    encodeClaimCredit,
+    encodeCreateAccount,
+    encodeSweep,
+    encodeTransitWithdraw,
     decodeChallengeEscapeWithdrawal,
     decodePendingConcessions,
     decodePendingWithdrawals,
@@ -94,6 +107,7 @@ const walletCodec = Object.freeze({
 export default walletCodec;
 export {
     ABI, ESCAPE_PAYOUT_GAS, REQUEST_TUPLE, WITHDRAWAL_CALLDATA_BYTES, WITHDRAWAL_KIND, WITHDRAWAL_TUPLE,
+    PACKED_USER_OPERATION_TUPLE, GASLESS_ABI, encodeClaimCredit, encodeCreateAccount, encodeSweep, encodeTransitWithdraw,
     abiWord, addressWord, callData,
     decodeChallengeEscapeWithdrawal, decodePendingConcessions, decodePendingWithdrawals,
     decodeRaiseEscapeConcession, decodeVaultEvent, encodeClaimEscapePayout, encodeDeposit,

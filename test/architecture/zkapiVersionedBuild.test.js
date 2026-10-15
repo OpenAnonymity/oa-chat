@@ -1203,10 +1203,12 @@ test('on-disk verification refuses a package that is not exactly what the regist
 // The host accepts the ceremony setup (mpc-1) and the single-party development
 // setup (dev) by one rule on both networks, and reports the second one: a
 // warning per live version in the build and `proofSetup` in the provenance.
-// The SDK package's own build still refuses a development bundle for mainnet
-// (code development_setup_on_mainnet); that is the SDK's rule, passed on with
-// the host's explanation of whose it is. The fixture SDK is the oracle for it:
-// its build is the real one's contract.
+// The SDK package's own build accepts a development bundle for mainnet since
+// 4b955d9 (branch v0.2 of the local zkapi repository), and the fixture SDK
+// follows it. The 82c8504 snapshot refused one (code
+// development_setup_on_mainnet); a revision before 4b955d9 can still be pinned
+// by mistake, so that refusal is kept covered through an explicit variant of
+// the fixture, passed on with the host's explanation of whose rule it is.
 
 // Turns the temporary copy of the fixture SDK into a development bundle: the
 // WebAssembly glue reports the dev setup, both package profiles pin it, and the
@@ -1232,14 +1234,38 @@ async function makeDevelopmentBundle(directory) {
 // assertDeployableProfile: the on-disk verification has nothing of the SDK's to
 // ask, so the SDK's own build refusal is only met when the assets are emitted.
 async function makeDevelopmentBundleWithoutExportedCheck(directory) {
-    await makeDevelopmentBundle(directory);
+    await makePreRelaxationDevelopmentBundle(directory);
     const file = path.join(directory, 'sdk/build.mjs');
     const source = await fs.readFile(file, 'utf8');
     assert.ok(source.includes('export function assertDeployableProfile('));
     await fs.writeFile(file, source.replace('export function assertDeployableProfile(', 'function assertDeployableProfile('));
 }
 
+// The 82c8504 clause of assertDeployableProfile, put back into the temporary
+// copy of the fixture build (never the pinned fixture): a development bundle is
+// refused for chain 1 with code development_setup_on_mainnet.
+async function insertPreRelaxationMainnetRefusal(directory) {
+    const file = path.join(directory, 'sdk/build.mjs');
+    const source = await fs.readFile(file, 'utf8');
+    const anchor = '    if (trusted.exit_concession !== 1) {';
+    assert.equal(source.split(anchor).length, 2, 'the fixture build checks the concession exit once');
+    const clause = [
+        '    if (Number(trusted.chain_id) === 1 && manifest.setupId !== \'mpc-1\') {',
+        '        throw codedError(\'development_setup_on_mainnet\',',
+        '            `A mainnet profile needs the mpc-1 setup, not ${manifest.setupId}.`);',
+        '    }',
+        ''
+    ].join('\n');
+    await fs.writeFile(file, source.replace(anchor, `${clause}${anchor}`));
+}
+
+async function makePreRelaxationDevelopmentBundle(directory) {
+    await makeDevelopmentBundle(directory);
+    await insertPreRelaxationMainnetRefusal(directory);
+}
+
 const developmentOptions = { mutateFixture: makeDevelopmentBundle };
+const preRelaxationOptions = { mutateFixture: makePreRelaxationDevelopmentBundle };
 
 test('both proof setups pass the same rules on both networks; any other setup, or a mismatch, is refused', async t => {
     const { build } = await helpers();
@@ -1255,13 +1281,13 @@ test('both proof setups pass the same rules on both networks; any other setup, o
     }
 
     // dev bundle and profile: both networks plan (the profile rules do not
-    // know a network); Sepolia verifies. Mainnet meets the SDK's own check, in
-    // the next test, and not a host rule.
+    // know a network) and verify; the SDK accepts a dev bundle for chain 1
+    // too. A revision before 4b955d9 refuses mainnet; that is its own test.
     const development = await makeProject(t, developmentOptions);
     for (const network of NETWORKS) {
         assert.equal(development.plan(network).versions[1].profile.trusted_deployment.setup_id, 'dev');
+        await verified(development)(network);
     }
-    await verified(development)('sepolia');
 
     // The two refusals of a pairing that disagrees, on both networks: the
     // profile pins one setup and the installed bundle was built for the other.
@@ -1352,6 +1378,16 @@ test('a live version on the development setup is warned about once per build; mp
     assert.match(warning, /Accepted by owner decision; see docs\/ZKAPI_VERSIONING\.md\./);
     assert.doesNotMatch(warning, /\b(refus|reject|fail)/i);
 
+    // Mainnet is the same bundle and the SDK builds it (4b955d9): the same one
+    // warning, naming mainnet, and the emitted profile is the chain 1 one.
+    const mainnet = await emit(development, 'mainnet', 'development-mainnet');
+    assert.deepEqual(mainnet.result.versions.map(version => version.id), ['v1', 'v2']);
+    assert.equal(mainnet.warnings.length, 1, mainnet.warnings.join('\n'));
+    assert.match(mainnet.warnings[0], /^\[build\] WARNING: zkAPI v2 on mainnet is built on the single-party development proof setup \(dev\)\./);
+    assert.doesNotMatch(mainnet.warnings[0], /\b(refus|reject|fail)/i);
+    assert.equal(mainnet.result.versions[1].config.trusted_deployment.chain_id, 1);
+    assert.equal(mainnet.result.versions[1].manifest.setupId, 'dev');
+
     // A ceremony bundle gives none, on either network.
     const ceremony = await makeProject(t);
     for (const network of NETWORKS) {
@@ -1382,8 +1418,7 @@ test('a live version on the development setup is warned about once per build; mp
     assert.match(printed[0], /WARNING: zkAPI v2 on sepolia/);
 
     // The plan reports a development version on mainnet like on Sepolia: the
-    // host's rule has no network in it (the SDK's refusal for chain 1 comes
-    // later, from the SDK).
+    // host's rule has no network in it.
     for (const network of NETWORKS) {
         assert.deepEqual(build.developmentSetupVersions(development.plan(network)), [{ versionId: 'v2', network }], network);
         assert.deepEqual(build.developmentSetupVersions(ceremony.plan(network)), [], network);
@@ -1445,7 +1480,6 @@ test('the build provenance names the proof setup of every version, additively', 
         for (const [project, setupId, proofSetup] of [[ceremony, 'mpc-1', 'ceremony'], [development, 'dev', 'development']]) {
             // From what was emitted, and from the reviewed pin alone.
             for (const withAssets of [true, false]) {
-                if (network === 'mainnet' && project === development) continue;
                 const provenance = await provenanceOf(project, network, { withAssets });
                 const [first, second] = provenance.versions;
                 // The legacy family names no setup: null, not a made-up id.
@@ -1463,16 +1497,18 @@ test('the build provenance names the proof setup of every version, additively', 
     }
 });
 
-test('mainnet on a development bundle meets the SDK\'s own refusal, passed on with the host\'s explanation', async t => {
+test('a revision before 4b955d9 refuses mainnet on a development bundle, passed on with the host\'s explanation', async t => {
     const { build } = await helpers();
     const SDK_MESSAGE = 'A mainnet profile needs the mpc-1 setup, not dev.';
     const explained = error => {
         assert.equal(error.code, 'development_setup_on_mainnet');
         // The host's words say whose rule this is and what can be done about it...
         assert.match(error.message, /this host accepts the single-party development proof setup \(dev\) on every network/);
-        assert.match(error.message, /SDK package's own build refuses it for mainnet/);
+        assert.match(error.message, /this SDK revision's own build refuses it for mainnet/);
         assert.match(error.message, /does not bypass or patch that check/);
-        assert.match(error.message, /Relax it in the SDK upstream and pin that revision/);
+        // It says that upstream already dropped the rule and where, so the way
+        // out is a newer pin and not a request to the SDK's authors.
+        assert.match(error.message, /Upstream dropped that rule in ethereum\/zkapi \(branch v0\.2, commit 4b955d9, sdk\/build\.mjs\): pin a revision that includes it/);
         // A vault already on dev keys cannot take the mpc-1 bundle in place:
         // that way out is named for what it costs, not offered as a swap.
         assert.match(error.message, /pinning an SDK bundle built for the mpc-1 setup instead means a new vault and a user migration/);
@@ -1485,7 +1521,7 @@ test('mainnet on a development bundle meets the SDK\'s own refusal, passed on wi
     };
 
     // The on-disk verification asks the SDK's exported check first.
-    const checked = await makeProject(t, developmentOptions);
+    const checked = await makeProject(t, preRelaxationOptions);
     const plan = checked.plan('mainnet');
     await assert.rejects(build.verifyPlanOnDisk(plan, { repoRoot: checked.temp, packageRoot: checked.temp }), error => {
         assert.match(error.message, /^\[build\] zkAPI v2 \(zkapi-sdk-v2c\): /);
@@ -1671,12 +1707,25 @@ test('the registry check reports a live development setup and still accepts it',
     assert.match(help.stdout, /proof setup or proof key pins/);
     assert.match(help.stdout, /--package-root/);
 
-    // The SDK package's own build refuses a development bundle for mainnet.
+    // An SDK revision before 4b955d9 refuses a development bundle for mainnet.
     // When the version's package is installed, the check says so, so the
     // operator does not learn it from the build at deploy time. The exit code
     // stays what it was: the host accepts the setup.
     const mainnetRefusal = lines => lines.filter(line => /on mainnet: this host accepts/.test(line));
-    const probed = await makeProject(t, developmentOptions);
+
+    // The SDK the fixture follows (4b955d9) accepts it: the two setup lines
+    // and nothing about a refusal.
+    const accepting = await makeProject(t, developmentOptions);
+    await write(reviewed(accepting.registry));
+    const accepted = check({ base: 'pending', extra: ['--package-root', accepting.temp] });
+    assert.equal(accepted.code, 0, accepted.err);
+    assert.match(accepted.out, /valid forward move/);
+    const acceptedLines = warningsOf(accepted);
+    assert.equal(acceptedLines.length, 2, accepted.err);
+    assert.deepEqual(mainnetRefusal(acceptedLines), []);
+    assert.doesNotMatch(accepted.err, /development_setup_on_mainnet|stops at that refusal/);
+
+    const probed = await makeProject(t, preRelaxationOptions);
     await write(reviewed(probed.registry));
     const refused = check({ base: 'pending', extra: ['--package-root', probed.temp] });
     assert.equal(refused.code, 0, refused.err);
@@ -1686,7 +1735,8 @@ test('the registry check reports a live development setup and still accepts it',
     assert.match(refusedLines[0], /WARNING: zkAPI v2 on mainnet is built on the single-party development proof setup/);
     assert.match(refusedLines[1], /WARNING: zkAPI v2 on sepolia is built on the single-party development proof setup/);
     assert.deepEqual(mainnetRefusal(refusedLines), [refusedLines[2]]);
-    assert.match(refusedLines[2], /^\[zkapi-registry\] WARNING: zkAPI v2 on mainnet: this host accepts the single-party development proof setup \(dev\) on every network, but the SDK package's own build refuses it for mainnet \(development_setup_on_mainnet: A mainnet profile needs the mpc-1 setup, not dev\.\)/);
+    assert.match(refusedLines[2], /^\[zkapi-registry\] WARNING: zkAPI v2 on mainnet: this host accepts the single-party development proof setup \(dev\) on every network, but this SDK revision's own build refuses it for mainnet \(development_setup_on_mainnet: A mainnet profile needs the mpc-1 setup, not dev\.\)/);
+    assert.match(refusedLines[2], /Upstream dropped that rule in ethereum\/zkapi \(branch v0\.2, commit 4b955d9, sdk\/build\.mjs\): pin a revision that includes it/);
     assert.match(refusedLines[2], /A build of this registry for that network stops at that refusal\./);
     // Sepolia is the same bundle and the SDK accepts it: no second line for it.
     assert.doesNotMatch(refusedLines[2], /sepolia/);

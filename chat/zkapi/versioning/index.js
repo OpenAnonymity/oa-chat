@@ -51,6 +51,7 @@ import { intentProvesWithdrawal } from './upgradeFlow.mjs';
 import { isOpenWithdrawalRecord } from './walletHoldings.mjs';
 import { readExitRefusal, readServiceRefusal } from './exitRefusal.mjs';
 import { abandonStatus, classifyBalance, nativeUsdMicros } from './abandonNote.mjs';
+import { createSponsoredFees } from './sponsoredFees.mjs';
 
 /** localStorage key of the last reminder tier the person was shown. */
 export const REMINDER_KEY = 'oa-zkapi-upgrade-reminder-v1';
@@ -1228,10 +1229,24 @@ export function createZkapiVersioning(options = {}) {
         requestProbe: fireTriggers
     });
 
+    // Paying the network fee of a withdrawal out of the withdrawal (the
+    // ERC-4337 path of a protocol that has one). Built here because it needs
+    // the attached client and the loaded version's context; it holds no state.
+    const sponsored = createSponsoredFees({
+        getClient: () => attached?.client ?? null,
+        getRuntime: () => attached?.runtime ?? null,
+        getContext: () => {
+            const m = mode();
+            return m.multi && m.ctx ? m.ctx : null;
+        }
+    });
+
     const facade = {
         get multiVersion() {
             return mode().multi;
         },
+        /** Sponsored withdrawals of the loaded version (versioning/sponsoredFees.mjs). */
+        sponsored,
         get active() {
             return mode().ctx?.version || null;
         },

@@ -1,4 +1,4 @@
-// FIXTURE: names of sdk/services/zkapiExitKit.mjs (zkapi 0.2.0, 82c8504).
+// FIXTURE: names of sdk/services/zkapiExitKit.mjs (zkapi 0.2.0, branch v0.2, 4b955d9).
 import { unsupportedExports } from './fixtureSupport.js';
 
 export const EXIT_KIT_FORMAT = 'zkapi-exit-kit-v1';

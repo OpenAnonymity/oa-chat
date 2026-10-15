@@ -29,6 +29,7 @@ import {
     normalizeCommonSnapshot,
     validateBaseProfile
 } from './noteBoundV1.mjs';
+import { sponsoredProfileProblem } from '../sponsored.mjs';
 
 const CONCESSION_CIRCUIT_ID = 'zkapi-v2-concession-v1';
 
@@ -55,9 +56,10 @@ const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key
 // The host accepts both. The limitation is the owner's accepted risk: it is
 // surfaced where an operator looks (a warning per live version in the build,
 // proofSetup in the build provenance, the registry check) and never blocked
-// here. The SDK package's own build does refuse a development bundle for
-// chain 1 (code development_setup_on_mainnet); that rule is the SDK's, not
-// this host's, and the host neither bypasses nor reimplements it.
+// here. An SDK revision before 4b955d9 (ethereum/zkapi branch v0.2) refuses a
+// development bundle for chain 1 in its own build (code
+// development_setup_on_mainnet); that rule was the SDK's, not this host's, and
+// the host neither bypasses nor reimplements it. 4b955d9 dropped it.
 //
 // A profile's allow_dev_setup field is a record the SDK's deploy flow writes
 // (true for a vault it deployed on a development setup with the opt-in). Neither
@@ -172,6 +174,11 @@ function validateProfile(config, ctx) {
         && (!Number.isSafeInteger(pins.settlement_window_seconds) || pins.settlement_window_seconds <= 0)) {
         throw profileError('The profile has an invalid settlement_window_seconds.');
     }
+    // Sponsored withdrawals (the ERC-4337 contracts of the withdrawal
+    // paymaster): absent or null offers none; a pinned object must be one this
+    // host can read and route (versioning/sponsored.mjs).
+    const sponsoredProblem = sponsoredProfileProblem(pins.gasless);
+    if (sponsoredProblem) throw profileError(sponsoredProblem);
     return config;
 }
 
@@ -480,13 +487,23 @@ const callProfile = deepFreeze({
     // claimEscapePayout(destination): anyone may send it, the vault pays the
     // destination. The SDK's recovery context kind is escape-payout-claim; the
     // host authorizes it under its own `payout-claim` kind.
-    claim: { selector: '88c10aee', words: 1, destinationWord: 0, recoveryKind: 'escape-payout-claim', authorizationKind: 'payout-claim' }
+    claim: { selector: '88c10aee', words: 1, destinationWord: 0, recoveryKind: 'escape-payout-claim', authorizationKind: 'payout-claim' },
+    // A withdrawal whose network fee is paid out of its payout through an
+    // ERC-4337 user operation sent from a transit account (the SDK's
+    // `fees: 'payout'`). The two selectors are the calls the signer may see
+    // inside such an operation: account.withdraw(bytes), which carries the
+    // vault call, and factory.createAccount(owner, payee), the operation's
+    // initCode on first use. services/sponsoredOperation.mjs judges an
+    // operation with these and the exits above; a family without this key
+    // has no sponsored withdrawals.
+    sponsored: { version: 1, transitWithdraw: '0968f264', createAccount: '133572ba' }
 });
 
 // Same classification rule as noteBoundV1.mjs, enumerated from the revision 3
-// client and runtime classes (0.2.0 @82c8504). The SDK also refuses closed
-// deposits natively (assertDepositMayStart, honorsDepositsFlag); the host
-// guard stays installed so the refusal has one error shape in every version.
+// client and runtime classes (0.2.0 @4b955d9; the 82c8504 snapshot had two
+// fewer runtime names, listed below). The SDK also refuses closed deposits
+// natively (assertDepositMayStart, honorsDepositsFlag); the host guard stays
+// installed so the refusal has one error shape in every version.
 const depositEntryPoints = deepFreeze({
     client: ['deposit', 'performDeposit', 'prepareDepositQuote', 'quoteDepositUsd'],
     runtime: ['prepareDeposit', 'prepareDepositQuote']
@@ -501,7 +518,8 @@ const recoveryEntryPoints = deepFreeze({
     ],
     runtime: [
         'authorizePendingDepositRetry', 'canQuotePendingDeposit', 'claimPendingDepositReplacement',
-        'claimPendingDepositSubmission', 'confirmDeposit', 'depositSubmissionMatches', 'depositsClosed',
+        'claimPendingDepositSubmission', 'completeConfirmedDeposit', 'confirmDeposit', 'confirmedDepositFor',
+        'depositSubmissionMatches', 'depositsClosed',
         'depositsClosedError', 'discardClosedDepositDraftLocked', 'getDepositHistory', 'markPendingDepositAmbiguous',
         'markPendingDepositMissingReceipts', 'markPendingDepositRetryable', 'markPendingDepositUnknown',
         'nextDepositPath', 'pendingDeposit', 'refreshPendingDeposit', 'releasePendingDepositReplacementClaim',

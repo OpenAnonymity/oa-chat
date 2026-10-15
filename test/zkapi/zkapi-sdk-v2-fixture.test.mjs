@@ -81,7 +81,7 @@ test('the fixture is the real package identity: name, version, exports map and e
     assert.equal(pkg.name, '@openanonymity/zkapi-browser-sdk');
     assert.equal(pkg.version, '0.2.0');
     assert.deepEqual(pkg.files, ['sdk/']);
-    assert.equal(Object.keys(pkg.exports).length, 17);
+    assert.equal(Object.keys(pkg.exports).length, 18);
     assert.equal(pkg.exports['.'], './sdk/index.js');
     assert.equal(pkg.exports['./build'], './sdk/build.mjs');
     assert.equal(pkg.exports['./package.json'], './package.json');
@@ -89,11 +89,11 @@ test('the fixture is the real package identity: name, version, exports map and e
         assert.ok(fs.existsSync(path.resolve(fixture, target)), `${target} exists`);
     }
     assert.deepEqual(readFixtureJson('sdk/package.json'), { type: 'module' });
-    // The digests of the real name lists (package, 16 subpaths, client and
+    // The digests of the real name lists (package, 17 subpaths, client and
     // runtime surface) equal the fixture's.
     const verified = node([fixtureFile('verify-exports.mjs')]);
     assert.equal(verified.status, 0, `${verified.stdout}${verified.stderr}`);
-    assert.match(verified.stdout, /25 name lists match the recorded real SDK digests/);
+    assert.match(verified.stdout, /26 name lists match the recorded real SDK digests/);
 });
 
 test('the store has the real declaration lines, lock and channel literals, and the pinned SHA-256', () => {
@@ -297,12 +297,16 @@ test('assertDeployableProfile mirrors the real refusals and codes', async () => 
             error => error.message.includes(file) && error.message.includes(field), field);
     }
 
-    // The bundle's setup, not the profile's alone, decides mainnet.
+    // The bundle's setup and the profile's must be one; neither is refused for
+    // chain 1 on its own. The 82c8504 snapshot threw development_setup_on_mainnet
+    // for a dev bundle on chain 1; 4b955d9 (branch v0.2) dropped that clause, so a
+    // dev bundle is deployable on both networks like an mpc-1 one.
     const dev = { ...manifest, setupId: 'dev' };
     const devOn = (network, setupId) => run(network, config => { config.trusted_deployment.setup_id = setupId; }, dev);
-    assert.throws(() => devOn('mainnet', 'dev'), code('development_setup_on_mainnet'));
+    assert.equal(devOn('mainnet', 'dev'), undefined);
     assert.equal(devOn('sepolia', 'dev'), undefined);
     assert.throws(() => devOn('mainnet', 'mpc-1'), code('setup_mismatch'));
+    assert.throws(() => devOn('sepolia', 'mpc-1'), code('setup_mismatch'));
 });
 
 test('the singletons record calls, publish globalThis.zkapiClient and keep the real event semantics', async t => {
@@ -459,7 +463,7 @@ test('the fixture stays small, self-contained and invisible to the test runner',
     };
     walk(fixture);
     assert.ok(files.length > 0);
-    assert.ok(files.reduce((total, file) => total + fs.statSync(file).size, 0) < 100 * 1024, 'under 100 KB');
+    assert.ok(files.reduce((total, file) => total + fs.statSync(file).size, 0) < 128 * 1024, 'under 128 KB');
     // The runner collects every *.test.js and *.test.mjs under test/.
     assert.deepEqual(files.filter(file => /\.test\.(?:js|mjs|cjs)$/.test(file)), []);
     // No machine-specific path, and no real SDK source tree reference.

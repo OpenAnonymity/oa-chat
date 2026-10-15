@@ -598,7 +598,9 @@ of the version-specific behavior below runs; this section records what it does
 once a second version is live and what it does not hide. The host behaviors
 that second protocol needs (the service pause, the settling-chat disclosure,
 credited payouts, the exit kit, the other versions' history, giving up a
-balance) are implemented and are covered by the same rules.
+balance) are implemented and are covered by the same rules. Sponsored
+withdrawals (the network fee paid from the withdrawal through the operator's
+relay) are implemented too and have their own subsection below.
 
 **Version selection is local.** A tab decides which SDK build to load from this
 browser's own wallet database (a read-only IndexedDB probe) and one validated
@@ -706,6 +708,53 @@ and is visible to its operator and on chain. A tab still running pre-rollout
 JavaScript is outside these controls. Operator-supplied notices and service
 messages are escaped and truncated, never rendered as links or instructions.
 
+### Sponsored withdrawals: the network fee paid from the withdrawal
+
+A withdrawal can pay its network fee out of its own payout, so the person
+needs no ETH to leave. This is implemented and **dormant**: the form offers it
+only when a reviewed profile pins a paymaster and a relay for the loaded
+version, and no shipped profile does yet. Details and the signer's rules:
+[ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal).
+
+What it adds, and to whom:
+
+| Party | What it can see when a person chooses this way of paying |
+| --- | --- |
+| The operator's relay (a bundler) | The signed operation before the network does: the note's proof, the holding address the payout goes to, the signing account (its owner), the receiving address, the fee fields and the time. It is the operator's own service, reached through the app, and it learns the person's IP only as the app's host forwards it (whatever the host forwards for the operator's proxy path). The withdrawal's amount and receiving address are public on chain anyway; what the relay adds is the earlier sight and the timing. |
+| The app's host or reverse proxy | That this browser used the relay route (`<proxyPath>_bundler`), with IP and time, as it sees the operator's proxy path. The app's own code keeps no copy of the operation (the SDK journals its own in the local wallet database). |
+| Chain observers | A holding account (CREATE2, owned by the signing account, paying the receiving address) and the paymaster's fee. The signing account is tied to the receiving address publicly, exactly as the sender of an ordinary exit transaction is. |
+| The inference provider | Nothing. |
+
+Rules the app keeps:
+
+- The page never contacts the relay directly. It uses the app's own route,
+  which the generated hosting configuration forwards to the one URL the
+  reviewed profile pins. There is no person-chosen relay (that would route a
+  request around the app's proxy).
+- The relay is contacted only after the person chose "Paid from this
+  withdrawal": asking for a quote and starting the withdrawal are the two
+  contacts, and opening the form sends nothing. The form says, before
+  anything is sent, that the withdrawal goes through this app to the service's
+  relay and that the relay sees it and the receiving address.
+- Paying from the wallet stays the default and is always offered beside it; an
+  unavailable quote says why and keeps the wallet.
+- The Send Ethereum key signs a hash without a prompt, so the host judges each
+  operation where it would leave the browser (payee, note, mode, concession,
+  fee cap and cost against what the person confirmed, the pinned contracts
+  and the signing address) and refuses anything else with nothing sent. The
+  MetaMask method shows the wallet's own signature request for an opaque hash
+  and the host cannot verify the operation before it is signed in that method;
+  that gap is stated, and a proposed upstream hook would close it.
+- A record of such a withdrawal is read from the local wallet database like any
+  other: the allowlist gained six fields, the signed operation bodies are not
+  read, and the rows stay in memory.
+
+**Limits.** The relay is a service of the operator, so it can refuse, delay or
+log; a refused or delayed withdrawal can always be started again from the
+wallet. If the receiving address is a contract that rejects a plain ETH
+payment, the payout is held at the paymaster for that address to claim by one
+ordinary public transaction, which ties the sending account to it.
+
 ### Proof setup trust: single-party development setup
 
 The payment protocol's proofs are Groth16 proofs, which are sound only if nobody
@@ -724,11 +773,13 @@ The host accepts `mpc-1` and `dev` identically on Sepolia and on mainnet, by
 owner decision. It reports `dev` where an operator looks (a warning per live
 version in the build, `proofSetup` in `build.json`, a warning from the registry
 check) and does not block it. The app does not tell the person using it: a
-version on `dev` looks the same as one on `mpc-1`. Gates upstream, outside this
-repository, still refuse `dev` for mainnet or in release builds (the SDK package's
-build, the vault deployment script, and the release builds of the proof
-library, the operator image and the exit-kit companion); the guide lists each
-with its source. A vault deployed on `dev` keys cannot be switched to `mpc-1`:
+version on `dev` looks the same as one on `mpc-1`. Upstream, outside this
+repository, a single-party vault is an explicit opt-in at each step (the vault
+deployment script, the operator images and the exit-kit companion build take
+`ALLOW_DEV_SETUP=1`, the SDK package's build no longer refuses `dev` for
+mainnet since `4b955d9`, and default and release builds still accept only the
+pinned `mpc-1` keys); the guide lists each with its source. A vault deployed on
+`dev` keys cannot be switched to `mpc-1`:
 moving later is a new vault and a user migration, which is a public withdrawal
 and deposit and is linkable as described under upgrading. Version 1's repaired
 setup is also single-party (see [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md)).

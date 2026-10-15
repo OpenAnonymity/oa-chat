@@ -313,12 +313,13 @@ build does with them.
 
   The `concession-v1` row stays `pending`: it still needs a published SDK
   revision with a deployed profile for the chosen proof setup (the `0.2.0`
-  snapshot ships a `dev` bundle and placeholder profiles), a covering recovery
-  patch and the operator's finalized manifest
+  package, reference revision `4b955d9` on the `v0.2` branch of the local zkapi
+  repository, ships a `dev` bundle and placeholder profiles), a covering
+  recovery patch and the operator's finalized manifest
   ([ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md#114-what-still-keeps-version-2-pending)).
-  On mainnet a `dev` bundle is additionally refused by the SDK package's own
-  build (`development_setup_on_mainnet`), a rule of the SDK and not of this
-  host.
+  On mainnet a `dev` bundle builds with that revision; an older SDK revision
+  (`82c8504`) refuses it in its own build (`development_setup_on_mainnet`), a
+  rule of the SDK and not of this host.
 - **Operator commands**, subcommands of `node scripts/zkapi-registry-cli.mjs`:
   `store-hash <alias>` prints the `storeSha256` an activation pins, and
   `check --base <git-ref>` validates the working registry and requires it to be
@@ -369,10 +370,11 @@ build does with them.
   the reads are not repeated; a receipt for another plan or root is ignored.
   After the verification and before anything is emitted, `buildZkapiAssets`
   prints one `[build] WARNING:` line per live version whose profile pins the
-  `dev` proof setup (nothing for `mpc-1` or version 1). The SDK's refusal of a
-  `dev` bundle for mainnet (`development_setup_on_mainnet`) is passed on with
-  the host's explanation and the SDK's error as `cause`; it is the SDK's rule,
-  never bypassed here.
+  `dev` proof setup (nothing for `mpc-1` or version 1). An older SDK
+  revision's refusal of a `dev` bundle for mainnet
+  (`development_setup_on_mainnet`, dropped upstream in `4b955d9`) is passed on
+  with the host's explanation and the SDK's error as `cause`; it is the SDK's
+  rule, never bypassed here.
 - After emission the proving and verifying key bytes are hashed from disk and
   compared with the reviewed pins, and each `browser-config.json` is written
   from the planned bytes (its hash is the row's `configSha256`).
@@ -380,8 +382,8 @@ build does with them.
   version 1 first, computed from static JSON only (no SDK package is resolved);
   `build.env` and the generated `buildCommand` are unchanged.
 - Version 2 adds about 16.7 MB of assets plus the worker bundle, measured from
-  the `0.2.0` snapshot (request key 6.1 MB, withdrawal key 7.9 MB, WebAssembly
-  2.8 MB). The only v2 package in this repository is a test fixture, so measure
+  the `0.2.0` package (request key 6.1 MB, withdrawal key 7.9 MB, WebAssembly
+  2.8 MB; the same bytes at `82c8504` and `4b955d9`). The only v2 package in this repository is a test fixture, so measure
   again from the pinned commit at activation.
 
 ### Build plugins
@@ -1372,7 +1374,7 @@ service fee while the sponsor bears gas variance. A plain relayer cannot move
 ETH out of the current EOA or pay its transaction gas without additional
 execution/authorization architecture. Any such change needs a separate design
 and review, preserving browser-local note secrets and avoiding account identity
-or inference data in sponsorship requests. Sponsorship is a separate design and is not implemented by the fee-quote change.
+or inference data in sponsorship requests. Sponsorship of a *deposit* is a separate design and is not implemented by the fee-quote change. Sponsored *withdrawals* are a different path and are built (dormant): see [Sponsored withdrawals](#sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal-2026-10-14).
 
 ## Review merge and deposit outcome reporting (2026-09-27)
 
@@ -1402,3 +1404,35 @@ show confirmed deposit / refreshing balance, without claiming ready-to-chat or
 formatting a missing projection as zero. Their transient UI guard suppresses
 new funding/quote controls and clears only when the exact confirmed note ID
 arrives from the SDK. Wallet persistence and eligibility remain SDK-owned.
+
+## Sponsored withdrawals: the network fee paid from the withdrawal (2026-10-14)
+
+A withdrawal of the successor protocol (`concession-v1`) can pay its network fee
+out of its payout through an ERC-4337 user operation instead of from the
+connected wallet, so the person needs no ETH to leave. The SDK calls it
+`fees: 'payout'`. The host builds it as an optional part of the family and it
+is **dormant**: the choice appears only when the loaded deployment's reviewed
+profile pins a complete `gasless` object (EntryPoint, paymaster, account
+factory, creation code, policy, fee ceilings and the relay's URL), the loaded
+client can quote it and the page has a same-origin route to the relay. The
+`0.2.0` profiles pin none, and version 2 is still pending, so no shipped build
+offers it. Full record: [ZKAPI_VERSIONING.md 11.7](ZKAPI_VERSIONING.md#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal);
+privacy: [PRIVACY_MODEL.md](PRIVACY_MODEL.md#sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal).
+
+- **Money.** The person is shown the least they will receive (a close) or about
+  what they will receive (an emergency exit, whose fee is charged when it
+  finishes), the most the network fee can be, and the service's flat fee when
+  there is one. What the fee does not use comes to them. The host passes the
+  quote's flat fee as the SDK's `feeCapWei` and `allowExpensiveGas: false`, and
+  its signer allows the reservation at most 50% above the quote.
+- **Who signs what.** The connected account (MetaMask or the browser-held Send
+  Ethereum address) owns a per-withdrawal holding account and signs the hash of
+  the operation. In the Send Ethereum method the host's signer judges the
+  operation where it would leave the browser; in the MetaMask method the
+  wallet's own signature request is the confirmation.
+- **After it.** A payout that arrived is a normal closed withdrawal with a fee
+  line. A payout that did not (it waits at the holding account, or the
+  receiving address would not accept it and is held at the paymaster) is shown
+  on its row in Payment history with "Collect payout" (free), "Collect with my
+  wallet" or "Claim payout", and keeps the version that can deliver it loaded.
+- **Deposits are unaffected.** This is about the exit only.

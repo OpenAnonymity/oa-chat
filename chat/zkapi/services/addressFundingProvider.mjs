@@ -1,11 +1,14 @@
-import { Wallet, Transaction, getAddress, keccak256, formatEther } from 'ethers';
+import { Wallet, Transaction, getAddress, getBytes, keccak256, formatEther } from 'ethers';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import browserWalletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { browserSdkTransport } from '@openanonymity/zkapi-browser-sdk/configure';
 import { bufferedGasLimit, MAX_TRANSACTION_GAS_LIMIT as MAX_GAS } from '@openanonymity/zkapi-browser-sdk/gas';
 import { getActiveAdapter, getActiveVersion, getVersionTable } from '../versioning/activeVersion.mjs';
 import { noteBoundV1 } from '../versioning/adapters/noteBoundV1.mjs';
 import { createAddressFundingStore, isBrowserCustodyKey } from './addressFundingStore.mjs';
 import { withWalletProviderRead } from './walletProviderAccess.mjs';
+import { SPONSORED_NOT_CONFIRMED_REFUSAL } from '../versioning/sponsored.mjs';
+import { SPONSORED_REFUSAL_MESSAGE, SponsoredOperationError, judgeSponsoredOperation, readSponsoredPins } from './sponsoredOperation.mjs';
 
 const UINT256_MAX = (1n << 256n) - 1n;
 const MAX_NONCE = BigInt(Number.MAX_SAFE_INTEGER);
@@ -24,6 +27,16 @@ const READ_METHODS = new Set([
     'eth_getTransactionReceipt', 'eth_getCode', 'eth_getLogs', 'eth_gasPrice',
     'eth_maxPriorityFeePerGas', 'eth_feeHistory'
 ]);
+// The bundler methods the sponsored transport forwards. Anything else is
+// refused: it is a route to an operator's service, not a generic RPC.
+const BUNDLER_METHODS = new Set(['eth_chainId', 'eth_supportedEntryPoints', 'eth_estimateUserOperationGas',
+    'eth_sendUserOperation', 'eth_getUserOperationByHash', 'eth_getUserOperationReceipt',
+    'rundler_maxPriorityFeePerGas', 'pimlico_getUserOperationGasPrice']);
+// Signatures one sponsored action may ask for: the first, then a raise of both
+// fee fields (12.5% each, within the paymaster's ceilings), then a proof that
+// had to be made again. A bound, not a promise: the SDK stops long before it.
+const MAX_SPONSORED_SIGNATURES = 12;
+const BUNDLER_TIMEOUT_MS = 20_000;
 const RECOVERY_FIELDS = new Set(['version', 'kind', 'deploymentId', 'chainId', 'contractAddress',
     'recordId', 'operationId', 'submissionId', 'generation', 'noteId', 'mode', 'destination',
     'finalBalance', 'clearanceReserved', 'withdrawalNullifier', 'amount', 'commitment']);
@@ -186,6 +199,18 @@ const installedProtocol = () => {
 };
 const installedDepositGate = () => zkapiClient.oaVersioning?.depositGate?.() ?? null;
 
+// The gasless contracts the loaded profile pins, read by this host (null when
+// it pins none or the page has no profile). A profile this host cannot read is
+// "none": nothing is signed for it.
+function installedSponsoredPins() {
+    try { return readSponsoredPins(browserWalletRuntime.browserConfig?.trusted_deployment); } catch { return null; }
+}
+// The same-origin route of the loaded version's bundler (the facade computes
+// it from the version table). null: sponsored withdrawals are not offered here.
+const installedBundlerUrl = () => {
+    try { return zkapiClient.oaVersioning?.sponsored?.bundlerUrl?.() ?? null; } catch { return null; }
+};
+
 function depositsClosedError(gate, version) {
     const error = fail(gate?.code === 'reload_required'
         ? 'This page is out of date. Reload to continue. Nothing was sent.'
@@ -223,10 +248,12 @@ export class AddressFundingProvider {
             ? new globalThis.window.BroadcastChannel('oa-zkapi-address-funding') : null,
         protocol = installedProtocol,
         depositGate = installedDepositGate,
-        sweepOnly = false
+        sweepOnly = false,
+        sponsoredPins = installedSponsoredPins,
+        bundlerUrl = installedBundlerUrl
     } = {}) {
         Object.assign(this, { getConfig, transport, store, locks, crypto, createWallet, prepareDepositQuote, resumeTransaction, createChannel,
-            protocol, depositGate, sweepOnly });
+            protocol, depositGate, sweepOnly, sponsoredPins, bundlerUrl });
         this.prepareDepositQuote = prepareDepositQuote || ((ethAmount, options, { isCurrent } = {}) =>
             withWalletProviderRead(zkapiClient, this, () => zkapiClient.prepareDepositQuote(ethAmount, options), { isCurrent }));
         this.state = { exists: false, unlocked: false, backedUp: false, address: null, pending: null, migrationRequired: false };
@@ -1007,6 +1034,9 @@ export class AddressFundingProvider {
         const kinds = ['deposit', 'withdrawal', 'finalization', 'recovery', 'sweep'];
         // Only a protocol with credited payouts has a claim to authorize.
         if (profile.claim) kinds.push(profile.claim.authorizationKind);
+        // Only a protocol with sponsored withdrawals has a collection (a
+        // forward of the balance a transit account holds).
+        if (profile.sponsored) kinds.push('collection');
         if (!kinds.includes(authorization?.kind) || typeof callback !== 'function') throw fail('Choose a wallet action first.', 4100);
         // A funding address of another version only returns its ETH. It never
         // deposits, exits or claims for a vault this page did not load.
@@ -1019,7 +1049,7 @@ export class AddressFundingProvider {
                 if (!record.backedUp) throw fail('Save your encrypted address backup before funding or spending.', 'address_backup_required');
                 if (record.pending && authorization.kind !== 'recovery') throw fail('Recover the saved transaction before starting another wallet action.', 'address_transaction_pending');
             });
-            this.action = { authorization: copy(authorization), scope: ctx.scope, sends: 0 };
+            this.action = { authorization: copy(authorization), scope: ctx.scope, sends: 0, sponsoredSignatures: 0 };
             this.notify();
             try { return await callback(); }
             catch (error) {
@@ -1271,6 +1301,154 @@ export class AddressFundingProvider {
         return { ...snapshot, tokenBalance: (eth / ctx.weiPerUnit).toString(), ethBalance: eth.toString() };
     }
 
+
+    // -----------------------------------------------------------------------
+    // Sponsored withdrawals (ERC-4337)
+    // -----------------------------------------------------------------------
+    //
+    // The SDK asks this provider for two things on that path and nothing else:
+    //   personal_sign   the 32-byte hash of an operation, to be signed by this
+    //                   address (the owner of the transit account), and
+    //   zkapiBundler    the bundler it talks to, when the provider has one.
+    // Both exist only for a protocol whose call profile has `sponsored`, a
+    // profile that pins the gasless contracts, and a same-origin route to the
+    // bundler. Neither does anything outside a running, authorized action that
+    // carries `sponsored`: a signature is only ever made for the person's
+    // confirmed withdrawal, and an operation only ever leaves the browser when
+    // judgeSponsoredOperation (sponsoredOperation.mjs) accepts it against that
+    // confirmation. The hash itself cannot be judged when it is signed; the
+    // signature is inert until the operation it signs is sent, and the send is
+    // the gate.
+
+    sponsoredContext() {
+        const { profile } = this.signerProtocol();
+        if (!profile.sponsored) return null;
+        let pins = null;
+        try { pins = this.sponsoredPins(); } catch { pins = null; }
+        const url = this.bundlerUrl();
+        if (!pins || typeof url !== 'string' || !url) return null;
+        return { profile, pins, url };
+    }
+
+    get zkapiBundler() {
+        // Read by the SDK for every sponsored call; undefined is "no host
+        // transport", and then this provider signs nothing for it either.
+        return this.sponsoredContext() ? this.sponsoredTransport : undefined;
+    }
+
+    get sponsoredTransport() {
+        if (!this.sponsoredTransportObject) {
+            this.sponsoredTransportObject = Object.freeze({
+                // The SDK uses `request` (a JSON-RPC style client) when it is
+                // present; sendUserOperation is what marks the object a
+                // bundler transport.
+                request: ({ method, params = [] } = {}) => this.bundlerRequest(method, params),
+                sendUserOperation: (operation, entryPoint) => this.bundlerRequest('eth_sendUserOperation', [operation, entryPoint])
+            });
+        }
+        return this.sponsoredTransportObject;
+    }
+
+    sponsoredRefusal(message = SPONSORED_REFUSAL_MESSAGE, code = 4100) {
+        return fail(message, code);
+    }
+
+    async signSponsored(params) {
+        const ctx = await this.context();
+        const action = this.action;
+        const sponsored = this.sponsoredContext();
+        if (!sponsored || !action || action.scope !== ctx.scope || !action.authorization?.sponsored) {
+            throw this.sponsoredRefusal('Choose and confirm a sponsored withdrawal before signing.');
+        }
+        if (!Array.isArray(params) || params.length !== 2 || typeof params[0] !== 'string' || !HASH.test(params[0])
+            || typeof params[1] !== 'string') {
+            throw this.sponsoredRefusal('Only the hash of a sponsored operation can be signed here.');
+        }
+        if (action.sponsoredSignatures >= MAX_SPONSORED_SIGNATURES) {
+            throw this.sponsoredRefusal('This action has reached its signature limit. Check its saved status.');
+        }
+        return this.locked(ctx, async () => {
+            const record = await this.read(ctx, true);
+            if (!sameAddress(params[1], record.address)) throw this.sponsoredRefusal('The signature was asked of a different payment address.');
+            // personal_sign of the 32 raw bytes: the EIP-191 digest the transit
+            // account verifies. Nothing else is ever signed through this path.
+            const signature = await new Wallet(record.privateKey).signMessage(getBytes(params[0]));
+            action.sponsoredSignatures = (action.sponsoredSignatures || 0) + 1;
+            return signature.toLowerCase();
+        });
+    }
+
+    async bundlerRequest(method, params) {
+        const sponsored = this.sponsoredContext();
+        if (!sponsored) throw Object.assign(fail('Sponsored withdrawals are not available here.', 'bundler_unavailable'));
+        if (typeof method !== 'string' || !BUNDLER_METHODS.has(method) || !Array.isArray(params)) {
+            throw this.sponsoredRefusal('This relay request is not available.', 'bundler_method');
+        }
+        if (method === 'eth_sendUserOperation') await this.assertSponsoredSend(params, sponsored);
+        return this.bundlerCall(sponsored.url, method, params);
+    }
+
+    // The gate: judge the operation about to be sent against the running
+    // action. A send with no action is refused too: the SDK re-sends a
+    // journaled operation from its background checks, and that is not an
+    // action the person confirmed. Starting the same withdrawal again from the
+    // dialog is, and is judged then.
+    async assertSponsoredSend(params, sponsored) {
+        const ctx = await this.context();
+        const action = this.action;
+        if (!action || action.scope !== ctx.scope || !action.authorization?.sponsored) {
+            throw this.sponsoredRefusal(SPONSORED_NOT_CONFIRMED_REFUSAL);
+        }
+        if (params.length !== 2 || typeof params[1] !== 'string') throw this.sponsoredRefusal();
+        const record = await this.locked(ctx, () => this.read(ctx, true));
+        try {
+            judgeSponsoredOperation(params[0], action.authorization, {
+                pins: sponsored.pins, vault: ctx.vault, chainId: ctx.chainId, owner: record.address,
+                profile: sponsored.profile, entryPoint: params[1]
+            });
+        } catch (error) {
+            if (error instanceof SponsoredOperationError) {
+                // The words are the SDK-visible reason, with no operation bytes.
+                throw this.sponsoredRefusal(error.message, 4100);
+            }
+            throw this.sponsoredRefusal();
+        }
+    }
+
+    async bundlerCall(url, method, params) {
+        const id = ++this.rpcId;
+        const controller = new AbortController();
+        let timer;
+        let payload;
+        try {
+            payload = await Promise.race([(async () => {
+                const response = await this.transport(url, {
+                    method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), signal: controller.signal
+                });
+                if (!response.ok) throw new Error('http');
+                return response.json();
+            })(), new Promise((_, reject) => {
+                timer = setTimeout(() => { controller.abort(); reject(new Error('timeout')); }, BUNDLER_TIMEOUT_MS);
+            })]);
+        } catch {
+            throw Object.assign(fail('The relay service could not be reached. Nothing was sent.', 'bundler_unavailable'), { name: 'TimeoutError' });
+        } finally { clearTimeout(timer); }
+        if (!payload || payload.jsonrpc !== '2.0' || payload.id !== id) {
+            throw Object.assign(fail('The relay service answered with an unexpected response.', 'bundler_unavailable'));
+        }
+        if (payload.error && typeof payload.error === 'object') {
+            // The bundler's refusal is data the SDK reads (the AA code, ERC-7769's
+            // codes): pass its numbers and text on, never an object it controls.
+            const error = new Error(String(payload.error.message ?? 'The bundler refused the request.').slice(0, 500));
+            error.rpcCode = Number.isSafeInteger(payload.error.code) ? payload.error.code : null;
+            if (payload.error.data !== undefined) error.data = payload.error.data;
+            throw error;
+        }
+        return payload.result;
+    }
+
     async request({ method, params = [], zkapiRecovery } = {}) {
         const ctx = await this.context();
         if (method === 'eth_accounts' || method === 'eth_requestAccounts') {
@@ -1287,6 +1465,7 @@ export class AddressFundingProvider {
             return null;
         }
         if (method === 'wallet_watchAsset') return false;
+        if (method === 'personal_sign') return this.signSponsored(params);
         if (method === 'eth_sendTransaction') {
             if (!Array.isArray(params) || params.length !== 1) throw fail('Exactly one transaction is required.', 4200);
             try {

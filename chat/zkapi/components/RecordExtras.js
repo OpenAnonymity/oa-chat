@@ -63,11 +63,34 @@
 //   txUrl(hash)         an https explorer link for a transaction, or null
 //   busy                the dialog is running something: the button is
 //                       disabled, as the row's own buttons are
+//   method              'metamask' | 'address': whose wallet sends a
+//                       transaction. A sponsored row offers a wallet-paid
+//                       action only where the wallet is a person's own
+//
+// A withdrawal whose network fee was paid from the withdrawal itself (a
+// sponsored withdrawal: the record names `feePayer: "payout"`, the address
+// that is paid in `payout` and a holding address in `transit`) has two more
+// things to say, in the same words:
+//
+//   Fee paid         what the network fee was and what was received, once the
+//                    withdrawal is over; and for an exit still waiting, that
+//                    its fee is taken from the withdrawal when it finishes.
+//   Payout waiting   The withdrawal went through, but the payout is at its
+//                    holding address and has to be collected. Collecting is
+//                    free to the person (the service pays for it), or one
+//                    transaction from the wallet.
+//   Payout held      The receiving address would not take a plain ETH
+//                    payment, so it is held for them to claim (one
+//                    transaction from an account that holds a little ETH).
 //
 // DOM hooks, stable for tests and CSS:
 //   [data-claim-payout="<recordId>"]   the Claim payout button; the dialog
 //                                      delegates a click to
 //                                      `zkapiClient.claimEscapePayout(id)`
+//   [data-collect-transit="<recordId>"]        Collect payout (free to the person)
+//   [data-sweep-transit="<recordId>"]          Collect with my wallet
+//   [data-claim-gasless-credit="<recordId>"]   Claim a held sponsored payout
+//   [data-zkapi-record-sponsored]              the fee lines of a sponsored row
 //   [data-zkapi-record-credit]         the held-payout card
 //   [data-zkapi-record-claimed]        the delivered-payout lines
 //   [data-zkapi-record-alert]          the paid-less attention note
@@ -94,7 +117,21 @@ const WORDS = Object.freeze({
     clearedTo: 'The payment contract no longer holds this payout, so it was already paid to {destination}.',
     clearedToAddress: 'The payment contract no longer holds this payout, so it was already paid to its address.',
     viewClaim: 'View claim transaction',
-    alertFigures: 'The withdrawal paid out {paid}. Your balance minus your last chat’s budget was {floor}.'
+    alertFigures: 'The withdrawal paid out {paid}. Your balance minus your last chat’s budget was {floor}.',
+    feePaid: 'The network fee, {fee}, was paid from this withdrawal.',
+    feeAndReceived: 'The network fee, {fee}, was paid from this withdrawal, and {received} was sent to {destination}.',
+    feePending: 'The network fee of this exit is paid from the withdrawal when it finishes.',
+    waitingLabel: 'Payout waiting',
+    waitingNote: 'This withdrawal went through, but the payout is still waiting at a holding address and has to be sent on to {destination}.',
+    waitingNoteAddress: 'This withdrawal went through, but the payout is still waiting at a holding address and has to be sent on to its address.',
+    collectNote: 'Collecting it costs you nothing: the service pays for it.',
+    collectButton: 'Collect payout',
+    collectWalletNote: 'Or collect it with your wallet: that is one transaction, and the account that sends it pays the network fee.',
+    collectWalletButton: 'Collect with my wallet',
+    creditedHeldNote: '{amount} is held for {destination}: that address would not accept the payment.',
+    creditedHeldNoteAddress: 'The payout is held for its address: that address would not accept the payment.',
+    creditedClaimNote: 'Claiming it is one transaction, and the account that sends it pays the network fee.',
+    creditedClaimButton: 'Claim payout'
 });
 
 /** The words these rows are made of, for the vocabulary sweep that guards them. */
@@ -275,6 +312,72 @@ function deviceNote() {
     return `<p class="mt-2 ${LINE}" data-zkapi-record-device>${versionCopy('exit.device')}</p>`;
 }
 
+// ---------------------------------------------------------------------------
+// A withdrawal that paid its own network fee
+// ---------------------------------------------------------------------------
+
+/** Whether the record is a sponsored withdrawal: it names who is paid and its holding address. */
+export function isSponsoredRecord(record) {
+    return isRecord(record) && record.feePayer === 'payout'
+        && ADDRESS.test(String(record.payout)) && ADDRESS.test(String((record.transit || {}).account));
+}
+
+// An amount in wei as ledger units (gwei), or null: the unit every other
+// figure of a row is in.
+function unitsFromWei(value) {
+    const text = typeof value === 'string' && /^[0-9]{1,40}$/.test(value) ? value
+        : typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+    return text === null ? null : (BigInt(text) / 1_000_000_000n).toString();
+}
+
+const isClosedPhase = record => record.phase === 'closed' || record.phase === 'closed_unconfirmed';
+
+function sponsoredBlocks(record, ctx, extras) {
+    const notes = [];
+    const recordId = recordIdOf(record);
+    const destination = addressText(record.payout, ctx);
+    const fee = pricedAmount(unitsFromWei(record.chargedWei), ctx);
+    const received = pricedAmount(unitsFromWei(record.paidOutWei), ctx);
+    const actions = [];
+    const wallet = ctx.method === 'metamask' || ctx.method === undefined;
+    if (record.paymasterCredited === true && isClosedPhase(record)) {
+        // The payout was credited, not sent: held, and claimed from the wallet.
+        extras.label = WORDS.heldLabel;
+        const amount = pricedAmount(unitsFromWei(record.paymasterCreditedWei), ctx);
+        const heldLine = amount && destination ? fill(WORDS.creditedHeldNote, { amount, destination })
+            : destination ? fill(WORDS.creditedHeldNote, { amount: 'The payout', destination })
+                : escapeHtml(WORDS.creditedHeldNoteAddress);
+        notes.push(`<div class="mt-2 space-y-1" data-zkapi-record-credit data-zkapi-record-sponsored>
+            <p class="text-[11px] text-foreground">${heldLine}</p>
+            ${fee ? `<p class="${LINE}">${fill(WORDS.feePaid, { fee })}</p>` : ''}
+            <p class="${LINE}">${escapeHtml(WORDS.creditedClaimNote)}</p>
+        </div>`);
+        if (recordId && wallet) {
+            actions.push(`<button data-claim-gasless-credit="${escapeHtml(recordId)}" class="zkapi-primary-button flex-1" type="button"${ctx.busy ? ' disabled' : ''}>${escapeHtml(WORDS.creditedClaimButton)}</button>`);
+        }
+    } else if (record.fundsWaitingInTransit === true && isClosedPhase(record)) {
+        extras.label = WORDS.waitingLabel;
+        notes.push(`<div class="mt-2 space-y-1" data-zkapi-record-sponsored>
+            <p class="text-[11px] text-foreground">${destination ? fill(WORDS.waitingNote, { destination }) : escapeHtml(WORDS.waitingNoteAddress)}</p>
+            <p class="${LINE}">${escapeHtml(WORDS.collectNote)}</p>
+            ${wallet ? `<p class="${LINE}">${escapeHtml(WORDS.collectWalletNote)}</p>` : ''}
+        </div>`);
+        if (recordId) {
+            actions.push(`<button data-collect-transit="${escapeHtml(recordId)}" class="zkapi-primary-button flex-1" type="button"${ctx.busy ? ' disabled' : ''}>${escapeHtml(WORDS.collectButton)}</button>`);
+            if (wallet) {
+                actions.push(`<button data-sweep-transit="${escapeHtml(recordId)}" class="zkapi-secondary-button flex-1" type="button"${ctx.busy ? ' disabled' : ''}>${escapeHtml(WORDS.collectWalletButton)}</button>`);
+            }
+        }
+    } else if (isClosedPhase(record) && fee) {
+        notes.push(`<p class="mt-2 ${LINE}" data-zkapi-record-sponsored>${received && destination
+            ? fill(WORDS.feeAndReceived, { fee, received, destination }) : fill(WORDS.feePaid, { fee })}</p>`);
+    } else if (!isClosedPhase(record) && record.mode === 'escape') {
+        notes.push(`<p class="mt-2 ${LINE}" data-zkapi-record-sponsored>${escapeHtml(WORDS.feePending)}</p>`);
+    }
+    if (actions.length) extras.actionsHtml += actions.join('');
+    return notes;
+}
+
 function claimButton(recordId, ctx) {
     return `<button data-claim-payout="${escapeHtml(recordId)}" class="zkapi-primary-button flex-1" type="button"${ctx.busy ? ' disabled' : ''}>${escapeHtml(WORDS.claimButton)}</button>`;
 }
@@ -317,6 +420,8 @@ export function recordExtras(record, ctx = {}) {
         } else if (isClaimedPayoutCredit(record)) {
             notes.push(deliveredCard(record, context));
         }
+
+        if (isSponsoredRecord(record)) notes.push(...sponsoredBlocks(record, context, extras));
 
         if (hasPayoutAlert(record)) {
             extras.badge = versionCopyText('payout.alert.badge');

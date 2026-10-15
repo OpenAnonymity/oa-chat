@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     WALLET_CHANNEL_NAME, WALLET_LOCK_NAME, classifyHoldings, describeSlot, discardDepositDraft,
-    isOpenWithdrawalRecord, isUnclaimedPayoutCredit, knownSlotKeys, readWalletHoldings, slotHoldsState
+    isOpenWithdrawalRecord, isSponsoredPayoutPending, isUnclaimedPayoutCredit, knownSlotKeys, readWalletHoldings, slotHoldsState
 } from '../../chat/zkapi/versioning/walletHoldings.mjs';
 import { isUnsentPreparedDeposit } from '../../chat/zkapi/versioning/unsentDeposit.mjs';
 import { resetCanceledDeposit } from '../../chat/zkapi/services/canceledDeposit.mjs';
@@ -244,6 +244,41 @@ test('holdings: unclaimed payout credits, alone and beside an open record', () =
     // A missing credited amount stays null.
     const [unknown] = classifyHoldings({ runtime: null, withdrawals: [{ ...credited, creditedAmount: undefined }] });
     assert.equal(unknown.credits[0].creditedAmount, null);
+});
+
+test('holdings: a sponsored withdrawal whose payout did not arrive is a credit and keeps its version', () => {
+    const payee = `0x${'9a'.repeat(20)}`;
+    const holding = `0x${'5c'.repeat(20)}`;
+    const sponsored = withdrawalRecord({
+        recordId: `${LEGACY}:11155111:${VAULT}:7`, mode: 'mutual', phase: 'closed', payoutVerified: false,
+        feePayer: 'payout', payout: payee, destination: holding, transit: { account: holding }, updatedAt: 4,
+        fundsWaitingInTransit: true, transitBalanceWei: '495000000000000'
+    });
+    // Waiting at its holding address: a credit for the person's own address
+    // (never the holding address), worth what that address reported.
+    const [waiting] = classifyHoldings({ runtime: null, withdrawals: [sponsored] });
+    assert.deepEqual(waiting.credits, [{ recordId: sponsored.recordId, noteId: 7, chainId: 11155111, contractAddress: VAULT,
+        destination: payee, creditedAmount: '495000' }]);
+    assert.equal(waiting.withdrawals.length, 0, 'a final close holds no note');
+    // Credited by the paymaster: the same, worth the credit.
+    const credited = { ...sponsored, fundsWaitingInTransit: false, paymasterCredited: true, paymasterCreditedWei: '990000000000000' };
+    assert.equal(classifyHoldings({ runtime: null, withdrawals: [credited] })[0].credits[0].creditedAmount, '990000');
+    // An amount nobody reported stays unknown.
+    const unknown = { ...credited, paymasterCreditedWei: undefined, transitBalanceWei: undefined };
+    assert.equal(classifyHoldings({ runtime: null, withdrawals: [unknown] })[0].credits[0].creditedAmount, null);
+    // Anything else is not one: delivered, wallet-paid, still open, unaddressed.
+    for (const changes of [{ fundsWaitingInTransit: false, paymasterCredited: false }, { feePayer: undefined },
+        { phase: 'pending' }, { payout: 'nope' }, { payout: undefined }]) {
+        const [entry] = classifyHoldings({ runtime: null, withdrawals: [{ ...sponsored, ...changes }] });
+        assert.equal(entry?.credits.length ?? 0, 0, JSON.stringify(changes));
+    }
+    assert.equal(isSponsoredPayoutPending(sponsored), true);
+    assert.equal(isSponsoredPayoutPending(credited), true);
+    assert.equal(isSponsoredPayoutPending({ ...sponsored, phase: 'closed_unconfirmed' }), true);
+    assert.equal(isSponsoredPayoutPending(null), false);
+    // It is not a payout the vault credited: that rule is unchanged.
+    assert.equal(isUnclaimedPayoutCredit(sponsored), false);
+    assert.equal(isUnclaimedPayoutCredit(credited), false);
 });
 
 test('holdings: malformed input is never read as "nothing held"', () => {

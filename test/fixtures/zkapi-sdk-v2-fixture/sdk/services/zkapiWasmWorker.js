@@ -1,4 +1,4 @@
-// FIXTURE: stand-in for sdk/services/zkapiWasmWorker.js (zkapi 0.2.0, 82c8504).
+// FIXTURE: stand-in for sdk/services/zkapiWasmWorker.js (zkapi 0.2.0, branch v0.2, 4b955d9).
 // Same entry contract (the SDK build bundles this file into
 // assets/zkapiWasmWorker.js, and it loads the wasm module relative to its own
 // URL) and the same message envelope, with a single operation.

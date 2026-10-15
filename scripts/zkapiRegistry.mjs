@@ -217,25 +217,33 @@ export function developmentSetupRows(registry, { profiles = PROFILE_FILES, netwo
     return found;
 }
 
+// The upstream commit that dropped the SDK build's refusal of a development
+// bundle for chain 1 (ethereum/zkapi, branch v0.2, sdk/build.mjs). An SDK
+// revision at or after it never produces development_setup_on_mainnet; the
+// 0.2.0 snapshot at 82c8504 does, so the refusal is still explained.
+const UPSTREAM_MAINNET_DEV_SETUP_COMMIT = '4b955d9';
+
 // The words that say whose rule the SDK's refusal is and what can be done about
 // it. A vault already deployed on dev keys cannot be moved to mpc-1 by choosing
 // another bundle, so that way out is named for what it costs.
 function developmentSetupRefusalText(error) {
     return `this host accepts the single-party development proof setup (${DEVELOPMENT_SETUP_ID}) on every network, `
-        + 'but the SDK package\'s own build refuses it for mainnet '
-        + `(development_setup_on_mainnet: ${error.message}). The host does not bypass or patch that check. Relax it `
-        + 'in the SDK upstream and pin that revision; pinning an SDK bundle built for the mpc-1 setup instead means a '
-        + 'new vault and a user migration (a further version of the registry), because a vault deployed on dev keys '
-        + 'cannot be switched to mpc-1.';
+        + 'but this SDK revision\'s own build refuses it for mainnet '
+        + `(development_setup_on_mainnet: ${error.message}). The host does not bypass or patch that check. `
+        + `Upstream dropped that rule in ethereum/zkapi (branch v0.2, commit ${UPSTREAM_MAINNET_DEV_SETUP_COMMIT}, `
+        + 'sdk/build.mjs): pin a revision that includes it; pinning an SDK bundle built for the mpc-1 setup instead '
+        + 'means a new vault and a user migration (a further version of the registry), because a vault deployed on '
+        + 'dev keys cannot be switched to mpc-1.';
 }
 
 /**
- * Wrap an SDK build refusal for the person reading the build output. The SDK
- * package's own build (not this host) refuses a development bundle for
- * mainnet, code development_setup_on_mainnet. The host accepts that setup, so
- * the bare refusal would read as the host's rule; say whose rule it is and what
- * can be done. Every other failure keeps its message and code, prefixed by
- * `where`. The SDK's check itself is never bypassed or reimplemented here.
+ * Wrap an SDK build refusal for the person reading the build output. An SDK
+ * revision before the upstream change (82c8504, not 4b955d9) refuses a
+ * development bundle for mainnet itself, code development_setup_on_mainnet. The
+ * host accepts that setup, so the bare refusal would read as the host's rule;
+ * say whose rule it is and what can be done. Every other failure keeps its
+ * message and code, prefixed by `where`. The SDK's check itself is never
+ * bypassed or reimplemented here.
  */
 export function sdkRefusalError(error, where) {
     if (error?.code === 'development_setup_on_mainnet') {

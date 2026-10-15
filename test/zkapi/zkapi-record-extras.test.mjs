@@ -1103,7 +1103,7 @@ test('wiring:payout-alert the real client\'s close that paid less than the floor
 const FORBIDDEN = /nullifier|vault|circuit|deployment|manifest|\bnotes?\b|note\s*#|#\s*\d|unlinkable|untraceable|anonymous|zero.knowledge|proof\b|escape hatch|mutual close|sync|reconcil|check status|confirmation continues|nothing is lost/i;
 
 test('the words are calm and plain: no jargon, no unit words in templates, curly apostrophes', () => {
-    const values = { destination: SHORT_DESTINATION, amount: '$0.80', paid: '$3.00', floor: '$4.00' };
+    const values = { destination: SHORT_DESTINATION, amount: '$0.80', paid: '$3.00', floor: '$4.00', fee: '$0.04', received: '$3.00' };
     for (const [key, template] of Object.entries(RECORD_EXTRAS_WORDS)) {
         assert.equal(typeof template, 'string', key);
         assert.equal(FORBIDDEN.test(template), false, `${key}: ${template}`);
@@ -1184,4 +1184,88 @@ test('the module is SDK-free, DOM-free and clock-free: two sibling imports and n
     const code = source.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
     assert.doesNotMatch(code, /\b(?:document|window|localStorage|sessionStorage|indexedDB|navigator|fetch|XMLHttpRequest|Date|Math\.random|setTimeout|setInterval|console)\b/);
     assert.doesNotMatch(code, /\bzkapiClient\b|\bzkapiVersioning\b|\boaVersioning\b/);
+});
+
+// ---------------------------------------------------- a withdrawal that paid its own fee
+
+// A sponsored withdrawal's record: bound to a holding address (`destination`
+// and `transit.account`), paying the person's address in `payout`. The
+// figures are wei decimal strings; the ledger's unit is gwei.
+const SPONSORED_PAYEE = `0x${'9a'.repeat(20)}`;
+const SPONSORED_HOLDING = `0x${'5c'.repeat(20)}`;
+const sponsoredRecord = (overrides = {}) => ({
+    recordId: 'sponsored-1', noteId: 7, mode: 'mutual', phase: 'closed', feePayer: 'payout', payout: SPONSORED_PAYEE,
+    destination: SPONSORED_HOLDING, transit: { account: SPONSORED_HOLDING, owner: `0x${'a1'.repeat(20)}`, payee: SPONSORED_PAYEE },
+    finalBalance: 1_000_000, payoutVerified: true, chargedWei: '10000000000000', paidOutWei: '990000000000000',
+    receivedWei: '1000000000000000', fundsWaitingInTransit: false, paymasterCredited: false, ...overrides
+});
+
+test('sponsored: a closed withdrawal says what the fee was and where the rest went, and offers nothing', () => {
+    const extras = extrasOf(sponsoredRecord());
+    const text = words(extras.noteHtml);
+    assert.match(text, /The network fee, \$0\.01, was paid from this withdrawal, and \$0\.99 was sent to /);
+    assert.equal(extras.actionsHtml, '');
+    assert.equal(extras.label, null);
+    assert.ok(extras.noteHtml.includes('data-zkapi-record-sponsored'));
+    // Without a price for the amounts the figures are left out, and the row still says the fee was paid.
+    const unpriced = words(extrasOf(sponsoredRecord(), { ...CTX, formatMoney: noPrice }).noteHtml);
+    assert.equal(unpriced, '');
+});
+
+test('sponsored: a payout still at its holding address is collected without ETH, or from the wallet', () => {
+    const waiting = sponsoredRecord({ fundsWaitingInTransit: true, payoutVerified: false, transitBalanceWei: '1000000000000000' });
+    const extras = extrasOf(waiting);
+    assert.equal(extras.label, 'Payout waiting');
+    assert.match(words(extras.noteHtml), /still waiting at a holding address and has to be sent on to/);
+    assert.match(words(extras.noteHtml), /costs you nothing: the service pays for it/);
+    assert.match(extras.actionsHtml, /data-collect-transit="sponsored-1"/);
+    assert.match(extras.actionsHtml, /data-sweep-transit="sponsored-1"/);
+    // Send Ethereum cannot send a wallet transaction of its own for this.
+    const address = extrasOf(waiting, { ...CTX, method: 'address' });
+    assert.match(address.actionsHtml, /data-collect-transit/);
+    assert.doesNotMatch(address.actionsHtml, /data-sweep-transit/);
+    assert.doesNotMatch(words(address.noteHtml), /with your wallet/);
+    // Busy: the buttons are there and disabled, as the row's own are.
+    assert.match(extrasOf(waiting, { ...CTX, busy: true }).actionsHtml, /data-collect-transit="sponsored-1" class="[^"]*" type="button" disabled/);
+});
+
+test('sponsored: a payout the address would not accept is held and claimed from a wallet, never called sent', () => {
+    const held = sponsoredRecord({ paymasterCredited: true, payoutVerified: false, paymasterCreditedWei: '990000000000000', paidOutWei: '0' });
+    const extras = extrasOf(held);
+    assert.equal(extras.label, 'Payout held');
+    const text = words(extras.noteHtml);
+    assert.match(text, /\$0\.99 is held for .*: that address would not accept the payment\./);
+    assert.match(text, /Claiming it is one transaction, and the account that sends it pays the network fee\./);
+    assert.match(extras.actionsHtml, /data-claim-gasless-credit="sponsored-1"/);
+    assert.doesNotMatch(text, /returned|was sent to/);
+    // No wallet of the person's own here: the explanation stays, the button goes.
+    assert.doesNotMatch(extrasOf(held, { ...CTX, method: 'address' }).actionsHtml, /data-claim-gasless-credit/);
+});
+
+test('sponsored: an exit that has not finished says its fee comes out of it then', () => {
+    const pending = sponsoredRecord({ mode: 'escape', phase: 'pending', payoutVerified: false, chargedWei: undefined, paidOutWei: undefined });
+    assert.match(words(extrasOf(pending).noteHtml), /The network fee of this exit is paid from the withdrawal when it finishes\./);
+    // A wallet-paid record, and one that names neither address, say nothing of it.
+    assert.equal(extrasOf({ ...pending, feePayer: undefined }).noteHtml, '');
+    assert.equal(extrasOf({ ...pending, transit: undefined }).noteHtml, '');
+    assert.equal(extrasOf({ ...pending, payout: 'x' }).noteHtml, '');
+});
+
+test('sponsored: nothing a record can carry makes the row throw, claim a payout it cannot, or name a protocol word', () => {
+    const FORBIDDEN_ROW = /nullifier|vault|circuit|deployment|manifest|\bnotes?\b|paymaster|bundler|user operation|4337|transit account|nothing is lost|\bETH\b/i;
+    const records = [
+        sponsoredRecord(), sponsoredRecord({ fundsWaitingInTransit: true }), sponsoredRecord({ paymasterCredited: true, paymasterCreditedWei: '1' }),
+        sponsoredRecord({ phase: 'pending', mode: 'escape' }), sponsoredRecord({ chargedWei: 'many', paidOutWei: -1 }),
+        sponsoredRecord({ recordId: '<b onclick=x>' }), sponsoredRecord({ payout: undefined }), sponsoredRecord({ transit: null })
+    ];
+    for (const record of records) {
+        for (const ctx of [CTX, { ...CTX, method: 'address' }, { ...CTX, formatMoney: noPrice }, {}]) {
+            const extras = extrasOf(record, ctx);
+            const all = [extras.label, extras.badge, words(extras.noteHtml), words(extras.actionsHtml)].filter(Boolean).join(' ');
+            assert.doesNotMatch(all, FORBIDDEN_ROW, all);
+            assert.doesNotMatch(extras.noteHtml + extras.actionsHtml, /<b onclick/);
+        }
+    }
+    // A button only for a row that can be acted on: no record id, no button.
+    assert.doesNotMatch(extrasOf(sponsoredRecord({ recordId: '', fundsWaitingInTransit: true })).actionsHtml, /data-collect-transit/);
 });

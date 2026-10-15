@@ -104,7 +104,12 @@ export const WITHDRAWAL_RECORD_FIELDS = Object.freeze([
     'challengeDeadline', 'transactionHash', 'startBlockNumber', 'finalizedBlockNumber', 'createdAt', 'updatedAt',
     'payoutVerified', 'payoutCredited', 'creditedAmount', 'payoutClaimed', 'payoutAlert',
     'finalizeTransactionHash', 'finalizeTransactionHashes', 'finalizeSubmissionId',
-    'deviceNotNewest', 'challengeObserved'
+    'deviceNotNewest', 'challengeObserved',
+    // A sponsored withdrawal (its network fee paid out of the withdrawal): its
+    // `destination` is a holding address, the person's address is `payout`,
+    // and a payout that has not arrived says so in these two. The signed
+    // operation bodies and the transit identity are never read.
+    'feePayer', 'payout', 'fundsWaitingInTransit', 'paymasterCredited', 'paymasterCreditedWei', 'transitBalanceWei'
 ]);
 
 const HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -239,6 +244,22 @@ function withdrawalFrom(record) {
     // the store's own sanitizing, so a closed escape usually has none.
     const transactionHash = mode === 'escape' ? hashText(record.finalizeTransactionHash)
         : hashText(record.transactionHash);
+    // A sponsored withdrawal pays the person's own address, which is not the
+    // holding address the proof was bound to; and a payout that closed
+    // without arriving is held for them like a credited one.
+    const sponsored = record.feePayer === 'payout' && typeof record.payout === 'string' && ADDRESS.test(record.payout);
+    const payoutPending = sponsored && CLOSED_PHASES.includes(record.phase)
+        && (record.fundsWaitingInTransit === true || record.paymasterCredited === true);
+    const pendingUnits = (() => {
+        if (!payoutPending) return null;
+        for (const field of ['paymasterCreditedWei', 'transitBalanceWei']) {
+            const value = record[field];
+            if (typeof value === 'string' && /^[0-9]{1,40}$/.test(value) && BigInt(value) > 0n) {
+                return Number(BigInt(value) / 1_000_000_000n);
+            }
+        }
+        return null;
+    })();
     return {
         deploymentId: typeof record.deploymentId === 'string' && record.deploymentId ? record.deploymentId : null,
         chainId: positiveInteger(record.chainId),
@@ -247,8 +268,9 @@ function withdrawalFrom(record) {
         phase: typeof record.phase === 'string' && PHASE.test(record.phase) ? record.phase : null,
         chainStatus: typeof record.chainStatus === 'string' && PHASE.test(record.chainStatus) ? record.chainStatus : null,
         open: isOpenWithdrawalRecord(record),
-        destination: typeof record.destination === 'string' && ADDRESS.test(record.destination)
-            ? record.destination.toLowerCase() : null,
+        destination: sponsored ? record.payout.toLowerCase()
+            : typeof record.destination === 'string' && ADDRESS.test(record.destination)
+                ? record.destination.toLowerCase() : null,
         finalBalance: integerValue(record.finalBalance),
         challengeDeadline: positiveInteger(record.challengeDeadline),
         transactionHash,
@@ -257,10 +279,11 @@ function withdrawalFrom(record) {
         createdAt: positiveInteger(record.createdAt),
         updatedAt: positiveInteger(record.updatedAt),
         payoutVerified: record.payoutVerified === true,
-        payoutCredited: record.payoutCredited === true,
+        payoutCredited: record.payoutCredited === true || payoutPending,
         payoutClaimed: record.payoutClaimed === true,
         // The SDK writes a JS number (null for evidence it could not read).
-        creditedAmount: integerValue(record.creditedAmount),
+        creditedAmount: record.payoutCredited === true || !payoutPending
+            ? integerValue(record.creditedAmount) : integerValue(pendingUnits),
         payoutAlert: record.payoutAlert === PAYOUT_ALERT ? PAYOUT_ALERT : null,
         // The build that kept this record found that another device or copy
         // had already used the balance's next state, so it cannot finish

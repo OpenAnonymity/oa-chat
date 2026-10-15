@@ -1,4 +1,4 @@
-// FIXTURE NOTE: verbatim copy of the real SDK sdk/configure.js (zkapi 0.2.0, 82c8504).
+// FIXTURE NOTE: verbatim copy of the real SDK sdk/configure.js (zkapi 0.2.0, branch v0.2, 4b955d9).
 // The host depends on its behavior (throws after init, rejects unknown options,
 // browser mode only), so it is the real code, not a stub.
 // Host integration is explicit: importing the SDK does not create a worker,

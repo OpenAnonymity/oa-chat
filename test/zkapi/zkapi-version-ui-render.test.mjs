@@ -3795,3 +3795,242 @@ test('each button that acts on one record says which record, and nothing on the 
         assert.deepEqual(runs[0].attempt, { about: { recordId: record.recordId } }, attribute);
     }
 });
+
+// -- Paying the network fee from the withdrawal --------------------------------
+//
+// The choice is the dialog's; the facts it needs (does this version have it,
+// what would it cost) are the facade's `sponsored`, and the markup is the
+// helpers' `sponsoredFee`. These tests drive the real facade over a client
+// that has a quote and a runtime that pins the gasless contracts.
+
+const SPONSORED_VECTORS = (await import('../fixtures/zkapi-sponsored-vectors.json', { with: { type: 'json' } })).default;
+const SPONSORED_ORIGIN = 'https://app.example';
+const SPONSORED_ROUTE = `${SPONSORED_ORIGIN}${V2.proxyPath}_bundler`;
+const SPONSORED_PROFILE = {
+    gasless: {
+        entry_point_address: SPONSORED_VECTORS.entry_point,
+        sender_creator_address: `0x${'51'.repeat(20)}`,
+        withdrawal_paymaster_address: SPONSORED_VECTORS.paymaster,
+        withdrawal_account_factory_address: SPONSORED_VECTORS.factory,
+        entry_point_runtime_codehash: `0x${'61'.repeat(32)}`,
+        sender_creator_runtime_codehash: `0x${'62'.repeat(32)}`,
+        withdrawal_paymaster_runtime_codehash: `0x${'63'.repeat(32)}`,
+        withdrawal_account_factory_runtime_codehash: `0x${'64'.repeat(32)}`,
+        account_creation_code: SPONSORED_VECTORS.account_creation_code,
+        account_creation_code_keccak256: SPONSORED_VECTORS.account_creation_code_keccak256,
+        bundler_url: 'https://bundler.example/rpc',
+        policy: { max_sponsored_cost_wei: SPONSORED_VECTORS.policy.max_sponsored_cost, flat_fee_wei: SPONSORED_VECTORS.policy.flat_fee_wei },
+        fee_ceilings: { max_fee_wei: SPONSORED_VECTORS.policy.max_fee_ceiling, priority_fee_wei: SPONSORED_VECTORS.policy.priority_fee_ceiling },
+        gas_policy: { call_floor: [1] }
+    }
+};
+const READY_QUOTE = {
+    available: true, mode: 'mutual', maxCost: '32750000000000000', flatFeeWei: SPONSORED_VECTORS.policy.flat_fee_wei,
+    minimumReceivedWei: '1467250000000000', payoutWei: '1500000000000000', owedWei: '0', payoutHasCode: false, transitExists: false
+};
+
+// A withdrawal page whose version offers it: the client can quote, the runtime
+// pins the contracts, the page has an origin to route through.
+function sponsoredPage(t, { quote = READY_QUOTE, prepared = null } = {}) {
+    const page = shapesPage(t, 'kit_never_exported', { view: 'withdraw' });
+    const location = globalThis.location;
+    const previousOrigin = location.origin;
+    location.origin = SPONSORED_ORIGIN;
+    const quotes = [];
+    zkapiClient.gaslessWithdrawalQuote = async (mode, options) => { quotes.push({ mode, options }); return quote; };
+    page.facade.attach({ client: zkapiClient, runtime: { runtime: page.real.runtime, browserConfig: { trusted_deployment: SPONSORED_PROFILE } },
+        ui: createVersionUi({ facade: page.facade }) });
+    if (prepared) zkapiClient.config = { ...zkapiClient.config, prepared_withdrawal: prepared };
+    t.after(() => {
+        delete zkapiClient.gaslessWithdrawalQuote;
+        if (previousOrigin === undefined) delete location.origin;
+        else location.origin = previousOrigin;
+    });
+    return { ...page, quotes };
+}
+
+test('a version that pins sponsored withdrawals offers the choice with the wallet first, and asks nobody until it is made', t => {
+    const page = sponsoredPage(t);
+    assert.equal(page.facade.sponsored.supported(), true);
+    assert.equal(page.facade.sponsored.bundlerUrl(), SPONSORED_ROUTE);
+    const root = bodyOf(page.modal.renderWithdrawal());
+    assert.ok(root.querySelector('[data-zkapi-sponsored-fieldset]'));
+    const radios = root.querySelectorAll('input[name="zkapi-sponsored-fee"]');
+    assert.deepEqual(radios.map(radio => radio.value), ['wallet', 'payout']);
+    assert.equal(radios.find(radio => radio.checked)?.value, 'wallet');
+    // Opening the form sent nothing anywhere: no quote, no relay.
+    assert.deepEqual(page.quotes, []);
+    // The static line about the wallet is the choice's own text now.
+    assert.doesNotMatch(page.modal.renderWithdrawal(), /Your MetaMask wallet pays the network fee separately\.<\/p>/);
+});
+
+test('no choice is drawn where the version has no such payment, the page has no route, or a plan exists', t => {
+    // A client that cannot quote (the legacy SDK).
+    const legacy = sponsoredPage(t);
+    delete zkapiClient.gaslessWithdrawalQuote;
+    assert.equal(legacy.facade.sponsored.supported(), false);
+    assert.doesNotMatch(legacy.modal.renderWithdrawal(), /data-zkapi-sponsored-fieldset/);
+    // A page with no origin to route through.
+    const noOrigin = sponsoredPage(t);
+    delete globalThis.location.origin;
+    assert.equal(noOrigin.facade.sponsored.bundlerUrl(), null);
+    assert.doesNotMatch(noOrigin.modal.renderWithdrawal(), /data-zkapi-sponsored-fieldset/);
+    // A profile that pins nothing, or pins it badly.
+    for (const gasless of [null, { ...SPONSORED_PROFILE.gasless, bundler_url: 'http://bundler.example/rpc' }]) {
+        const page = sponsoredPage(t);
+        page.facade.attach({ client: zkapiClient,
+            runtime: { runtime: page.real.runtime, browserConfig: { trusted_deployment: { gasless } } },
+            ui: createVersionUi({ facade: page.facade }) });
+        assert.doesNotMatch(page.modal.renderWithdrawal(), /data-zkapi-sponsored-fieldset/);
+    }
+    // A plan that is already prepared decided how its fee is paid.
+    const planned = sponsoredPage(t, { prepared: { mode: 'mutual', phase: 'prepared', note_id: 7, destination: `0x${'a'.repeat(40)}`,
+        transaction_hash: null, clearance_reserved: true } });
+    assert.doesNotMatch(planned.modal.renderWithdrawal(), /data-zkapi-sponsored-fieldset/);
+});
+
+test('choosing to pay from the withdrawal asks once, for this balance and this way of leaving, and says what is received', async t => {
+    const page = sponsoredPage(t);
+    t.mock.method(zkapiClient, 'connectWallet', async () => `0x${'c'.repeat(40)}`);
+    page.modal.overlay = bodyOf('');
+    page.modal.sponsoredChoice = 'payout';
+    await page.modal.refreshSponsoredQuote();
+    assert.equal(page.quotes.length, 1);
+    assert.equal(page.quotes[0].mode, 'mutual');
+    // The account that will sign owns the holding address; the route is the
+    // app's own.
+    assert.equal(page.quotes[0].options.owner, `0x${'c'.repeat(40)}`);
+    assert.equal(page.quotes[0].options.bundlerUrl, SPONSORED_ROUTE);
+    const html = page.modal.renderWithdrawal();
+    const words = textOf(html);
+    assert.match(words, /You’ll receive at least/);
+    assert.match(words, /goes through this app to the service’s relay/);
+    // Another way of leaving is another quote: the old one is not drawn for it.
+    page.modal.withdrawMode = 'escape';
+    assert.match(textOf(page.modal.renderWithdrawal()), /Checking the network fee/);
+});
+
+test('a refused quote is explained in plain words, keeps the wallet, and can be checked again', async t => {
+    const page = sponsoredPage(t, { quote: { available: false, reason: 'paymaster_underfunded' } });
+    t.mock.method(zkapiClient, 'connectWallet', async () => `0x${'c'.repeat(40)}`);
+    page.modal.overlay = bodyOf('');
+    page.modal.sponsoredChoice = 'payout';
+    await page.modal.refreshSponsoredQuote();
+    const html = page.modal.renderWithdrawal();
+    assert.match(textOf(html), /The service can’t cover network fees right now\. You can pay the network fee from your wallet instead\./);
+    assert.match(html, /data-zkapi-sponsored-retry/);
+    assert.doesNotMatch(textOf(html), /paymaster|bundler|userop|4337/i);
+    // And nothing is started on it.
+    const started = startable(t, page);
+    drawWithdraw(page);
+    await page.modal.submitWithdrawal();
+    assert.equal(started.withdrawals.length, 0);
+});
+
+test('a withdrawal that was chosen to pay its own fee starts with exactly the options and bounds that were shown', async t => {
+    const page = sponsoredPage(t);
+    t.mock.method(zkapiClient, 'connectWallet', async () => `0x${'c'.repeat(40)}`);
+    const started = startable(t, page);
+    page.modal.sponsoredChoice = 'payout';
+    page.modal.overlay = bodyOf('');
+    await page.modal.refreshSponsoredQuote();
+    drawWithdraw(page);
+    await page.modal.submitWithdrawal();
+    assert.equal(started.withdrawals.length, 1);
+    assert.deepEqual(started.withdrawals[0].options, {
+        fees: 'payout', bundlerUrl: SPONSORED_ROUTE, feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei, allowExpensiveGas: false
+    });
+    // The signer is told what was shown, with headroom for fees that moved.
+    assert.deepEqual(started.runs[0].details.sponsored, {
+        feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
+        maxCostWei: ((BigInt(READY_QUOTE.maxCost) * 3n) / 2n).toString()
+    });
+    // The choice is spent by the attempt: the next withdrawal starts from the wallet.
+    assert.equal(page.modal.sponsoredChoice, 'wallet');
+    assert.equal(page.modal.sponsoredQuote, null);
+});
+
+test('with the wallet chosen, or no quote of this form, the withdrawal is what it always was', async t => {
+    const wallet = sponsoredPage(t);
+    const started = startable(t, wallet);
+    drawWithdraw(wallet);
+    await wallet.modal.submitWithdrawal();
+    assert.equal(started.withdrawals[0].options, undefined, 'no fee option at all');
+    assert.equal('sponsored' in started.runs[0].details, false);
+
+    // Payout chosen but nothing was quoted for this form: refused, the form is
+    // drawn again and asks for the quote; the SDK is not asked.
+    const unquoted = sponsoredPage(t);
+    t.mock.method(zkapiClient, 'connectWallet', async () => `0x${'c'.repeat(40)}`);
+    const second = startable(t, unquoted);
+    unquoted.modal.sponsoredChoice = 'payout';
+    drawWithdraw(unquoted);
+    await unquoted.modal.submitWithdrawal();
+    assert.equal(second.withdrawals.length, 0);
+    assert.match(unquoted.modal.outcome.message, /network fee has to be checked for this withdrawal first/);
+});
+
+test('a plan the SDK already bound to a holding address continues the way it started', async t => {
+    const page = sponsoredPage(t, { prepared: { mode: 'mutual', phase: 'prepared', note_id: 7, fee_payer: 'payout',
+        destination: `0x${'f'.repeat(40)}`, payout: `0x${'b'.repeat(40)}`, transaction_hash: null, clearance_reserved: true } });
+    const started = startable(t, page, { prepared: true });
+    zkapiClient.config = { ...zkapiClient.config, prepared_withdrawal: { mode: 'mutual', phase: 'prepared', note_id: 7, fee_payer: 'payout',
+        destination: `0x${'f'.repeat(40)}`, payout: `0x${'b'.repeat(40)}`, transaction_hash: null, clearance_reserved: true } };
+    drawWithdraw(page);
+    await page.modal.submitWithdrawal();
+    assert.equal(started.withdrawals.length, 1);
+    assert.deepEqual(started.withdrawals[0].options, { fees: 'payout', bundlerUrl: SPONSORED_ROUTE });
+});
+
+test('a sponsored withdrawal\'s row names the person\'s address, not its holding address, and its buttons start the right work', async t => {
+    const payee = `0x${'9a'.repeat(20)}`;
+    const holding = `0x${'5c'.repeat(20)}`;
+    const base = { mode: 'mutual', phase: 'closed', feePayer: 'payout', payout: payee, destination: holding,
+        transit: { account: holding, owner: `0x${'a1'.repeat(20)}`, payee }, finalBalance: 1_000_000, createdAt: SHAPES_NOW - 1000,
+        chargedWei: '10000000000000', paidOutWei: '990000000000000' };
+    const records = [
+        { ...base, recordId: 'sp-ok', noteId: 11, payoutVerified: true },
+        { ...base, recordId: 'sp-wait', noteId: 12, payoutVerified: false, fundsWaitingInTransit: true },
+        { ...base, recordId: 'sp-held', noteId: 13, payoutVerified: false, paymasterCredited: true, paymasterCreditedWei: '990000000000000' }
+    ];
+    const page = sponsoredPage(t);
+    zkapiClient.withdrawals = records;
+    const html = page.modal.renderWithdrawalRecords();
+    const compact = address => zkapiClient.compact(address, 6);
+    assert.ok(html.includes(compact(payee)), 'the person\'s address is the one said');
+    assert.equal(html.includes(compact(holding)), false, 'the holding address is never said');
+    const root = bodyOf('');
+    page.modal.overlay = root;
+    page.modal.view = 'withdrawals';
+    page.modal.render();
+    const started = [];
+    page.modal.run = (action, details, attempt) => { started.push({ action, details, attempt }); return Promise.resolve(); };
+    const calls = [];
+    // The legacy client the suite runs on has none of these; the successor's do.
+    zkapiClient.collectTransitBalance = async (...args) => { calls.push(['collect', args[0], args[2]]); return { status: 'collected' }; };
+    zkapiClient.sweepTransit = async (...args) => { calls.push(['sweep', args[0]]); return { status: 'swept' }; };
+    zkapiClient.claimGaslessCredit = async (...args) => { calls.push(['claim', args[0]]); return { status: 'claimed' }; };
+    t.after(() => { for (const name of ['collectTransitBalance', 'sweepTransit', 'claimGaslessCredit']) delete zkapiClient[name]; });
+    for (const [selector, kind, recordId] of [
+        ['[data-collect-transit="sp-wait"]', 'transit-collect', 'sp-wait'],
+        ['[data-sweep-transit="sp-wait"]', 'transit-sweep', 'sp-wait'],
+        ['[data-claim-gasless-credit="sp-held"]', 'transit-claim', 'sp-held']
+    ]) {
+        const button = root.querySelector(selector);
+        assert.ok(button, selector);
+        started.length = 0;
+        button.click();
+        assert.equal(started.length, 1, selector);
+        assert.equal(started[0].details.kind, kind);
+        assert.equal(started[0].details.withdrawalRecordId, recordId);
+        assert.deepEqual(started[0].attempt, { about: { recordId } });
+        await started[0].action(() => {});
+    }
+    // The sponsored collection goes through the app's own route; the claim is
+    // for the person's address, not the holding address.
+    assert.deepEqual(calls, [
+        ['collect', 'sp-wait', { bundlerUrl: SPONSORED_ROUTE }],
+        ['sweep', 'sp-wait'],
+        ['claim', payee]
+    ]);
+});

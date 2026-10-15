@@ -1,4 +1,4 @@
-// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiGas.mjs (0.2.0, 82c8504).
+// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiGas.mjs (0.2.0, branch v0.2, 4b955d9).
 // EIP-7825 rejects any Ethereum transaction whose gas limit exceeds 2^24,
 // even when the block gas limit itself is higher. Keep the wallet-provided
 // estimate comfortably padded, but never create a transaction the network

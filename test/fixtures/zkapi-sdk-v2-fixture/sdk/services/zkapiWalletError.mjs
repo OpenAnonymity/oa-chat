@@ -1,4 +1,4 @@
-// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiWalletError.mjs (0.2.0, 82c8504).
+// FIXTURE NOTE: verbatim copy of the real SDK sdk/services/zkapiWalletError.mjs (0.2.0, branch v0.2, 4b955d9).
 // EIP-1193 providers may reject with a serialized JSON-RPC object instead of
 // an Error. Keep the useful message and metadata without printing the object.
 export function walletErrorMessage(error, fallback = 'The wallet could not complete this request.') {

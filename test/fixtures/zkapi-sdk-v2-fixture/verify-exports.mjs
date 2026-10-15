@@ -134,7 +134,7 @@ if (realRoot) {
     const digests = Object.fromEntries([...real].map(([key, names]) => [key, { count: names.length, sha256: digest(names) }]));
     if (update) {
         fs.writeFileSync(RECORD, `${JSON.stringify({
-            source: 'zkapi browser SDK 0.2.0 (82c8504, unpublished). Re-record: verify-exports.mjs <real SDK root> --update',
+            source: 'zkapi browser SDK 0.2.0 (ethereum/zkapi branch v0.2, 4b955d9, unpublished). Re-record: verify-exports.mjs <real SDK root> --update',
             lists: digests
         }, null, 2)}\n`);
         recorded = digests;

@@ -1372,6 +1372,34 @@ test('every withdrawal field the projection reads is named in the allowlist, and
     assert.equal(row.payoutVerified, false);
 });
 
+test('a sponsored withdrawal of another version names the person\'s address, and a payout that did not arrive is held for them', () => {
+    const payee = `0x${'9a'.repeat(20)}`;
+    const holding = `0x${'5c'.repeat(20)}`;
+    const sponsored = { feePayer: 'payout', payout: payee, destination: holding, transit: { account: holding, secret: 'SECRET-transit' },
+        userOp: { signature: 'SECRET-signature' }, phase: 'closed', mode: 'mutual', payoutVerified: true };
+    const rowOf = overrides => project({ withdrawals: [withdrawalRecord(LEGACY, 5, { ...sponsored, ...overrides })] }).rows[0];
+    // Paid: the row says where the money went, never the holding address.
+    const paid = rowOf({});
+    assert.equal(paid.destination, payee);
+    assert.equal(paid.payoutVerified, true);
+    assert.equal(paid.payoutCredited, false);
+    // Waiting at its holding address, or credited by the paymaster: held for
+    // the person like a payout the vault credited, worth what was reported.
+    const waiting = rowOf({ payoutVerified: false, fundsWaitingInTransit: true, transitBalanceWei: '495000000000000' });
+    assert.equal(waiting.payoutCredited, true);
+    assert.equal(waiting.payoutClaimed, false);
+    assert.equal(waiting.creditedUnits, '495000');
+    assert.equal(waiting.destination, payee);
+    const credited = rowOf({ payoutVerified: false, paymasterCredited: true, paymasterCreditedWei: '990000000000000' });
+    assert.equal(credited.creditedUnits, '990000');
+    // A wallet-paid record is as it was, and one that names no payee keeps its destination.
+    assert.equal(rowOf({ feePayer: undefined }).destination, holding);
+    assert.equal(rowOf({ payout: 'nope', fundsWaitingInTransit: true }).destination, holding);
+    assert.equal(rowOf({ payout: 'nope', fundsWaitingInTransit: true, payoutVerified: false }).payoutCredited, false);
+    // Neither the holding account's identity nor an operation body is carried.
+    assert.doesNotMatch(JSON.stringify(project({ withdrawals: [withdrawalRecord(LEGACY, 5, sponsored)] })), /SECRET/);
+});
+
 // ---------------------------------------------------------- expiry parity
 
 const strip = records => records.map(({ detail, ...record }) => record);
