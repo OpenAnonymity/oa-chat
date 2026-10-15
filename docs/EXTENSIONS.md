@@ -355,3 +355,10 @@ them, and the ticket move runs. Only an explicit boolean `true` turns it on.
 `context.ui.showLoadingToast(message)` shows the app's loading toast and
 returns a function that stops it; hosts use it for work that finishes on its
 own (adding free-trial tickets) instead of a dialog of their own.
+
+## Temporary staging timing hook
+
+The isolated staging experiment exposes `setStagingTimingSink` through
+`chat/publicApi.js`; the commercial host must not import recorder internals.
+This hook is inert in ordinary builds and the entire experimental source revision
+must be excluded from production. See [STAGING_REQUEST_TIMING.md](STAGING_REQUEST_TIMING.md).

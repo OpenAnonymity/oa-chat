@@ -6,3 +6,5 @@ export { default as WelcomePanel } from './components/WelcomePanel.js';
 export { default as AccountModal } from './components/AccountModal.js';
 export * from './publicInferenceApi.js';
 export { setFeatureUsageReporter } from './services/featureUsage.js';
+// Temporary staging experiment hook; this revision must not enter production.
+export { setStagingTimingSink } from './services/stagingRequestTiming.js';
