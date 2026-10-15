@@ -34,3 +34,11 @@ test('brief reasoning never rounds down to Thought for 0s', () => {
     assert.match(unknown, />Thought<\/span>/);
     assert.doesNotMatch(unknown, /Thought for/);
 });
+
+test('wordless thinking that resumed after part of the answer renders as Thinking..., still with nothing to open', () => {
+    const html = buildReasoningTrace('', 'again', true, null, 800, null, { withheld: true });
+    assert.match(html, /reasoning-trace-withheld/);
+    assert.match(html, /class="text-xs text-muted-foreground reasoning-subtitle-streaming">Thinking\.\.\.<\/span>/);
+    assert.doesNotMatch(html, /Thought for/);
+    assert.doesNotMatch(html, /reasoning-body|reasoning-chevron|reasoning-loading-indicator/);
+});
