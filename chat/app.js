@@ -7827,8 +7827,9 @@ class ChatApp {
                     }
                     if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
-                            if (!streamingMessage.reasoningDuration) {
-                                streamingMessage.reasoningDuration = thinkingDuration() || undefined;
+                            const interruptedThinkingDuration = thinkingDuration();
+                            if (interruptedThinkingDuration !== null) {
+                                streamingMessage.reasoningDuration = interruptedThinkingDuration;
                             }
                             this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning);
                             streamingMessage.streamingPending = false;
@@ -8669,6 +8670,7 @@ class ChatApp {
                             streamedReasoning += reasoningChunk;
                             // Thinking after an answer segment (tools): the trace settles again at the next content.
                             firstContentChunk = true;
+                            reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
                         }
 
@@ -8759,8 +8761,9 @@ class ChatApp {
                     if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
                             // Save the partial content with a note
-                            if (!streamingMessage.reasoningDuration) {
-                                streamingMessage.reasoningDuration = thinkingDuration() || undefined;
+                            const interruptedThinkingDuration = thinkingDuration();
+                            if (interruptedThinkingDuration !== null) {
+                                streamingMessage.reasoningDuration = interruptedThinkingDuration;
                             }
                             this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning);
                             await chatDB.saveMessage(streamingMessage);

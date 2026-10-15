@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReasoningTrace } from '../../chat/components/MessageTemplates.js';
+import ChatArea from '../../chat/components/ChatArea.js';
+
+test('provider headings cannot replace Thinking in live or restored streaming headers', () => {
+    const reasoning = '# Searching the web\n**Comparing results**\nThe answer follows.';
+    assert.equal(ChatArea.prototype.extractReasoningSubtitle(reasoning), 'Thinking...');
+    const html = buildReasoningTrace(reasoning, 'restored', true, text => text, 2000);
+    assert.match(html, /id="reasoning-subtitle-restored"[^>]*>Thinking\.\.\.<\/span>/);
+    assert.match(html, /Comparing results/, 'the reasoning body still contains the provider text');
+});
 
 // Reasoning not shared by the provider (encrypted reasoning only): the trace is
 // a quiet timed header with nothing to open.
