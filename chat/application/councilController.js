@@ -1580,6 +1580,7 @@ export default class CouncilController {
         let streamingTokenCount = 0;
         let reasoningStartTime = null;
         let reasoningEndTime = null;
+        let streamOpenedAt = null; // thinking is timed from here (see app.js)
         let firstContentChunk = true;
         let lastPersistAt = 0;
         let lastReportedModel = null;
@@ -1714,6 +1715,7 @@ export default class CouncilController {
                 searchEnabled,
                 abortController,
                 () => {
+                    streamOpenedAt ??= Date.now();
                     markRunning();
                     persistSnapshot(true);
                 },
@@ -1721,7 +1723,7 @@ export default class CouncilController {
                     markRunning();
                     if (!reasoningChunk) return;
                     if (!reasoningStartTime) {
-                        reasoningStartTime = Date.now();
+                        reasoningStartTime = streamOpenedAt ?? Date.now();
                     }
                     reasoning += reasoningChunk;
                     // Thinking after an answer segment (tools): settle again at the next content.

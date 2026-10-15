@@ -3180,12 +3180,9 @@ export default class ChatArea {
             if (!alreadyUpdated) {
                 // Subtitle hasn't been updated yet, update it now
                 subtitleEl.classList.remove('reasoning-subtitle-streaming');
-                if (reasoningDuration) {
-                    subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
-                } else {
-                    // Fallback if no duration is available
-                    subtitleEl.textContent = 'Reasoning complete';
-                }
+                // One vocabulary for a finished trace: "Thought for Ns", or
+                // "Thought" when no time is known.
+                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
             }
             // If already updated, we skip the re-render to avoid redundancy
         }

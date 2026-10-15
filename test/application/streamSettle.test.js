@@ -344,3 +344,40 @@ test('a resumed signal for a trace with words reopens it; the next words settle 
     assert.ok(names.indexOf('settleReasoningDisplay', resumed) > resumed, 'settled again at the next words');
     assert.equal(names.includes('settleWithheldReasoningDisplay'), false);
 });
+
+// Grok sends its reasoning in one burst right before the answer; the thinking
+// happened while the stream was open and quiet. Timed from the first reasoning
+// event it read "Thought" / "Reasoning complete" (0 ms); timed from the open
+// stream it reads like every other model.
+test('thinking is timed from when the stream opens, so a burst of reasoning before the answer still reads "Thought for …"', async t => {
+    const restore = installBrowser();
+    const { app, assistant, paints } = streamHarness(async (...args) => {
+        const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
+        await opened();
+        await new Promise(resolve => setTimeout(resolve, 40));
+        await reasoning('Light has three primaries.');
+        await chunk('Red, green, and blue.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    const settle = paints.find(call => call.name === 'settleReasoningDisplay');
+    assert.ok(settle.args[2] >= 40, `settled with the open-stream time (${settle.args[2]} ms)`);
+    assert.ok(assistant().at(-1).reasoningDuration >= 40);
+});
+
+test('a stopped reply keeps its thinking time, so it reads "Thought for …" after a reload too', async t => {
+    const restore = installBrowser();
+    const { app, assistant } = streamHarness(async (...args) => {
+        const [chunk, abortController, opened, reasoning] = [args[3], args[7], args[8], args[9]];
+        await opened();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        await reasoning('Working it out.');
+        await chunk('Partial');
+        setTimeout(() => app.stopSessionStreaming('one'), 5);
+        return untilStopped(abortController);
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.ok(assistant().at(-1).reasoningDuration >= 20);
+});
