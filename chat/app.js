@@ -1,3 +1,4 @@
+import { startRequestTiming, requestTiming, finishRequestTiming, timingTextVisible, hasRequestTiming } from './services/stagingRequestTiming.js';
 import { STILL_WORKING_DELAY_MS } from './services/streamSegments.js';
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
@@ -1349,6 +1350,9 @@ class ChatApp {
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
         reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
         const id = requestId || this.generateId();
+        const timing = kind === 'response' ? requestTiming(controller?.signal, 'single', modelId) : null;
+        timing?.setVisible(() => !controller?.signal?.aborted && timingTextVisible(this, session.id, requestId));
+        if (timing && this.usesTicketAccess(session) && this.inferenceService.getAccessToken(session)) timing.setKey('reused');
         const models = this.getModelsForSession(session);
         let latestUsage = null;
         let responseModel = modelId;
@@ -1401,7 +1405,7 @@ class ChatApp {
                 },
                 reasoningEnabled, reasoningEffort,
                 progress => this.setSessionPendingProgress(session.id, progress),
-                health => this.setInferenceHealth(session.id, id, health));
+                health => this.setInferenceHealth(session.id, id, health), timing);
             completed = true;
             latestUsage = result ? withUsagePricing(result) : latestUsage;
             // The later message-accounting write must keep this same snapshot.
@@ -7348,6 +7352,11 @@ class ChatApp {
         if (mutationOwner && mutationOwner !== options.mutationToken) return;
         const job = { controller: new AbortController() };
         this.regenerationJobs.set(sessionId, job);
+        startRequestTiming(job.controller.signal, {
+            mode: this.runtime?.getMode?.(this.state.sessionsById.get(sessionId)) === 'zkapi' ? 'zkapi' : 'ticket',
+            visible: () => document.visibilityState === 'visible' && this.isViewingSession(sessionId)
+        });
+        this.initializeRequestTimings(job.controller.signal, this.state.sessionsById.get(sessionId));
         let draft = null;
         try {
             if (options.replaceFromMessageId) {
@@ -7363,6 +7372,7 @@ class ChatApp {
             }
             return result;
         } catch (error) {
+            finishRequestTiming(job.controller.signal, 'error');
             if (!draft) throw error;
             if (!this.isCancelledError(error, job.controller.signal)) this.showToast?.('The replacement could not be completed. Your previous answer was kept.', 'info');
         } finally {
@@ -7388,6 +7398,7 @@ class ChatApp {
                     }
                 }
             } finally {
+                finishRequestTiming(job.controller.signal);
                 if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
             }
         }
@@ -8096,6 +8107,18 @@ class ChatApp {
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
      */
+    initializeRequestTimings(signal, session, modelName = session?.model) {
+        if (!session || !hasRequestTiming(signal)) return;
+        try {
+            if (this.isCouncilModeActive(session)) {
+                for (const entry of this.councilController.resolveModelEntries(session)) requestTiming(signal, entry.laneId, entry.id);
+            } else {
+                const entry = this.getModelsForSession(session).find(model => model.id === modelName || model.name === modelName);
+                requestTiming(signal, 'single', entry?.id);
+            }
+        } catch { /* Optional timing cannot interfere with preparation. */ }
+    }
+
     async sendMessage(options = {}) {
         // A dialog owns the page; never send from the composer behind it.
         if (hasOpenModalDialog()) return;
@@ -8133,14 +8156,21 @@ class ChatApp {
             accepted: false
         };
         this.sendSubmissionsInFlight.set(submissionKey, submission);
+        startRequestTiming(submission.controller.signal, {
+            mode: this.runtime?.getMode?.(this.state.sessionsById.get(sessionId)) === 'zkapi' ? 'zkapi' : 'ticket',
+            visible: () => document.visibilityState === 'visible' && this.isViewingSession(submission.sessionId)
+        });
+        this.initializeRequestTimings(submission.controller.signal, this.state.sessionsById.get(sessionId), submission.model);
         this.updateInputState();
         try {
             return await this.sendCapturedMessage(submission);
         } catch (error) {
+            finishRequestTiming(submission.controller.signal, 'error');
             if (!error?.isCancelled && error?.name !== 'AbortError') {
                 this.showToast(error?.message || 'Could not send the message. Please try again.', 'error', 3000);
             }
         } finally {
+            finishRequestTiming(submission.controller.signal);
             if (this.sendSubmissionsInFlight.get(submissionKey) === submission) {
                 this.sendSubmissionsInFlight.delete(submissionKey);
             }
@@ -8185,6 +8215,7 @@ class ChatApp {
         this.throwIfAborted(submission.controller.signal);
         const session = this.state.sessionsById.get(submission.sessionId);
         if (!session) return; // Safety check
+        this.initializeRequestTimings(submission.controller.signal, session, submission.model);
 
         // Any local user message on an imported session forks it from upstream updates.
         if (session.importedFrom) {
@@ -12315,6 +12346,8 @@ Your API key has been cleared. A new key from a different station will be obtain
     }
 
     async acquireAndSetAccess(session, options = {}) {
+        const timing = requestTiming(options.signal);
+        timing?.acquiring();
         this.throwIfAborted(options.signal || null);
         if (this.isSessionDeleted(session.id) || this.isSessionBackendChanging(session.id)) throw this.createCancelledError();
         const models = this.getModelsForSession(session);
@@ -12337,6 +12370,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                 this.throwIfAborted(controller.signal);
                 return acquireSessionAccess({
                     acquireAccess: this.runtime.acquireAccess,
+                    requestTiming: timing,
                     session,
                     models,
                     reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,

@@ -172,3 +172,10 @@ same change so the next agent inherits the latest behavior, constraints, and les
 - Right panel visibility is persisted in `localStorage` (`oa-right-panel-visible`); theme preference in `localStorage` (`oa-theme-preference`); wide mode in `localStorage` (`oa-wide-mode`); proxy settings in `localStorage` (`oa-network-proxy-settings`).
 - Network logs are memory-only (tab-scoped) in this release to keep storage small and predictable.
 - zkAPI version keys (read before `chatDB` opens; never synced; ids, enums and a stage only, always inside try/catch): `sessionStorage` `oa-zkapi-version-switch` (one-shot hint for the next boot) and `oa-zkapi-version-switch-log` (loop guard: switch and discard timestamps), `localStorage` `oa-zkapi-upgrade-v1` (guided-upgrade intent, expires after 45 days) and `oa-zkapi-upgrade-reminder-v1` (last reminder tier per version). The existing `oa-zkapi-running-modal` and `oa-zkapi-welcome-modal` entries gain a `{network, versionId}` stamp on multi-version builds. The version-2 behaviors added no key; the SDK's own `zkapi-exit-rpc-url` is never read or written by this app. Details and lifetimes: [docs/ZKAPI_VERSIONING.md](docs/ZKAPI_VERSIONING.md) section 8.
+
+## Temporary staging experiment restriction
+
+This revision contains staging request timing. Never promote its source or pin
+to production, desktop or mobile, even disabled. Read
+[docs/STAGING_REQUEST_TIMING.md](docs/STAGING_REQUEST_TIMING.md) before releases.
+A general request to promote staging does not override this restriction.

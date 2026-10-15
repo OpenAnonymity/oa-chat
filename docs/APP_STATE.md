@@ -8549,3 +8549,10 @@ or live-provider release approval. Sentry remains outside this branch.
   transcript ownership and independent Stop. Repeat before A has an ID and during
   final persistence; switch back, reload, and confirm both histories. Repeat from
   separate browser tabs and check ticket balances. Keep zkAPI's settlement gate.
+
+## Staging-only request timing (2026-10-15)
+
+Controlled test instrumentation is isolated on the experiment branch. Its source
+and revisions must not enter production, even disabled. See
+[STAGING_REQUEST_TIMING.md](STAGING_REQUEST_TIMING.md) for semantics, limitations,
+opt-in boundaries and experiment-free UI baselines. No live collection is implied.

@@ -1,3 +1,4 @@
+import { timingCallbacks } from '../stagingRequestTiming.js';
 import { createDiagnosticTrail } from '../diagnostics.js';
 import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
@@ -228,25 +229,30 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.verification || null;
     },
-    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth) {
+    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth, requestTiming = null) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
+        const callbacks = timingCallbacks(requestTiming, onChunk, onStreamOpen, onReasoningChunk);
         return observeRequest('completion', () => backend.streamCompletion(
             messages,
             modelId,
             token,
-            onChunk,
+            callbacks.onChunk,
             onTokenUpdate,
             files,
             searchEnabled,
             abortController,
-            onStreamOpen,
-            onReasoningChunk,
+            callbacks.onOpen,
+            callbacks.onReasoning,
             reasoningEnabled,
             reasoningEffort,
             onAccessProgress,
-            onStreamHealth
-        ), abortController?.signal);
+            onStreamHealth,
+            requestTiming
+        ), abortController?.signal).then(result => { requestTiming?.outcome(abortController?.signal?.aborted ? 'cancelled' : 'complete'); return result; }, error => {
+            requestTiming?.outcome(abortController?.signal?.aborted || error?.name === 'AbortError' || error?.isCancelled ? 'cancelled' : 'error');
+            throw error;
+        });
     },
     isTransportAccessReady(session) {
         const backend = getBackendForSession(session);

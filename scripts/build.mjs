@@ -1,3 +1,4 @@
+import { stagingTimingPlugin } from './stagingTimingBuild.mjs';
 import { productionProxyUrl } from './proxy-build-setting.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,15 @@ const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
 const sentryConfig = resolveSentryConfig();
+const stagingTiming = process.env.OA_STAGING_REQUEST_TIMING === 'true';
+if (stagingTiming && (process.env.OA_RELEASE_TARGET === 'production'
+    || process.env.STAGING_FRONTEND_ORIGIN !== 'https://staging.openanonymity.ai'
+    || process.env.OA_STAGING_ORG_ORIGIN !== 'https://org-staging.openanonymity.ai'
+    || appEntryArgument !== 'src/experiments/staging-timing-entry.js')) {
+    throw new Error('Request timing is restricted to the explicit staging experiment entry');
+}
+const timingRelease = process.env.VERCEL_GIT_COMMIT_SHA || process.env.OA_TIMING_RELEASE || '';
+if (stagingTiming && !/^[0-9a-f]{40}$/.test(timingRelease)) throw new Error('Timing requires a full release SHA');
 const zkapiNetwork = resolveZkapiNetwork();
 const zkapiDeployment = process.env.OA_ZKAPI_DEPLOYMENT || '';
 // The registry is validated before anything is built or cleaned. Null for a
@@ -254,7 +264,7 @@ const build = async () => {
 
     const result = await esbuild.build({
         entryPoints,
-        plugins: zkapiBuildPlugins(zkapiNetwork, zkapiDeployment, { plan: zkapiPlan }),
+        plugins: [stagingTimingPlugin(stagingTiming), ...zkapiBuildPlugins(zkapiNetwork, zkapiDeployment, { plan: zkapiPlan })],
         bundle: true,
         splitting: true,
         format: 'esm',
@@ -276,6 +286,8 @@ const build = async () => {
             '.otf': 'file'
         },
         define: {
+            '__OA_STAGING_TIMING__': JSON.stringify(stagingTiming),
+            '__OA_TIMING_RELEASE__': JSON.stringify(stagingTiming ? timingRelease : ''),
             '__DEV__': 'false',
             '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
             // Registry projection. Empty in ticket-only and SDK-default builds

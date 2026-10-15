@@ -169,6 +169,14 @@ function createVerificationFailure(verifyResult, proof) {
 }
 
 export async function acquireVerifiedAccess(options = {}) {
+    try { return await acquireVerifiedAccessMeasured(options); }
+    catch (error) {
+        options.requestTiming?.outcome(options.signal?.aborted || error?.isCancelled || error?.name === 'AbortError' ? 'cancelled' : 'error');
+        throw error;
+    }
+}
+
+async function acquireVerifiedAccessMeasured(options) {
     const {
         session,
         models,
@@ -288,10 +296,14 @@ export async function acquireVerifiedAccess(options = {}) {
             throwIfCancelled();
             const balanceBeforeRequest = spendableBalance();
             try {
-                result = await inferenceService.requestAccess(session, {
-                    ticketsRequired,
-                    ...(signal ? { signal } : {})
-                });
+                options.requestTiming?.setModel(modelEntry?.id || modelIdOverride);
+                options.requestTiming?.setKey('new');
+                options.requestTiming?.begin('access_ms');
+                try {
+                    result = await inferenceService.requestAccess(session, {
+                        ticketsRequired, ...(signal ? { signal } : {})
+                    });
+                } finally { options.requestTiming?.end('access_ms'); }
                 break;
             } catch (error) {
                 if (['NO_TICKETS', 'INSUFFICIENT_TICKETS'].includes(error.code)) {
@@ -391,7 +403,9 @@ export async function acquireVerifiedAccess(options = {}) {
 
         let verifyResult;
         try {
-            verifyResult = await inferenceService.verifyAccess(session, result);
+            options.requestTiming?.begin('verification_ms');
+            try { verifyResult = await inferenceService.verifyAccess(session, result); }
+            finally { options.requestTiming?.end('verification_ms'); }
         } catch (error) {
             verifyResult = { status: 'rejected', error };
         }

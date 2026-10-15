@@ -76,9 +76,14 @@ export class OpenRouterAPI {
     // Request-scoped leases isolate concurrent title/completion calls. Products
     // own credential acquisition, budget policy and cleanup, not SSE parsing.
     async withRequestAccess(token, options, operation) {
-        const access = this.options.acquireRequestAccess
-            ? await this.options.acquireRequestAccess(token, options)
-            : this.defaultRequestAccess(token);
+        const { requestTiming, ...accessOptions } = options;
+        let access;
+        if (this.options.acquireRequestAccess) requestTiming?.begin('access_ms');
+        try {
+            access = this.options.acquireRequestAccess
+                ? await this.options.acquireRequestAccess(token, accessOptions)
+                : this.defaultRequestAccess(token);
+        } finally { requestTiming?.end('access_ms'); requestTiming?.end('verification_ms'); }
         try {
             if (options.signal?.aborted) {
                 const error = new DOMException('The operation was aborted.', 'AbortError');
@@ -183,17 +188,26 @@ export class OpenRouterAPI {
             request._generateSessionTitle(prompt, token, requestOptions));
     }
 
-    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null) {
+    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null, requestTiming = null) {
         try { validateConversationInput(messages, this.getModelBudgetMetadata(modelId), files, modelId); }
         catch (error) { return Promise.reject(error); }
         return this.withRequestAccess(token, {
             signal: abortController?.signal,
-            onProgress: onAccessProgress,
+            requestTiming,
+            onProgress: progress => {
+                if (progress?.phase === 'verifying') requestTiming?.begin('verification_ms');
+                if (progress?.phase === 'ready') requestTiming?.end('verification_ms');
+                onAccessProgress?.(progress);
+            },
             modelId,
             reasoningEnabled
-        }, request => request._streamCompletion(messages, modelId, token, onChunk,
-            onTokenUpdate, files, searchEnabled, abortController, onStreamOpen,
-            onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth));
+        }, request => {
+            if (this.options.acquireRequestAccess) requestTiming?.end('access_ms');
+            requestTiming?.end('verification_ms');
+            return request._streamCompletion(messages, modelId, token, onChunk,
+                onTokenUpdate, files, searchEnabled, abortController, onStreamOpen,
+                onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth, requestTiming);
+        }).finally(() => { requestTiming?.end('access_ms'); requestTiming?.end('verification_ms'); });
     }
 
     // Get API key - only use ticket-based key
@@ -447,6 +461,7 @@ export class OpenRouterAPI {
         // POST is idempotent for same input - safe to retry
         // No timeout - provider manages timeouts; completions can take long
         try {
+            options.requestTiming?.mark('provider_dispatch_ms');
             const { response, data, text } = await this.fetchWithRetryJson(
                 this._requestAccess,
                 url,
@@ -578,6 +593,7 @@ export class OpenRouterAPI {
         };
 
         try {
+            options.requestTiming?.mark('provider_dispatch_ms');
             const { response, data, text } = await this.fetchWithRetryJson(
                 access,
                 url,
@@ -647,7 +663,7 @@ export class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null) {
+    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null, requestTiming = null) {
 
         // Handle web search - append :online suffix if enabled
         let effectiveModelId = modelId;
@@ -1494,6 +1510,7 @@ export class OpenRouterAPI {
 
             // The outer send policy owns retries. A watchdog also races transports
             // that do not reliably implement AbortSignal (including relay reads).
+            requestTiming?.mark('provider_dispatch_ms');
             const pendingResponse = this.fetchWithRetry(
                 access,
                 url,

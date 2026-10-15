@@ -1,3 +1,4 @@
+import { requestTiming, timingTextVisible, startRequestTiming, finishRequestTiming } from '../services/stagingRequestTiming.js';
 import { trackFeatureUsage } from '../services/featureUsage.js';
 import { STILL_WORKING_DELAY_MS } from '../services/streamSegments.js';
 import { waitForSignal } from '../services/inference/reliability.js';
@@ -182,7 +183,15 @@ export default class CouncilController {
         return this.runMultiModelTurn(options);
     }
 
-    async runRegenerateLaneTurn({
+    async runRegenerateLaneTurn(options) {
+        const signal = options.abortController?.signal;
+        const started = startRequestTiming(signal, { mode: this.app.runtime?.getMode?.(options.session) === 'zkapi' ? 'zkapi' : 'ticket' });
+        try { return await this.runRegenerateLaneTurnMeasured(options); }
+        catch (error) { if (started) finishRequestTiming(signal, 'error'); throw error; }
+        finally { if (started) finishRequestTiming(signal); }
+    }
+
+    async runRegenerateLaneTurnMeasured({
         session,
         assistantMessageId,
         laneId,
@@ -222,6 +231,7 @@ export default class CouncilController {
             throw new Error('Could not resolve the model for that Parallel response.');
         }
 
+        requestTiming(abortController?.signal, entry.laneId, entry.id);
         this.assertSufficientTicketsForEntries(session, [entry], `${entry.name} response`);
 
         const priorMessages = messages
@@ -743,6 +753,7 @@ export default class CouncilController {
             modelEntryOverride: entry,
             ticketRequirementLabel: entry.name,
             signal,
+            requestTiming: requestTiming(signal, entry.laneId, entry.id),
             onTicketShortage: shortage => this.app.handleAcquisitionTicketShortage?.(session, shortage, signal),
             onTicketUsed: skipped => this.app.showTicketSweepPending?.(session.id, skipped),
             onTicketSweepEnd: outcome => this.app.settleTicketSweep?.(session.id, outcome),
@@ -788,6 +799,7 @@ export default class CouncilController {
         this.seedPrimaryLaneAccessFromSession(session, entry);
         const laneAccess = this.getLaneAccess(session, entry.laneId);
         if (this.isLaneAccessUsable(session, laneAccess, entry)) {
+            requestTiming(signal, entry.laneId, entry.id)?.setKey('reused');
             return laneAccess;
         }
         if (laneAccess?.apiKey && this.isLaneAccessBanned(session, laneAccess)) {
@@ -800,6 +812,7 @@ export default class CouncilController {
     async ensureAccessForEntries(session, entries, typingId, signal = null) {
         throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(entries));
+        for (const entry of entries) requestTiming(signal, entry.laneId, entry.id);
         await this.ensureSufficientTicketsForEntries(session, entries, signal);
         for (const entry of entries) {
             await this.ensureLaneAccess(session, entry, typingId, signal);
@@ -1109,6 +1122,7 @@ export default class CouncilController {
             const shouldRunSynthesis = normalizedCouncilConfig.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
             const synthesisEntry = shouldRunSynthesis ? this.resolveSynthesisEntry(session, entries) : null;
             const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
+            for (const entry of accessEntries) requestTiming(abortController?.signal, entry.laneId, entry.id);
 
             const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(accessEntries));
 
@@ -1408,6 +1422,7 @@ export default class CouncilController {
                 && completed.length > 0 && !abortController.signal.aborted
                 && (!assistantMessage.council.synthesis || assistantMessage.council.synthesis.status === 'complete') };
         } catch (error) {
+            finishRequestTiming(abortController?.signal, 'error');
             if (typingId) this.app.removeTypingIndicator(typingId);
             if (isAbortError(error)) {
                 if (assistantMessage?.id) {
@@ -1485,6 +1500,8 @@ export default class CouncilController {
         streamTarget = null
     }) {
         const laneSession = this.buildLaneSession(session, entry.laneId);
+        const timing = requestTiming(abortController?.signal, entry.laneId, entry.id);
+        timing?.setVisible(() => !abortController?.signal?.aborted && timingTextVisible(this.app, session.id, streamTarget?.assistantMessage?.id, entry.laneId));
         try {
             if (typeof this.inferenceService.streamCompletion === 'function') {
                 try {
@@ -1504,18 +1521,22 @@ export default class CouncilController {
                 }
             }
 
-            return await this.sendLaneMessagesStrictCompletion({
-                entry,
-                laneSession,
-                messages,
-                searchEnabled,
-                abortController
+            const result = await this.sendLaneMessagesStrictCompletion({
+                entry, laneSession, messages, searchEnabled, abortController, requestTiming: timing
             });
+            if (extractResponseContent(result)) timing?.answer();
+            timing?.outcome(abortController?.signal?.aborted ? 'cancelled' : 'complete');
+            return result;
         } catch (error) {
             if (!hasRetriedAfterCredit && this.app.isAccessCreditExhaustedError(error)) {
-                this.clearLaneAccess(session, entry.laneId);
-                await this.chatDB.saveSession(session);
-                await this.requestLaneAccess(session, entry, typingId, abortController?.signal || null);
+                try {
+                    this.clearLaneAccess(session, entry.laneId);
+                    await this.chatDB.saveSession(session);
+                    await this.requestLaneAccess(session, entry, typingId, abortController?.signal || null);
+                } catch (retryError) {
+                    timing?.settle(abortController?.signal?.aborted || isAbortError(retryError) ? 'cancelled' : 'error');
+                    throw retryError;
+                }
                 return this.sendLaneMessagesCompletion({
                     session,
                     entry,
@@ -1527,6 +1548,7 @@ export default class CouncilController {
                     streamTarget
                 });
             }
+            timing?.settle(abortController?.signal?.aborted || isAbortError(error) ? 'cancelled' : 'error');
             throw error;
         }
     }
@@ -1542,7 +1564,7 @@ export default class CouncilController {
         laneSession,
         messages,
         searchEnabled,
-        abortController
+        abortController, requestTiming = null
     }) {
         return this.inferenceService.sendCompletionStrict(
             messages,
@@ -1553,6 +1575,7 @@ export default class CouncilController {
                     ? `Council synthesis (${entry.name})`
                     : `Parallel response (${entry.name})`,
                 signal: abortController?.signal || null,
+                requestTiming,
                 searchEnabled,
                 reasoningEnabled: this.app.reasoningEnabled,
                 reasoningEffort: this.app.reasoningEffort
@@ -1760,7 +1783,8 @@ export default class CouncilController {
                 this.app.reasoningEnabled,
                 this.app.reasoningEffort,
                 null,
-                health => this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, health, entry.name)
+                health => this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, health, entry.name),
+                requestTiming(abortController?.signal, laneId, entry.id)
             );
         } catch (error) {
             stopStillWorking();
