@@ -314,10 +314,10 @@ test('wordless thinking after part of the answer shows Thinking again until the 
     t.after(restore);
     await app.sendMessage();
     assert.ok(duringSearch.calls.includes('resumeReasoningDisplay'), 'the settled header says Thinking... again');
-    const settleCalls = paints.filter(call => call.name === 'settleWithheldReasoningDisplay');
+    const settleCalls = paints.filter(call => call.name === 'settleThinkingHeader');
     assert.equal(settleCalls.length, 1, 'the next words settle it once, not on every chunk');
     assert.ok(paints.findIndex(call => call.name === 'resumeReasoningDisplay')
-        < paints.findIndex(call => call.name === 'settleWithheldReasoningDisplay'));
+        < paints.findIndex(call => call.name === 'settleThinkingHeader'));
     assert.ok(settleCalls[0].args[1] >= 30, 'the duration runs to the end of the second thinking segment');
     const settled = assistant().at(-1);
     assert.equal(settled.content, 'I will look it up.\n\nA few repos match. More.');
@@ -342,7 +342,7 @@ test('a resumed signal for a trace with words reopens it; the next words settle 
     const resumed = names.indexOf('resumeReasoningDisplay');
     assert.ok(resumed > names.indexOf('settleReasoningDisplay'), 'reopened after the first settle');
     assert.ok(names.indexOf('settleReasoningDisplay', resumed) > resumed, 'settled again at the next words');
-    assert.equal(names.includes('settleWithheldReasoningDisplay'), false);
+    assert.equal(names.includes('settleThinkingHeader'), false);
 });
 
 // Grok sends its reasoning in one burst right before the answer; the thinking
@@ -380,4 +380,68 @@ test('a stopped reply keeps its thinking time, so it reads "Thought for …" aft
     t.after(restore);
     await app.sendMessage();
     assert.ok(assistant().at(-1).reasoningDuration >= 20);
+});
+
+// Grok may think again after any line, so it is not done thinking until the
+// reply is: its header says "Thinking..." while the answer streams and
+// "Thought for Ns" only once the reply completes.
+test('Grok: the header keeps saying Thinking while the answer streams, and settles when the reply completes', async t => {
+    const restore = installBrowser();
+    let midAnswer = null;
+    const { app, assistant, paints } = streamHarness(async (...args) => {
+        const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
+        await opened();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        await reasoning('', { withheld: true });
+        await chunk('I will look it up.');
+        midAnswer = { record: structuredClone(assistant().at(-1)), calls: paints.map(call => call.name) };
+        await reasoning('', { withheld: true, resumed: true });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        await chunk('\n\nA few repos match.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    app.state.models = [{ id: 'x-ai/grok-4.7', name: 'Accepted model' }];
+    t.after(restore);
+    await app.sendMessage();
+    assert.equal(midAnswer.record.streamingReasoning, true, 'the row was shown still thinking, not "Thought"');
+    assert.equal(midAnswer.calls.includes('settleThinkingHeader'), false, 'no duration while the reply streams');
+    const names = paints.map(call => call.name);
+    const settled = names.indexOf('settleThinkingHeader');
+    assert.ok(settled >= 0 && settled === names.lastIndexOf('settleThinkingHeader'), 'the header settles once');
+    assert.ok(settled < names.indexOf('finalizeStreamingMessage'), 'before the final render, so nothing flashes');
+    const final = assistant().at(-1);
+    assert.equal(final.streamingReasoning, false);
+    assert.ok(final.reasoningDuration >= 40, 'timed to the end of the last thinking segment');
+});
+
+test('Grok with reasoning words: the trace body settles at the first line but the header stays on Thinking', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('Looking at the question.');
+        await chunk('Red, green, and blue.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    app.state.models = [{ id: 'x-ai/grok-4.7', name: 'Accepted model' }];
+    t.after(restore);
+    await app.sendMessage();
+    const names = paints.map(call => call.name);
+    assert.equal(names[names.indexOf('settleReasoningDisplay') + 1], 'resumeReasoningDisplay');
+    assert.ok(names.indexOf('settleThinkingHeader') > names.indexOf('resumeReasoningDisplay'));
+});
+
+test('other models still settle the header at the first answer words', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('Looking at the question.');
+        await chunk('Red, green, and blue.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    const names = paints.map(call => call.name);
+    assert.ok(names.includes('settleReasoningDisplay'));
+    assert.equal(names.includes('resumeReasoningDisplay'), false);
+    assert.equal(names.includes('settleThinkingHeader'), false);
 });

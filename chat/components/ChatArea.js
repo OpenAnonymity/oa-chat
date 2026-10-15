@@ -3094,14 +3094,18 @@ export default class ChatArea {
     }
 
     /**
-     * Wordless thinking (the provider withheld the words) is over: the header
-     * is all there is, so it takes the new duration. A trace with words
-     * settles through settleReasoningDisplay instead.
+     * The thinking is over: the header takes its duration. Used for wordless
+     * thinking (the header is all there is) and for a header held on
+     * "Thinking..." until the reply completed (Grok); a trace's words settle
+     * through settleReasoningDisplay.
      * @param {string} messageId - The message ID
      * @param {number} reasoningDuration - Duration in milliseconds
      */
-    settleWithheldReasoningDisplay(messageId, reasoningDuration) {
-        this.updateReasoningSubtitleToDuration(messageId, reasoningDuration);
+    settleThinkingHeader(messageId, reasoningDuration) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.classList.remove('reasoning-subtitle-streaming');
+        subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
     }
 
     /**
