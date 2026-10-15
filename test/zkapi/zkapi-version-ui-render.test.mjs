@@ -292,14 +292,9 @@ test('the pill sits beside the readiness pill, never between the expiry label an
     assert.ok(top < pill && pill < foot, 'in the card header');
     assert.ok(Math.abs(pill - readiness) < 700, 'next to the readiness pill');
     assert.match(html, /data-zkapi-balance-expiry>[^<]*<\/span><button id="zkapi-modal-expiry-help-toggle"/);
-    // Its explanation is a help panel of the card, closed until asked for.
-    assert.match(html, /id="zkapi-modal-version-help" data-zkapi-help-content="version" hidden/);
-    assert.match(html, /Your balance is on version 1\./);
-    // The surface is the dialog's and the toggle's state is the owner's.
+    // No help panel: the pill is the whole explanation.
+    assert.doesNotMatch(html, /id="zkapi-modal-version-help"|Your balance is on version 1\./);
     assert.match(html, /data-surface="dialog"/);
-    f.modal.privateBalanceHelpOpen = { version: true };
-    assert.match(f.modal.renderBalance(), /aria-expanded="true"/);
-    assert.match(f.modal.renderBalance(), /id="zkapi-modal-version-help" data-zkapi-help-content="version" >/);
 });
 
 test('the banner follows the balance card and precedes the expired notice, as static text', t => {
@@ -1148,8 +1143,9 @@ test('the real notice helpers mount where the dialog puts them, and their patch 
     const f = fixture(t, { note: aNote(5), facade });
     const html = f.modal.renderBalance();
     assert.match(html, /data-zkapi-version-badge-group data-zkapi-version-surface="dialog"/);
-    assert.match(html, /id="zkapi-modal-version-help-toggle"/);
-    assert.match(html, /id="zkapi-modal-version-help" data-zkapi-help-content="version" hidden/);
+    // The `?` is a tooltip: no toggle, and no help panel beneath it.
+    assert.match(html, /aria-label="The zkAPI protocol version this balance uses"/);
+    assert.doesNotMatch(html, /zkapi-modal-version-help/);
     assert.match(html, /data-zkapi-version-banner="dialog"/);
     assert.match(html, /data-zkapi-version-action="upgrade"/);
     assert.match(html, /data-zkapi-balance-expiry>[^<]*<\/span><button id="zkapi-modal-expiry-help-toggle"/);

@@ -66,7 +66,7 @@ const NOTICE_KINDS = Object.freeze(['stuck_escape']);
 const NOTICE_TEXT_LIMIT = 280;
 const NOTICE_COUNT_LIMIT = 16;
 
-const ROW_KEYS = ['id', 'ordinal', 'label', 'adapter', 'circuitId', 'vaultRevision', 'sdk',
+const ROW_KEYS = ['id', 'ordinal', 'label', 'protocolVersion', 'adapter', 'circuitId', 'vaultRevision', 'sdk',
     'publicPath', 'proxyPath', 'transition', 'gate', 'networks'];
 const ENTRY_KEYS = ['status', 'activatedAt', 'profile', 'config', 'depositsClosedSince', 'admissionClosesAt',
     'retiredAt', 'tombstone', 'notices'];
@@ -217,6 +217,10 @@ function checkRowShape(row, index, networks) {
     if (!isPositiveInteger(row.ordinal)) fail('ordinal', `${name} needs a positive integer ordinal.`);
     if (typeof row.label !== 'string' || !row.label || row.label.length > 64 || CONTROL_CHARACTERS.test(row.label)) {
         fail('schema', `${name} needs a short plain-text label.`);
+    }
+    if (row.protocolVersion !== undefined
+        && (typeof row.protocolVersion !== 'string' || !/^\d{1,3}\.\d{1,3}(\.\d{1,3})?$/.test(row.protocolVersion))) {
+        fail('schema', `${name}.protocolVersion must look like 0.2.`);
     }
     for (const field of ['adapter', 'circuitId']) {
         if (typeof row[field] !== 'string' || !row[field]) fail('schema', `${name}.${field} must be a non-empty string.`);
@@ -895,6 +899,7 @@ function resolveLive(row, network, entry, { profiles, sha256, configSha256 }) {
         id: row.id,
         ordinal: row.ordinal,
         label: row.label,
+        protocolVersion: typeof row.protocolVersion === 'string' ? row.protocolVersion : null,
         adapter: row.adapter,
         circuitId: row.circuitId,
         vaultRevision: row.vaultRevision,
@@ -926,6 +931,7 @@ function resolveTombstone(row, entry) {
         id: row.id,
         ordinal: row.ordinal,
         label: row.label,
+        protocolVersion: typeof row.protocolVersion === 'string' ? row.protocolVersion : null,
         adapter: row.adapter,
         circuitId: row.circuitId,
         vaultRevision: row.vaultRevision,

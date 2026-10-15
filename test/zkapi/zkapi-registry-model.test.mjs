@@ -1183,8 +1183,8 @@ test('the runtime table excludes pending rows, orders live rows by ordinal and e
         [['v2', 'exit-only'], ['v3', 'active'], ['v1', 'retired']]);
     const [, , tombstone] = table;
     assert.deepEqual({ ...tombstone, transition: undefined }, {
-        id: 'v1', ordinal: 1, label: 'Version 1', adapter: 'note-bound-v1', circuitId: 'zkapi-v2-note-bound-v1',
-        vaultRevision: 1, status: 'retired', depositsOpen: false, depositsClosedSince: Date.UTC(2026, 10, 1),
+        id: 'v1', ordinal: 1, label: 'Version 1', protocolVersion: '0.1', adapter: 'note-bound-v1',
+        circuitId: 'zkapi-v2-note-bound-v1', vaultRevision: 1, status: 'retired', depositsOpen: false, depositsClosedSince: Date.UTC(2026, 10, 1),
         admissionClosesAt: null, deploymentId: 'zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930', chainId: 1,
         vault: '0x4386fdbda35d995beb3bf8625118ec5982ec81fe', rpcUrl: null, configSha256: null, assetBase: null,
         proxyPath: null, transition: undefined, notices: []
