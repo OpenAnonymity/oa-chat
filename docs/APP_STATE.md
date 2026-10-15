@@ -1,3 +1,18 @@
+## October 15, 2026 — isolated production candidate
+
+This candidate starts at the live production client `e6f55300`. It selectively
+includes the sidebar menu and filtered deletion repairs, resumed thinking and
+one-second stalled-text feedback, operation-scoped Sentry diagnostics, and the
+Security Details / sync-status repairs. It excludes the staging request-timing
+experiment entirely, including its recorder, hooks, uploader, configuration and
+commits. The production zkAPI SDK and payment configuration remain at the base.
+Do not merge the experiment-bearing staging branch into this candidate.
+
+Earlier dated entries describe their historical staging/local status. They do
+not establish production deployment or acceptance for this candidate. Hosted
+Sentry IP/geography scrubbing and exact-candidate device/live coverage remain
+release gates; the final preparation record is maintained outside this checkout.
+
 ## October 15, 2026 — Sentry client repairs for staging
 
 Security Details now tolerates a failed native version getter. Sync status checks

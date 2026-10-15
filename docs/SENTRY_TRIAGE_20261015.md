@@ -16,8 +16,11 @@ Public build manifests checked on October 15:
   `54f6b1bf6d2d6828a8015433171d7e52e51d3d3f`.
 
 The original isolated investigation branch starts at the production client revision.
-That original branch excludes the request-timing experiment; this staging handoff
-preserves staging's existing experiment and must never be promoted to production. No deployment or commit was made by this investigation.
+That original branch excludes the request-timing experiment. The historical staging
+handoff described below preserves staging's experiment and must never be promoted
+to production. The later production candidate selectively applies the repairs to
+the production base, excluding the experiment. No deployment was made by the
+original investigation.
 
 ## Runtime groups
 
@@ -119,9 +122,18 @@ The four false-success cases fail on the previous implementation.
 - This is a local patch; no public release, real-provider failure reproduction,
   real-device acceptance or Sentry resolution is claimed.
 
-## Staging handoff
+## Historical staging handoff
 
 Prepared against staging client fe46720c and commercial 1b39b445. The staging
 patch preserves the existing status diagnostic and all newer staging work. That
 base contains the staging-only timing experiment: do not promote this resulting
 branch or pin to production. The original isolated repair branch remains separate.
+
+## Isolated production preparation
+
+The production candidate starts at `e6f55300` and selectively applies the TLS and
+sync repairs together with the UI and scoped diagnostic fixes. It contains no
+request-timing experiment. Its SDK, payment configuration and backend routing
+remain at the production baseline. The validation above describes the earlier
+repair review; exact production-candidate validation is recorded separately.
+Hosted Sentry scrubbing and real-device acceptance remain outstanding.
