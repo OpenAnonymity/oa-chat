@@ -1,3 +1,12 @@
+## October 15, 2026 — Sentry client repairs for staging
+
+Security Details now tolerates a failed native version getter. Sync status checks
+use the existing five-second background request policy, preserve unknown/error
+results rather than reporting up-to-date, validate the server timestamp, and
+ignore stale-account responses. Existing Sentry status diagnostics are retained.
+See [investigation and verification](SENTRY_TRIAGE_20261015.md). No ticket merge,
+redemption, provider retry, encryption or request-timing behavior changed.
+
 ## October 15, 2026 — deleted chats leave filtered sidebar results
 
 Live staging QA found that Delete succeeded in IndexedDB but left its row in

@@ -647,19 +647,19 @@ export class SyncService {
 
     /**
      * Quick check if server has newer data than local.
-     * Returns true if we need to pull, false if up-to-date.
+     * Returns true if we need to pull, false if up-to-date, null if unknown.
      */
     async hasRemoteChanges() {
         if (!this.isEnabled()) {
-            return false;
-        }
-        if (!await this.isAccountScopeActive()) {
-            return false;
+            return null;
         }
         const credentialGeneration = this.credentialGeneration;
 
         try {
-            const response = await sessionService.fetch(
+            if (!await this.isAccountScopeActive()
+                || !this.credentialsAreCurrent(credentialGeneration)) return null;
+            // Bound both headers and body, just like the background sync itself.
+            const response = await this.fetchWithRetry(
                 `${ORG_API_BASE}/auth/sync/status`,
                 {
                     method: 'GET',
@@ -667,16 +667,22 @@ export class SyncService {
                         'Content-Type': 'application/json'
                     },
                     credentials: 'include'
-                }
+                },
+                'Sync status',
+                { background: true }
             );
-            if (!this.credentialsAreCurrent(credentialGeneration)) return false;
+            if (!this.credentialsAreCurrent(credentialGeneration)) return null;
 
-            if (!response.ok) return false;
+            if (!response.ok) throw new Error('Sync status unavailable');
 
             const { last_sync: serverLastSync } = await response.json();
-            if (!this.credentialsAreCurrent(credentialGeneration)) return false;
+            if (!this.credentialsAreCurrent(credentialGeneration)) return null;
+            // The server uses null for an account with no uploaded blobs.
+            if (serverLastSync !== null && (!Number.isSafeInteger(serverLastSync) || serverLastSync < 0)) {
+                throw new Error('Invalid sync status response');
+            }
             const localLastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
-            if (!this.credentialsAreCurrent(credentialGeneration)) return false;
+            if (!this.credentialsAreCurrent(credentialGeneration)) return null;
 
             const hasChanges = serverLastSync > localLastSync;
 
@@ -689,9 +695,12 @@ export class SyncService {
 
             return hasChanges;
         } catch (error) {
+            if (!this.credentialsAreCurrent(credentialGeneration)) return null;
             console.warn('[SyncService] Status check failed:', error);
             reportDiagnostic('sync.failed', { reason: requestFailureReason(error), stage: 'status' });
-            return false;
+            this.lastSyncResult = { success: false, error: 'Sync status unavailable' };
+            this.notify('sync_error', { error: 'Sync status unavailable' });
+            return null;
         }
     }
 
@@ -703,6 +712,9 @@ export class SyncService {
         if (!this.isEnabled()) return { skipped: true, reason: 'not logged in' };
 
         const hasChanges = await this.hasRemoteChanges();
+        if (hasChanges === null) {
+            return { success: false, error: 'Sync status unavailable' };
+        }
         if (!hasChanges) {
             return { skipped: true, reason: 'up-to-date' };
         }
