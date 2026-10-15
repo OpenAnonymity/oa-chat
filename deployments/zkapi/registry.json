@@ -70,7 +70,8 @@
         "revision": "3e2ecf1cde7cad5d202c005910e509a399c052bf",
         "storeSha256": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
         "patches": [
-          "wallet-recovery-v2c"
+          "wallet-recovery-v2c",
+          "provider-verification-v2c"
         ],
         "honorsDepositsFlag": true
       },

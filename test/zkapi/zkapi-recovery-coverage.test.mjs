@@ -141,7 +141,7 @@ test('a registry whose successor is pending, or whose live rows need nothing, ha
     // pending and is not asked for what its family lists.
     assert.equal(shipped.versions[1].adapter, 'concession-v1');
     assert.deepEqual(NETWORKS.map(network => shipped.versions[1].networks[network].status), ['pending', 'active']);
-    assert.deepEqual(shipped.versions[1].sdk.patches, ['wallet-recovery-v2c']);
+    assert.deepEqual(shipped.versions[1].sdk.patches, ['wallet-recovery-v2c', 'provider-verification-v2c']);
     assert.equal(shipped.versions[1].sdk.revision, patchV2c.revision);
 });
 
@@ -318,7 +318,7 @@ function mirror(t, registry) {
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     for (const relative of ['scripts/zkapiRegistry.mjs', 'scripts/patch-zkapi-sdk.mjs', 'chat/zkapi/versioning',
         'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-v2c-recovery.mjs',
-        'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs',
+        'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-v2c-provider-verification.mjs',
         'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
         fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true });
         fs.cpSync(path.join(repoRoot, relative), path.join(directory, relative), { recursive: true });

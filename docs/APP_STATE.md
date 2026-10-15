@@ -1,3 +1,20 @@
+## October 15, 2026 — successor SDK startup compatibility
+
+The Sepolia successor SDK rejected `verifyProviderKey` and `assertProviderKey`
+at real browser startup, producing the generic zkAPI unavailable toast. The
+host passed those options to both versions, but only the legacy SDK had the
+provider-verification patch. Unit tests with boot import seams and artifact
+checks did not exercise the real SDK configuration call.
+
+`provider-verification-v2c` ports the existing host policy to the pinned
+`3e2ecf1c` successor SDK, with exact before/after file hashes. It accepts and
+validates both callbacks, runs verification only after native quote, cap,
+origin and evidence checks, preserves safe proof metadata, checks cancellation,
+and rechecks cached leases before incrementing their in-flight count. No wallet
+storage or deployment identity changes. The registry explicitly applies the
+patch; installation refuses unreviewed SDK bytes. Regression coverage calls the
+real successor configuration/runtime, alongside the legacy verification suite.
+
 ## October 15, 2026 — thinking header included in staging candidate
 
 The candidate includes the complete `79e33389` branch alongside the menu and

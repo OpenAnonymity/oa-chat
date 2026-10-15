@@ -133,7 +133,7 @@ test('the shipped registry differs from the fixture only by the Sepolia activati
     assert.equal(v2.sdk.source, `github:OpenAnonymity/zkapi#${v2.sdk.revision}`);
     assert.match(v2.sdk.revision, /^[0-9a-f]{40}$/);
     assert.match(v2.sdk.storeSha256, /^[0-9a-f]{64}$/);
-    assert.deepEqual(v2.sdk.patches, ['wallet-recovery-v2c']);
+    assert.deepEqual(v2.sdk.patches, ['wallet-recovery-v2c', 'provider-verification-v2c']);
     assert.deepEqual(v2.gate.recoveryReview, { revision: v2.sdk.revision, verdict: 'not_required', patch: null });
     assert.equal(v2.gate.protocolWiring, 'done');
     assert.match(v2.gate.manifestSha256, /^[0-9a-f]{64}$/);

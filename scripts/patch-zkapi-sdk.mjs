@@ -8,6 +8,7 @@ import patch from '../patches/zkapi-browser-sdk-wallet-recovery.mjs';
 import proofCachePatch from '../patches/zkapi-browser-sdk-proof-cache.mjs';
 import providerVerificationPatch from '../patches/zkapi-browser-sdk-provider-verification.mjs';
 import patchV2c from '../patches/zkapi-browser-sdk-v2c-recovery.mjs';
+import providerVerificationV2c from '../patches/zkapi-browser-sdk-v2c-provider-verification.mjs';
 import registry from '../deployments/zkapi/registry.json' with { type: 'json' };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,7 +31,8 @@ const SDK_PATCHES = Object.freeze({
     [LEGACY_PATCH]: patch,
     [PROOF_CACHE_PATCH]: proofCachePatch,
     [PROVIDER_VERIFICATION_PATCH]: providerVerificationPatch,
-    [V2C_PATCH]: patchV2c
+    [V2C_PATCH]: patchV2c,
+    [providerVerificationV2c.name]: providerVerificationV2c
 });
 
 // The patches of the legacy SDK, in the order their file chains apply.
