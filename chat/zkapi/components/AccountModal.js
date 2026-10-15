@@ -1071,12 +1071,8 @@ export default class AccountModal {
     renderVersionBadge(version) {
         if (!version?.ui || typeof version.ui.badge !== 'function') return { badge: '', help: '' };
         try {
-            const open = Boolean(this.privateBalanceHelpOpen?.version);
-            const badge = String(version.ui.badge(version.state, { surface: 'dialog', helpOpen: open }) || '');
-            if (!badge) return { badge: '', help: '' };
-            let detail = null;
-            try { detail = version.ui.help?.('version', version.state) ?? null; } catch { detail = null; }
-            return { badge, help: privateBalanceHelpContent('modal', 'version', open, detail) };
+            // A pill with a short tooltip: no help disclosure.
+            return { badge: String(version.ui.badge(version.state, { surface: 'dialog' }) || ''), help: '' };
         } catch { return { badge: '', help: '' }; }
     }
 

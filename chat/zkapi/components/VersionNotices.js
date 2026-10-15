@@ -71,7 +71,7 @@ import {
 } from '../versioning/copy.mjs';
 import { ABANDON_WORDS, openAbandonDialog } from './AbandonDialog.js';
 import { EXIT_KIT_WORDS, openExitKitDialog } from './ExitKitDialog.js';
-import { privateBalanceHelpButton, versionHelpDetail } from './PrivateBalanceHelp.js';
+import { versionHelpDetail } from './PrivateBalanceHelp.js';
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -170,11 +170,16 @@ function isDismissed(id, options) {
 
 function badgeModel(state) {
     if (!isRecord(state) || state.show !== true || !isRecord(state.current)) return null;
+    // The pill names the zkAPI protocol version ("zkAPI v0.2"). A registry
+    // row without one falls back to its version label.
+    const protocol = typeof state.current.protocolVersion === 'string' ? state.current.protocolVersion.trim() : '';
+    if (protocol) {
+        const text = `zkAPI v${protocol}`;
+        return { label: escapeHtml(text), text, amber: false };
+    }
     const label = versionCopy('pill', { F: state.current.label || state.current.id });
     if (!label) return null;
-    // Amber only inside the prompt window: the colour says "act", not "old".
-    const amber = state.phase === 'upgrade-soon' || state.phase === 'upgrade-overdue';
-    return { label, text: versionCopyText('pill', { F: state.current.label || state.current.id }), amber };
+    return { label, text: versionCopyText('pill', { F: state.current.label || state.current.id }), amber: false };
 }
 
 /**
@@ -198,7 +203,9 @@ export function renderVersionBadge(state, options = {}) {
     // The dialog's pills (readiness, expiry) have their own frame; the panel's
     // are utility-styled at 9px.
     const classes = [surface === 'dialog' ? 'zkapi-version-pill zkapi-pill' : PILL_BASE, ...PILL_TONES[tone]].join(' ');
-    const toggle = privateBalanceHelpButton(surface === 'dialog' ? 'modal' : 'panel', 'version', options.helpOpen === true);
+    // The `?` is a tooltip, not a disclosure: nothing opens beneath it.
+    const toggle = '<span class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground" '
+        + 'role="img" tabindex="0" aria-label="The zkAPI protocol version this balance uses" title="The zkAPI protocol version this balance uses">?</span>';
     return `<span class="zkapi-version-badge-group" data-zkapi-version-badge-group data-zkapi-version-surface="${surface}">`
         + `<span class="${classes}" data-zkapi-version-badge data-zkapi-version-tone="${tone}">${badge.label}</span>`
         + `${toggle}</span>`;
@@ -779,11 +786,10 @@ export function buildVersionNotices(state, options = {}) {
         if (entry.dismissible && (isDismissed(entry.id, options) || isDismissed(entry.dismissKey, options))) return false;
         // A refused withdrawal's wait is told where the withdrawal is.
         if (DIALOG_ONLY_NOTICES.has(entry.id) && surface !== 'dialog') return false;
-        if (surface === 'ticket') {
-            if (!TICKET_NOTICES.has(entry.id)) return false;
-            // A neutral note is not worth a place in a different mode.
-            if (entry.neutral) return false;
-        }
+        // The day-0 "a newer version is available" note says nothing the
+        // person must act on: the pill alone tells which protocol they are on.
+        if (entry.neutral) return false;
+        if (surface === 'ticket' && !TICKET_NOTICES.has(entry.id)) return false;
         return true;
     });
     // The paragraph count is structure too: a patch writes text into the
@@ -917,7 +923,9 @@ export function patchVersionNotices(root, state, options = {}) {
     const badges = elements(root, '[data-zkapi-version-badge]');
     const banners = elements(root, '[data-zkapi-version-banner]');
     const badge = badgeModel(state);
-    if (Boolean(badge) !== badges.length > 0) return { needsRender: true };
+    // A host that mounts no pill (the System Panel) passes `badge: false`.
+    const wantsBadge = options.badge === false ? false : Boolean(badge);
+    if (wantsBadge !== badges.length > 0) return { needsRender: true };
 
     const extra = typeof options.extra === 'string' ? options.extra : '';
     if (!banners.length) {
@@ -960,7 +968,7 @@ export function patchVersionNotices(root, state, options = {}) {
     }
 
     // Structure matches: patch.
-    if (badge) {
+    if (badge && badges[0]) {
         const element = badges[0];
         const tone = badge.amber ? 'amber' : 'muted';
         setIfChanged(element, badge.text);

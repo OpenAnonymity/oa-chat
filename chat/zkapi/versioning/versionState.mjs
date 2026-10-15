@@ -1095,7 +1095,12 @@ export function deriveVersionState(input) {
 
     const partial = {
         show,
-        current: { id: active.id, label: typeof active.label === 'string' ? active.label : active.id, status: active.status },
+        current: {
+            id: active.id,
+            label: typeof active.label === 'string' ? active.label : active.id,
+            protocolVersion: nonEmptyString(active.protocolVersion) || null,
+            status: active.status
+        },
         target: versionRef(targetVersion),
         holding,
         depositsOpen,

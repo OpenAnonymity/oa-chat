@@ -1,3 +1,21 @@
+## 2026-10-15: One version pill, in balance details only
+
+- The System Panel no longer shows the version pill, its `?` or any help panel;
+  balance details shows one muted pill named for the zkAPI protocol version
+  (`zkAPI v0.2`) with a tooltip-only `?`. `protocolVersion` is a new optional
+  registry row field (`0.1` for version 1, `0.2` for version 2; shape
+  `N.N[.N]`); a row without it falls back to its `label`, and `VersionState.current`
+  carries it. The pill is always muted: amber is gone.
+- The neutral "Version N is available. Your balance ... keeps working until"
+  notice (and the neutral set-aside note) is dropped on every surface. Reminder
+  tiers (7/3/1 days, overdue) are unchanged and still carry the Upgrade button,
+  so the voluntary "Upgrade now" link no longer appears before the prompt window.
+- `patchVersionNotices` takes `badge: false` for a host that mounts no pill (the
+  System Panel); without it a missing pill reads as structural and re-renders on
+  every clock tick.
+- `version 1`'s `0.1` is the registry's own choice, not read from the SDK:
+  confirm it against the real v1 protocol naming before shipping.
+
 ## October 17, 2026 — revision-4 Sepolia staging rollout
 
 The `concession-v2` adapter supports circuit `zkapi-v2-concession-v2`, vault

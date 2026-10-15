@@ -141,16 +141,10 @@ export default class RightPanel extends SharedRightPanel {
         const view = this.versionView(now);
         if (!view) return none;
         const { state, ui } = view;
-        const helpOpen = Boolean(this.privateBalanceHelpOpen?.version);
         try {
-            const badge = ui.badge?.(state, { surface: 'panel', helpOpen }) || '';
-            return {
-                badge,
-                help: badge
-                    ? privateBalanceHelpContent('panel', 'version', helpOpen, ui.help?.('version', state))
-                    : '',
-                banner: ui.banner?.(state, { surface: 'panel', now }) || ''
-            };
+            // The version pill lives in balance details only; the panel keeps
+            // the banner for notices that need action.
+            return { badge: '', help: '', banner: ui.banner?.(state, { surface: 'panel', now }) || '' };
         } catch {
             // Presentation only: the balance renders without version notices.
             return none;
@@ -191,7 +185,7 @@ export default class RightPanel extends SharedRightPanel {
         if (!view || typeof view.ui.patch !== 'function') return;
         let result;
         try {
-            result = view.ui.patch(root, view.state, { now, surface: this.versionSurface() });
+            result = view.ui.patch(root, view.state, { now, surface: this.versionSurface(), badge: false });
         } catch {
             return;
         }

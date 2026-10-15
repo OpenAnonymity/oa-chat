@@ -380,9 +380,9 @@ test('the clock patches the notice in place and asks for a render only when its 
     assert.deepEqual(patchVersionNotices(empty, state, { now: NOW_MS, surface: 'panel', table: TABLE }), { needsRender: true });
 });
 
-test('the pill still names the version that holds the balance', () => {
+test('the pill still names the protocol version that holds the balance', () => {
     const html = renderVersionBadge(held(), { surface: 'panel' });
-    assert.match(html, /data-zkapi-version-badge[^>]*>Version 1<\/span>/);
+    assert.match(html, /data-zkapi-version-badge[^>]*>zkAPI v0\.1<\/span>/);
 });
 
 test('Reload reloads the page, and nothing in this state starts a withdrawal, an upgrade or a give-up', async () => {

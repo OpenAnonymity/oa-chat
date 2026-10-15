@@ -2001,11 +2001,11 @@ operator announced as stuck on a destination that rejects ETH. The notice's
 
 | Surface | Change |
 | --- | --- |
-| System Panel header | muted pill `Version N` after the existing help button (so the `Private balance:` then billing-help ordering holds), with its own `?` ("About versions", ids `zkapi-panel-version-help-toggle` and `zkapi-modal-version-help-toggle`) |
-| Balance dialog card | pill beside the readiness pill; never between the expiry text and its `?` |
-| Panel and dialog banner | one `[data-zkapi-version-banner]` block per surface (value `panel` or `dialog`); static text, no live region, no focus theft; the clock patches text only |
+| System Panel header | no version pill and no version `?`: the panel keeps only the banner notices that need action |
+| Balance dialog card | muted pill naming the zkAPI protocol version (`zkAPI v0.2`, from the registry row's optional `protocolVersion`; the row `label` is the fallback) beside the readiness pill, with a `?` that is a tooltip only (no help disclosure); never between the expiry text and its `?` |
+| Panel and dialog banner | one `[data-zkapi-version-banner]` block per surface (value `panel` or `dialog`); the day-0 "newer version is available" note is not shown on any surface; static text, no live region, no focus theft; the clock patches text only |
 | Ticket (OA) mode | keyed `#zkapi-upgrade-notice` slot after the closing notice (value `ticket` on the banner hook); only the upgrade (soon or overdue), previous and credit notices reach it, never the neutral note or operator text; no toast |
-| Standalone toolbar chip | title and `aria-label` gain ` · Version N` only when the pill shows |
+| Standalone toolbar chip | title and `aria-label` gain ` · Version N` only when the pill shows (unchanged by the pill rename) |
 | Dialog view `upgrade` | entered by `zkapi-payment-required {view: 'upgrade'}`; part of `RESTORABLE_VIEWS` |
 | Balance card | under the balance and the version banner: the exit kit's status row and the give-up link (`ui.balanceExtras`, [7.8](#78-the-exit-kit), [7.9](#79-giving-up-a-zero-or-dust-balance)) |
 | Withdraw view | the fine print about a settling chat and, while one holds the balance, the choice of how to withdraw (`ui.exitChoice`, [7.7](#77-a-settling-chat-and-the-emergency-exit)) |
@@ -3188,8 +3188,8 @@ pending escape while unexpired.
 - The console shows no `[zkapi] Deposit methods not classified by the adapter`
   warning and no `[zkapi] Private payments could not start` line.
 - A fresh profile lands on version 2 with deposits allowed; a profile holding a
-  version 1 note lands on version 1 with deposits closed, the "About versions"
-  pill and an upgrade banner; a tab left open on the previous bundle refuses a
+  version 1 note lands on version 1 with deposits closed, the zkAPI protocol
+  version pill (no availability note until the reminder window); a tab left open on the previous bundle refuses a
   slot held by version 2 (and, having no watcher, can still start a version 1
   deposit until it reloads).
 - The upgrade drill from [7.3](#73-guided-upgrade-stages) completes on Sepolia,
