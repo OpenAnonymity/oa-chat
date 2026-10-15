@@ -1,4 +1,3 @@
-import { holdsThinkingThroughAnswer } from './services/streamSegments.js';
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
 import { getErrorMessage } from './domain/errorMessage.js';
@@ -5216,15 +5215,12 @@ class ChatApp {
         return wordless;
     }
 
-    /** The answer continued after wordless thinking: time the trace again. */
-    settleResumedWithheldThinking(streamingMessage, reasoningStartTime, sessionId, holdThinking = false) {
+    /**
+     * The answer continued after wordless thinking: record the time so far.
+     * The header itself keeps saying "Thinking..." until the reply completes.
+     */
+    settleResumedWithheldThinking(streamingMessage, reasoningStartTime) {
         streamingMessage.reasoningDuration = Date.now() - reasoningStartTime;
-        // A held header keeps saying "Thinking..." until the reply completes.
-        if (holdThinking) return;
-        streamingMessage.streamingReasoning = false;
-        if (this.chatArea && this.isViewingSession(sessionId)) {
-            this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
-        }
     }
 
     /**
@@ -7580,9 +7576,6 @@ class ChatApp {
                 // (Grok) send their reasoning in one burst just before the
                 // answer, so timing from the first reasoning event read ~0s.
                 let streamOpenedAt = null;
-                // Grok may think again after any line: its header stays on
-                // "Thinking..." until the reply is complete.
-                const holdThinking = holdsThinkingThroughAnswer(modelIdForRequest);
                 thinkingDuration = () => (reasoningStartTime ? (reasoningEndTime || Date.now()) - reasoningStartTime : null);
                 // Wordless thinking that resumed after part of the answer; the
                 // next content settles it again.
@@ -7613,7 +7606,7 @@ class ChatApp {
                             if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
                                 reasoningEndTime = Date.now();
                                 streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
-                                if (holdThinking) streamingMessage.streamingReasoning = true;
+                                streamingMessage.streamingReasoning = true; // still thinking until the reply completes
                             }
 
                             // Handle text content
@@ -7651,10 +7644,10 @@ class ChatApp {
                                         streamedReasoning,
                                         reasoningEndTime - reasoningStartTime
                                     );
-                                    if (holdThinking) this.chatArea.resumeReasoningDisplay(streamingMessageId);
+                                    this.chatArea.resumeReasoningDisplay(streamingMessageId); // the header stays on Thinking... until the reply completes
                                 }
                             } else if (resumedWithheldThinking) {
-                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id, holdThinking);
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime);
                                 resumedWithheldThinking = false;
                                 reasoningEndTime = Date.now();
                             }
@@ -7795,7 +7788,7 @@ class ChatApp {
                 if (this.chatArea && this.isViewingSession(session.id)) {
                     // Re-render the completed message so partial streaming markdown/citation DOM
                     // is replaced by the final render pipeline.
-                    if (holdThinking && reasoningStartTime) {
+                    if (reasoningStartTime) {
                         this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
                     }
                     await this.chatArea.finalizeStreamingMessage(streamingMessage);
@@ -8484,9 +8477,6 @@ class ChatApp {
                 // (Grok) send their reasoning in one burst just before the
                 // answer, so timing from the first reasoning event read ~0s.
                 let streamOpenedAt = null;
-                // Grok may think again after any line: its header stays on
-                // "Thinking..." until the reply is complete.
-                const holdThinking = holdsThinkingThroughAnswer(modelIdForRequest);
                 thinkingDuration = () => (reasoningStartTime ? (reasoningEndTime || Date.now()) - reasoningStartTime : null);
                 // Wordless thinking that resumed after part of the answer; the
                 // next content settles it again.
@@ -8525,7 +8515,7 @@ class ChatApp {
                             if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
                                 reasoningEndTime = Date.now();
                                 streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
-                                if (holdThinking) streamingMessage.streamingReasoning = true;
+                                streamingMessage.streamingReasoning = true; // still thinking until the reply completes
                             }
 
                             // Handle text content
@@ -8546,7 +8536,7 @@ class ChatApp {
                                             streamedReasoning,
                                             reasoningDuration
                                         );
-                                        if (holdThinking) this.chatArea.resumeReasoningDisplay(streamingMessageId);
+                                        this.chatArea.resumeReasoningDisplay(streamingMessageId); // the header stays on Thinking... until the reply completes
                                     }
                                     firstContentChunk = false; // Mark that we've handled the transition
                                 } else if (streamingMessage.reasoningWithheld && reasoningStartTime) {
@@ -8587,10 +8577,10 @@ class ChatApp {
                                         streamedReasoning,
                                         reasoningDuration
                                     );
-                                    if (holdThinking) this.chatArea.resumeReasoningDisplay(streamingMessageId);
+                                    this.chatArea.resumeReasoningDisplay(streamingMessageId); // the header stays on Thinking... until the reply completes
                                 }
                             } else if (resumedWithheldThinking) {
-                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id, holdThinking);
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime);
                                 resumedWithheldThinking = false;
                                 firstContentChunk = false;
                                 reasoningEndTime = Date.now();
@@ -8731,7 +8721,7 @@ class ChatApp {
 
                 // Re-render the message to finalize its state (only if viewing this session)
                 if (this.chatArea && this.isViewingSession(session.id)) {
-                    if (holdThinking && reasoningStartTime) {
+                    if (reasoningStartTime) {
                         this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
                     }
                     await this.chatArea.finalizeStreamingMessage(streamingMessage);
