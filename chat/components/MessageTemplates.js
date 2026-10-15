@@ -918,22 +918,9 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
         return 'Reasoning incomplete';
     }
 
-    const MAX_LENGTH = 150;
-    const summaries = extractReasoningSummaries(reasoning);
-
-    // Only use explicit subtitle markers (headings or bold text)
-    // If none found, fall back to generic "Reasoning complete"
-    if (summaries.length > 0) {
-        const lastSummary = summaries[summaries.length - 1];
-        const summaryText = lastSummary.text;
-
-        return summaryText.length > MAX_LENGTH
-            ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
-            : summaryText;
-    }
-
-    // No subtitle markers detected - use generic completion text
-    return 'Reasoning complete';
+    // A finished trace reads the same whatever the model: with no known
+    // time (older or imported messages) it is simply "Thought".
+    return 'Thought';
 }
 
 /**

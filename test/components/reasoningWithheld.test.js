@@ -42,3 +42,10 @@ test('wordless thinking that resumed after part of the answer renders as Thinkin
     assert.doesNotMatch(html, /Thought for/);
     assert.doesNotMatch(html, /reasoning-body|reasoning-chevron|reasoning-loading-indicator/);
 });
+
+test('a finished trace with words and no known time reads "Thought", never a summary or "Reasoning complete"', () => {
+    const html = buildReasoningTrace('**Sorting the shelves**\nFiction first.', 'notime', false, text => text, undefined, null, {});
+    assert.match(html, /id="reasoning-subtitle-notime"[^>]*>Thought<\/span>/);
+    assert.doesNotMatch(html, /Reasoning complete|>Sorting the shelves</);
+    assert.match(buildReasoningTrace('Fiction first.', 'timed', false, text => text, 2000, null, {}), />Thought for 2s</);
+});
