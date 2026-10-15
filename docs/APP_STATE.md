@@ -1,3 +1,17 @@
+## October 15, 2026 — deleted chats leave filtered sidebar results
+
+Live staging QA found that Delete succeeded in IndexedDB but left its row in
+an active sidebar search until the query changed or the page reloaded. Search
+merges a separate result cache with the paged session list; deleting only from
+the latter resurrected the visible row. Successful deletion now prunes both
+lists and records the completed-deletion ID before rendering. Searches exclude
+those IDs both while scanning and before publishing/caching their results, so
+an older snapshot or an awaited index refresh cannot restore a deleted row.
+Storage failures retain the existing row. Controller regressions cover text
+and starred filters, stale reads, deletion during indexing, and failed writes.
+This fix adds no network calls, persisted data, or telemetry. Local candidate;
+live staging needs rechecking after deployment.
+
 ## October 15, 2026 — one-second stalled-text feedback
 
 The staging candidate now includes `e05aba3a` and supersedes the earlier
