@@ -315,7 +315,7 @@ test('wordless thinking after part of the answer shows Thinking again until the 
     await app.sendMessage();
     assert.ok(duringSearch.calls.includes('resumeReasoningDisplay'), 'the settled header says Thinking... again');
     const settleCalls = paints.filter(call => call.name === 'settleThinkingHeader');
-    assert.equal(settleCalls.length, 1, 'the next words settle it once, not on every chunk');
+    assert.ok(settleCalls.length >= 1 && settleCalls.length <= 2, 'settled at the next words (and confirmed at the end), not on every chunk');
     assert.ok(paints.findIndex(call => call.name === 'resumeReasoningDisplay')
         < paints.findIndex(call => call.name === 'settleThinkingHeader'));
     assert.ok(settleCalls[0].args[1] >= 30, 'the duration runs to the end of the second thinking segment');
@@ -382,66 +382,89 @@ test('a stopped reply keeps its thinking time, so it reads "Thought for …" aft
     assert.ok(assistant().at(-1).reasoningDuration >= 20);
 });
 
-// Grok may think again after any line, so it is not done thinking until the
-// reply is: its header says "Thinking..." while the answer streams and
-// "Thought for Ns" only once the reply completes.
-test('Grok: the header keeps saying Thinking while the answer streams, and settles when the reply completes', async t => {
+// The header says Thinking only while thinking events arrive. A reply whose
+// text stalls with the stream still open (keep-alives only) shows a quiet
+// "Still working…" line under the answer after 1 s, gone when text resumes.
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const stillWorkingCalls = paints => paints.filter(call => call.name === 'setStreamingStillWorking').map(call => call.args[1]);
+
+test('the header settles at the first answer words for every model', async t => {
     const restore = installBrowser();
-    let midAnswer = null;
-    const { app, assistant, paints } = streamHarness(async (...args) => {
-        const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
-        await opened();
-        await new Promise(resolve => setTimeout(resolve, 20));
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('Looking at the question.');
+        await chunk('Red, green, and blue.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    app.state.models = [{ id: 'x-ai/grok-4.7', name: 'Accepted model' }];
+    t.after(restore);
+    await app.sendMessage();
+    const names = paints.map(call => call.name);
+    assert.ok(names.includes('settleReasoningDisplay'));
+    assert.equal(names.includes('resumeReasoningDisplay'), false, 'no Thinking while text is being written');
+});
+
+test('text that stalls for 1 s shows "Still working…", and it leaves as soon as text resumes', async t => {
+    const restore = installBrowser();
+    let duringStall = null, afterResume = null;
+    const { app, paints } = streamHarness(async (...args) => {
+        const chunk = args[3];
+        await chunk('Here is a quick roundup.');
+        await pause(1150);
+        duringStall = stillWorkingCalls(paints);
+        await chunk(' More headlines.');
+        afterResume = stillWorkingCalls(paints);
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.deepEqual(duringStall, [true], 'shown once the text had stopped for a second');
+    assert.deepEqual(afterResume, [true, false], 'gone the moment text came back');
+    assert.deepEqual(stillWorkingCalls(paints), [true, false], 'nothing more after the reply ended');
+});
+
+test('a short pause never shows the line, and it never shows after the reply ends', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const chunk = args[3];
+        await chunk('One.');
+        await pause(500);
+        await chunk(' Two.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    await pause(1100);
+    assert.deepEqual(stillWorkingCalls(paints), []);
+});
+
+test('thinking during a pause is shown by the header, not the line', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
         await reasoning('', { withheld: true });
         await chunk('I will look it up.');
-        midAnswer = { record: structuredClone(assistant().at(-1)), calls: paints.map(call => call.name) };
         await reasoning('', { withheld: true, resumed: true });
-        await new Promise(resolve => setTimeout(resolve, 20));
+        await pause(1150);
         await chunk('\n\nA few repos match.');
         return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
     });
-    app.state.models = [{ id: 'x-ai/grok-4.7', name: 'Accepted model' }];
     t.after(restore);
     await app.sendMessage();
-    assert.equal(midAnswer.record.streamingReasoning, true, 'the row was shown still thinking, not "Thought"');
-    assert.equal(midAnswer.calls.includes('settleThinkingHeader'), false, 'no duration while the reply streams');
-    const names = paints.map(call => call.name);
-    const settled = names.indexOf('settleThinkingHeader');
-    assert.ok(settled >= 0 && settled === names.lastIndexOf('settleThinkingHeader'), 'the header settles once');
-    assert.ok(settled < names.indexOf('finalizeStreamingMessage'), 'before the final render, so nothing flashes');
-    const final = assistant().at(-1);
-    assert.equal(final.streamingReasoning, false);
-    assert.ok(final.reasoningDuration >= 40, 'timed to the end of the last thinking segment');
+    assert.equal(stillWorkingCalls(paints).includes(true), false);
+    assert.ok(paints.some(call => call.name === 'resumeReasoningDisplay'), 'the header said Thinking during the search');
 });
 
-test('Grok with reasoning words: the trace body settles at the first line but the header stays on Thinking', async t => {
+test('Stop during a stall clears the line', async t => {
     const restore = installBrowser();
     const { app, paints } = streamHarness(async (...args) => {
-        const [chunk, reasoning] = [args[3], args[9]];
-        await reasoning('Looking at the question.');
-        await chunk('Red, green, and blue.');
-        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
-    });
-    app.state.models = [{ id: 'x-ai/grok-4.7', name: 'Accepted model' }];
-    t.after(restore);
-    await app.sendMessage();
-    const names = paints.map(call => call.name);
-    assert.equal(names[names.indexOf('settleReasoningDisplay') + 1], 'resumeReasoningDisplay');
-    assert.ok(names.indexOf('settleThinkingHeader') > names.indexOf('resumeReasoningDisplay'));
-});
-
-test('every model, not only Grok: the header stays on Thinking while the answer streams', async t => {
-    const restore = installBrowser();
-    const { app, paints } = streamHarness(async (...args) => {
-        const [chunk, reasoning] = [args[3], args[9]];
-        await reasoning('Looking at the question.');
-        await chunk('Red, green, and blue.');
-        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+        const [chunk, abortController] = [args[3], args[7]];
+        await chunk('Partial');
+        setTimeout(() => app.stopSessionStreaming('one'), 1150);
+        return untilStopped(abortController);
     });
     t.after(restore);
     await app.sendMessage();
-    const names = paints.map(call => call.name);
-    assert.equal(names[names.indexOf('settleReasoningDisplay') + 1], 'resumeReasoningDisplay');
-    assert.ok(names.indexOf('settleThinkingHeader') > names.indexOf('resumeReasoningDisplay'));
-    assert.ok(names.indexOf('settleThinkingHeader') < names.indexOf('finalizeStreamingMessage'));
+    await pause(50);
+    assert.deepEqual(stillWorkingCalls(paints), [true, false]);
 });

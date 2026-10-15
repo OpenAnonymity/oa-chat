@@ -2403,6 +2403,29 @@ export default class ChatArea {
         this.app.updateScrollButtonVisibility();
     }
 
+    /** Shows or clears the "Still working…" line under a single reply whose text has stalled. */
+    setStreamingStillWorking(messageId, working) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return;
+        const existing = messageEl.querySelector('.message-still-working');
+        if (!working) {
+            if (existing) this.dismissCouncilLanePart(existing);
+            return;
+        }
+        if (existing) {
+            if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
+            return;
+        }
+        const bubble = messageEl.querySelector('.message-content')?.closest('.message-assistant');
+        if (!bubble) return;
+        const workingEl = document.createElement('div');
+        workingEl.className = 'message-still-working';
+        workingEl.setAttribute('role', 'status');
+        workingEl.innerHTML = '<span class="pending-response-label pending-response-streaming">Still working…</span>';
+        bubble.insertAdjacentElement('afterend', workingEl);
+        this.revealCouncilLanePart(workingEl);
+    }
+
     /** Shows or clears a lane's "Still working…" line under output that has already arrived. */
     setCouncilLaneWorking(messageId, laneId, working) {
         const bodyEl = this.getCouncilLaneBody(messageId, laneId);
