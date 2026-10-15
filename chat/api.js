@@ -733,6 +733,9 @@ export class OpenRouterAPI {
         // follows a sentence is still a heading and two thoughts do not run
         // together as one.
         let lastDeltaKind = null;
+        // Grok answers in segments around its own searches, with its thinking
+        // withheld; only its stream reopens the thinking header mid-answer.
+        const isGrokStream = () => /^x-ai\//i.test(modelId || '') || /^x-ai\//i.test(modelUsed || '');
         let citations = []; // Track citations for web search results
         const annotationsMap = new Map(); // Track annotations with deduplication by URL
         let estimatedReasoningTokens = 0; // Track reasoning tokens for cumulative display
@@ -1072,11 +1075,11 @@ export class OpenRouterAPI {
                 if (hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
                     const firstWithheld = !reasoningWithheld;
                     reasoningWithheld = true;
-                    if (lastDeltaKind === 'content' && !reasoningString && !detailReasoning && !reasoningDelta?.content) {
-                        // Wordless thinking after part of the answer (the model
-                        // called a tool, e.g. a search, and is thinking again):
-                        // the answer is not finished. The UI shows "Thinking..."
-                        // again, and the next words start a new paragraph.
+                    if (isGrokStream() && lastDeltaKind === 'content' && !reasoningString && !detailReasoning && !reasoningDelta?.content) {
+                        // Grok only: wordless thinking after part of the answer
+                        // (it searched and is thinking again) means the answer is
+                        // not finished. The UI shows "Thinking..." again, and the
+                        // next words start a new paragraph.
                         lastDeltaKind = 'reasoning';
                         if (onReasoningChunk) await onReasoningChunk('', { withheld: true, resumed: true });
                     } else if (firstWithheld && !accumulatedReasoning && onReasoningChunk) {
