@@ -354,3 +354,22 @@ test('a failed relayed request preserves another stream and recovers without rep
         assert.equal(saves, 0);
     } finally { globalThis.fetch = previousFetch; f.cleanup(); }
 });
+
+test('a relay failure changes status without silently changing the saved relay setting', () => {
+    const f = fixture();
+    try {
+        let writes = 0;
+        f.networkProxy.updateSettings = () => { writes++; };
+        f.panel.proxySettings = { enabled: true };
+        f.panel.proxyStatus = { ready: true, usingProxy: true, connectionVerified: true };
+        f.panel.handleProxyChange({ settings: { enabled: true }, status: { lastError: new Error('Synthetic relay failure'), fallbackActive: true } });
+        assert.equal(writes, 0);
+        assert.equal(f.panel.proxySettings.enabled, true);
+        assert.equal(f.panel.getProxyStatusMeta().state, 'unavailable');
+        f.panel.handleProxyChange({ settings: { enabled: true }, status: { ready: true, usingProxy: true, connectionVerified: true } });
+        assert.equal(f.panel.getProxyStatusMeta().state, 'connected');
+        f.panel.proxyFailureDismissed = true;
+        f.panel.handleProxyChange({ settings: { enabled: false }, status: {} });
+        assert.equal(f.panel.getProxyStatusMeta().state, 'off');
+    } finally { f.cleanup(); }
+});

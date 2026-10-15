@@ -1,3 +1,59 @@
+## October 14, 2026 — desktop billing frontend integration (local)
+
+The desktop candidate now builds on the October 14 web client including the
+chat-column toast position. The older desktop overlays are merged onto that
+client rather than replacing it. The newer multi-lane math renderer, attached
+proxy controls, error provenance and spent-ticket grouping remain intact.
+Desktop late-reasoning insertion, safe lane regeneration, cancellation and
+legacy-ticket discovery gates remain, together with the timeout callback
+retirement repair that held the previous desktop artifact.
+
+The stream tracking conflict uses an owned reader and the request abort signal,
+so cancellation releases active-request counts even when upstream ignores abort.
+The newer web relay preference policy stays unchanged: failure is status and
+never disables the user's relay choice. Both web and desktop regression cases
+remain. A reasoning save in the send path also rechecks delivery ownership before
+settling the trace, closing an await boundary left in the older overlay.
+
+Desktop SDK asset URLs are still patched for the packaged app origin. Account,
+checkout and paid ticket delivery changes live in the commercial host; this
+integration does not join billing identity to finalized ticket redemption or
+inference. This is source preparation, not a published or installed release.
+
+Validation on this Mac: `npm test` passed 1,725 core tests and 902 payment
+tests (2 payment tests skipped). The run applied and verified the desktop SDK
+asset overlay first. `git diff --check` and merged-file syntax checks passed.
+Independent release review and packaged-app acceptance remain separate gates.
+
+## October 13, 2026 — retire callbacks at transport settlement
+
+The desktop release protocol reproduced a callback that resumed after a timeout
+and repainted its old reply after a same-chat follow-up. The real SSE watchdog
+aborts its internal transport signal; it does not abort the controller's turn
+signal. Stop-only guards therefore did not cover timeout or normal completion.
+
+Single-chat send and regeneration now retire their delivery closures in the
+runtime wrapper's `finally`, immediately after transport settlement and before
+awaited usage accounting, final saving or error handling. The wrapper also ignores
+late progress, health and usage deliveries. The flag belongs to one attempt, so a retry starts with fresh callbacks.
+Content, reasoning, model/token and stream-open callbacks all check retirement;
+first-delivery writes also recheck before appending. Usage accounting and final
+persistence remain awaited. No request credentials or network paths change.
+
+A held first delivery no longer appends after Stop either. The turn owner calls
+`finalizeStreamingMessage` with `appendIfMissing: true` to render the saved partial
+or completed reply before releasing the composer. Other finalizers retain their
+existing missing-row behavior. This supersedes the late-first-append exception
+in the previous entry.
+
+`test/application/streamSettle.test.js` exercises the real parser/watchdog with
+held content/reasoning save promises for send and regeneration, a successful
+follow-up, late callbacks during awaited usage, and missing-row finalization.
+The storage fixture is in memory and delays promise resolution after recording
+a write; it does not claim an observed IndexedDB corruption. The original
+protocol reproducer failed before this repair and passes after it. A source fix
+alone does not qualify the failed 0.1.38 binary or satisfy remaining release gates.
+
 ## October 14, 2026 — compact spent-ticket activity and steady relay toggle
 
 The RHS groups adjacent ticket-selection / already-spent request-key refusal
@@ -689,6 +745,23 @@ two start-up jobs that could not change its answer. Both waits are gone:
 Pricing is untouched: the preflight still refreshes the live price map, and key
 acquisition still obtains the authoritative price before redemption.
 Tests: `test/application/sendPreflightStartup.test.js`.
+
+
+Desktop integration clarification: the old-issuer discovery readiness gate below
+supersedes only the unconditional skip of discovery. Migration itself is still
+awaited only for a shortage; catalog reuse remains unchanged.
+
+## October 11, 2026 — approximation symbols remain literal
+
+The shared Marked renderer now requires two tildes for strikethrough. Its default
+single-tilde extension incorrectly crossed out the text between `~483 km` and
+`~1.5 million km` in a live response. A fresh tokenizer keeps the vendor's rules
+for explicit double-tilde deletion and leaves single tildes literal; response
+text, stored messages and Markdown exports are not rewritten. Code, LaTeX,
+links and HTML escaping retain their existing paths. Controller regression
+coverage includes the original example, mixed formatting, escaped tildes,
+fenced/inline code, math, URLs and repeated parser configuration.
+Prepared for private desktop 0.1.31; no web deployment or public feed change.
 
 ## October 10, 2026 — opening Sources reveals the cards in the chat viewport
 
@@ -7627,6 +7700,40 @@ was the wrong interaction. Preserve smooth bottom follow on the latest response
 and local reveal for older responses. A web page cannot reposition the user's
 mouse cursor; do not substitute an above-trigger popup to promise a stationary
 click target while the page scrolls.
+
+### Desktop stress follow-up (2026-10-11)
+
+Providers may emit answer text before their first visible reasoning chunk. Send and
+regenerate now start the reasoning clock/active flag independently of the first output
+chunk. ChatArea inserts a missing trace before the existing answer without rebuilding
+that answer or its controls. New phases and answer resumption persist their active state
+and partial answer so leaving and returning to a streaming chat restores the right UI.
+The existing reasoning shimmer, disclosure and reduced-motion styles are reused.
+`test/components/lateReasoning.test.js` runs both real callbacks against synthetic
+storage, including a hidden session. Packaged offline UI stress must also cover first
+reasoning after an answer, subsequent answer settlement, regeneration and chat switches.
+No provider, wallet, privacy or access rules change.
+
+## Private desktop regeneration safety (2026-10-11)
+
+Whole-answer Regenerate no longer deletes the saved answer and later turns at the start. A session-scoped, local-only draft supplies the retry context and streaming view. Completed nonempty output replaces the transcript in one IndexedDB transaction, with a baseline comparison that refuses concurrent edits/deletion. Stop, failed/empty output, memory/preflight cancellation, and closing/reloading the renderer retain the original durable transcript. Stop/failure restores the reply with a neutral status and Retry response. Late writes for abandoned draft IDs are ignored. Account/ticket/session access state is not rolled back; spent tickets remain spent. Post-turn memory extraction waits for commit. This does not change prompt-level Resend or individual Parallel-lane regeneration.
+
+The new version is a private desktop candidate only; source edits here have not changed web production, staging, or public update feeds.
+
+## Private desktop first-send integration (2026-10-11)
+
+Private 0.1.32 carries the web send-lag/catalog reuse and scrubber-result note changes on top of 0.1.31. Ticket budget preflight waits for an in-flight old-issuer discovery to set ticket holds before deciding which tickets are usable. It skips the longer migration when usable tickets already cover the turn. Failed or timed-out discovery returns a loading notice without spending or auto-reloading. Existing ephemeral access that needs no tickets does not wait. Exact private input hashes and tests live in deployment/desktop-send-lag-20261011; production endpoints and the desktop SDK overlay remain unchanged.
+
+## Private desktop resilience candidate 0.1.33 (2026-10-11)
+
+- JSON request deadlines also bound a transport that ignores cancellation before headers. Deadline failures are not automatically replayed; late replies are discarded. Stop interrupts retry backoff. RequestInit signals are respected when no config signal is supplied.
+- JSON body consumption owns its reader, so timeout/Stop can cancel and unlock it without waiting for a broken transport's cancellation promise. Signal listeners detach even if an underlying read never settles. No ticket/account/privacy policy changes.
+- Appending/replacing a parallel reply renders maths in every answer, not only the first.
+- Private source snapshot only; no public feeds, web deployments or production settings changed. Live delay cause still needs confirmation; transport regression tests prove repaired failure modes, not all upstream delays.
+
+- Follow-up observed in the installed 0.1.32 UI: proxy is enabled and its toggle remains disabled after response completion. Corrected stream tracking uses real ReadableStream cancellation/error handlers (TransformStream transformer abort/cancel hooks do not run). Cleanup only releases the affected request, cancels its reader without waiting, and keeps other concurrent requests protected. Startup waiting also observes cancellation. Proxy defaults, direct-fallback consent and TLS remain unchanged.
+
+- Live testing exposed RightPanel automatically persisting relay=off on a transient error. Removed that presentation-side preference write: failures remain visibly unavailable, Retry and explicit disable remain, and the existing configured per-request fallback is unchanged. Later requests try the user's selected relay again.
 
 ## 2026-10-11: First-use scrub charge is reported with the result
 

@@ -201,6 +201,117 @@ test('loadModels publishes its in-flight download and clears it once the catalog
     }
 });
 
+async function discoveryWallet(run) {
+    const restore = installBrowser();
+    const { TicketStore } = await import('../../chat/services/ticketStore.js');
+    const { LegacyTicketTransfer } = await import('../../chat/application/legacyTicketTransfer.js');
+    const oldKey = '61'.repeat(32);
+    const ticket = key => { const b = new Uint8Array(354); b[1] = 2; b.set(Buffer.from(key, 'hex'), 66); return { finalized_ticket: Buffer.from(b).toString('base64url') }; };
+    const oldTicket = ticket(oldKey), currentTicket = ticket('62'.repeat(32));
+    const store = new TicketStore(); store.tickets = [oldTicket, currentTicket];
+    store.init = async () => {}; store.ensureInit = () => {}; store.emitUpdate = () => {};
+    store.withLock = async fn => fn(); store.ensureDbReady = async () => {}; store.persistTickets = async () => {};
+    store.readFromDatabase = async () => ({ active: store.tickets, archived: [], tombstones: [], invalidatedKeyIds: [] });
+    const info = deferred(), finish = deferred();
+    const transfer = new LegacyTicketTransfer({ fetchInfo: () => info.promise, holdKeyIds: ids => store.setHeldKeyIds(ids), lockManager: { request: (_name, fn) => fn() } });
+    transfer.transferHeld = () => finish.promise;
+    try { await withTicketClient({ ticketStore: store, legacyTransferRun: null, legacyTransferReadiness: null,
+        legacyTransferPrimePromise: null, legacyTransferPrimed: false, legacyMove: null, unannouncedLegacyMoves: new Map(),
+        getLegacyDisplayAccountId: () => 'fixture-account', getLegacyTransfer: () => transfer, getTicketCount: () => store.getCount()
+    }, () => run({ store, oldKey, oldTicket, currentTicket, info, finish })); }
+    finally { info.resolve({ enabled: true, key_id: oldKey }); finish.resolve({ status: 'none', moved: 0 }); restore(); }
+}
+const flushDiscovery = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test('discovery holds old tickets before a covered send proceeds without waiting for migration', () => discoveryWallet(async f => {
+    const moving = ticketClient.runLegacyTransfer(); let accepted = false, migrated = false;
+    moving.then(() => { migrated = true; });
+    const sending = preflightHarness().preflightTurnTicketBudget({ id: 'one' }, 'Hello').then(value => { accepted = value; });
+    await flushDiscovery(); assert.equal(accepted, false);
+    f.info.resolve({ enabled: true, key_id: f.oldKey }); await sending;
+    assert.equal(accepted, true); assert.equal(migrated, false);
+    let selected; await f.store.consumeTickets(1, async ({ tickets }) => { selected = tickets; return {}; });
+    assert.deepEqual(selected, [f.currentTicket]); assert.equal(f.store.getHeldCount(), 1);
+    f.finish.resolve({ status: 'none', moved: 0 }); await moving;
+}));
+
+test('old-only wallet waits for migration after discovery', () => discoveryWallet(async f => {
+    f.store.tickets = [f.oldTicket]; const moving = ticketClient.runLegacyTransfer(); let settled = false;
+    const sending = preflightHarness().preflightTurnTicketBudget({ id: 'one' }, 'Hello').then(value => { settled = true; return value; });
+    f.info.resolve({ enabled: true, key_id: f.oldKey }); await flushDiscovery();
+    assert.equal(settled, false); assert.equal(f.store.getHeldCount(), 1);
+    f.store.tickets = [f.currentTicket]; f.finish.resolve({ status: 'moved', moved: 0 });
+    await moving; assert.equal(await sending, true);
+}));
+
+test('failed discovery and immediate retry never spend or open a purchase', () => discoveryWallet(async f => {
+    const moving = ticketClient.runLegacyTransfer().catch(() => {}), app = preflightHarness(), notices = [];
+    app.showToast = text => notices.push(text);
+    const sending = app.preflightTurnTicketBudget({ id: 'one' }, 'Hello');
+    f.info.resolve(Promise.reject(new Error('Synthetic discovery failure'))); await moving;
+    assert.equal(await sending, false); assert.equal(await app.preflightTurnTicketBudget({ id: 'one' }, 'Hello'), false);
+    assert.equal(notices.length, 2); assert.equal(f.store.getCount(), 2);
+}));
+
+test('startup discovery follows a newly started account discovery before releasing Send', () => discoveryWallet(async f => {
+    const primeInfo = deferred();
+    await withTicketClient({ fetchLegacyTransferInfo: () => primeInfo.promise }, async () => {
+        const prime = ticketClient.primeLegacyTransfer(); assert.equal(ticketClient.primeLegacyTransfer(), prime);
+        let accepted = false;
+        const sending = preflightHarness().preflightTurnTicketBudget({ id: 'one' }, 'Hello').then(value => { accepted = value; });
+        await flushDiscovery(); const moving = ticketClient.runLegacyTransfer();
+        primeInfo.resolve({ enabled: true, key_id: f.oldKey }); await flushDiscovery(); assert.equal(accepted, false);
+        f.info.resolve({ enabled: true, key_id: f.oldKey }); await prime; await sending;
+        assert.equal(accepted, true); assert.equal(f.store.getHeldCount(), 1);
+        f.finish.resolve({ status: 'none', moved: 0 }); await moving;
+    });
+}));
+
+test('discovery timeout stays closed and later success recovers', () => discoveryWallet(async f => {
+    const moving = ticketClient.runLegacyTransfer(); assert.equal(await ticketClient.awaitLegacyTransferReady(1), false);
+    f.info.resolve({ enabled: true, key_id: f.oldKey }); assert.equal(await ticketClient.awaitLegacyTransferReady(), true);
+    f.finish.resolve({ status: 'none', moved: 0 }); await moving;
+}));
+
+test('cancelling during discovery suppresses stale loading notices', async () => {
+    const gate = deferred(), controller = new AbortController(), app = preflightHarness();
+    await withTicketClient({ awaitLegacyTransferReady: () => gate.promise }, async () => {
+        const sending = app.preflightTurnTicketBudget({ id: 'one' }, 'Hello', { signal: controller.signal });
+        const rejected = assert.rejects(sending, error => error.isCancelled === true || error.name === 'AbortError');
+        controller.abort(); gate.resolve(false); await rejected;
+    });
+});
+
+for (const lateResult of ['failure', 'disabled']) {
+    test(`late startup discovery ${lateResult} cannot overwrite newer successful account discovery`, () => discoveryWallet(async f => {
+        const primeInfo = deferred();
+        await withTicketClient({ fetchLegacyTransferInfo: () => primeInfo.promise }, async () => {
+            const prime = ticketClient.primeLegacyTransfer(); await flushDiscovery();
+            const moving = ticketClient.runLegacyTransfer();
+            f.info.resolve({ enabled: true, key_id: f.oldKey });
+            assert.equal(await ticketClient.awaitLegacyTransferReady(), true);
+            f.finish.resolve({ status: 'none', moved: 0 }); await moving;
+            if (lateResult === 'failure') primeInfo.resolve(Promise.reject(new Error('Synthetic late status failure')));
+            else primeInfo.resolve({ enabled: false });
+            assert.equal(await prime, true);
+            assert.equal(await ticketClient.awaitLegacyTransferReady(), true);
+            assert.equal(f.store.getHeldCount(), 1);
+        });
+    }));
+}
+
+
+test('startup prime joins an account discovery that already started', () => discoveryWallet(async f => {
+    await withTicketClient({ fetchLegacyTransferInfo: () => assert.fail('Do not start a competing status lookup') }, async () => {
+        const moving = ticketClient.runLegacyTransfer();
+        const prime = ticketClient.primeLegacyTransfer();
+        assert.equal(prime, ticketClient.legacyTransferReadiness);
+        f.info.resolve({ enabled: true, key_id: f.oldKey });
+        assert.equal(await prime, true); assert.equal(f.store.getHeldCount(), 1);
+        f.finish.resolve({ status: 'none', moved: 0 }); await moving;
+        assert.equal(await ticketClient.awaitLegacyTransferReady(), true);
+    });
+}));
 // The ticket price at send: the preflight uses the live map the tab holds
 // (no request before the message is accepted); a shortage found at the key
 // request, after the price rose, goes to the same reload-or-offers path and

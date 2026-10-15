@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// The model's thinking always precedes its answer. The client must show it
-// that way too: the first content chunk settles the trace (full text, no
-// "Thinking..." indicator, duration in the header), and nothing that arrives
-// later may reopen it. These read the sources because ChatArea needs a DOM.
+// Providers may interleave answer and reasoning segments. Each answer segment
+// settles the current trace; new reasoning reopens it, duplicate flushes do not.
 const read = relative => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 test('the first content chunk settles the reasoning trace on every streaming path', () => {

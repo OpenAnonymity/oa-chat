@@ -2736,6 +2736,17 @@ export default class ChatArea {
             this.typewriter.displayedLength = settledLength;
             document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
         }
+        // An answer can arrive before the first reasoning chunk. Add only the
+        // missing trace; replacing the message would disturb its answer and controls.
+        if (!document.getElementById(`reasoning-content-${messageId}`)) {
+            const messageEl = this.app.elements.messagesContainer.querySelector(`[data-message-id="${messageId}"]`);
+            const outputEl = messageEl?.querySelector('.message-assistant, .message-assistant-images');
+            if (outputEl) {
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = buildReasoningTrace('', messageId, true, this.app.processContentWithLatex.bind(this.app));
+                if (wrapper.firstElementChild) outputEl.before(wrapper.firstElementChild);
+            }
+        }
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -3374,7 +3385,13 @@ export default class ChatArea {
             }
         }
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
-        if (!messageEl) return;
+        if (!messageEl) {
+            // The first delivery may still be awaiting storage when its request
+            // settles. The turn owner renders the saved outcome before releasing
+            // the composer; the retired delivery must never append it later.
+            if (options.appendIfMissing === true) await this.appendMessage(message);
+            return;
+        }
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
         const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError);

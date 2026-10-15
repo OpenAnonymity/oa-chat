@@ -53,6 +53,8 @@ function withStore(store, fn) {
         ticketClient.legacyTransfer = null;
         ticketClient.legacyTransferRun = null;
         ticketClient.legacyTransferPrimed = false;
+        ticketClient.legacyTransferPrimePromise = null;
+        ticketClient.legacyTransferReadiness = null;
         ticketClient.unannouncedLegacyMoves = new Map();
     });
 }

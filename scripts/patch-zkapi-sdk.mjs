@@ -9,7 +9,9 @@ import providerVerificationPatch from '../patches/zkapi-browser-sdk-provider-ver
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const digest = value => createHash('sha256').update(value).digest('hex');
-export const zkapiSdkPatches = [patch, proofCachePatch, providerVerificationPatch];
+import desktopAssetsPatch from '../patches/zkapi-browser-sdk-desktop-assets.mjs';
+
+export const zkapiSdkPatches = [patch, proofCachePatch, providerVerificationPatch, desktopAssetsPatch];
 
 export function zkapiSdkPatchProvenance() {
     return { name: 'wallet-recovery-v1', revision: patch.revision,

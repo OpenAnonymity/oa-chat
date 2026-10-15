@@ -15,8 +15,9 @@ export function inferenceError(code, message) {
 export function waitForSignal(operation, signal) {
     if (!signal) return Promise.resolve(operation);
     return new Promise((resolve, reject) => {
+        const cleanup = () => signal.removeEventListener('abort', aborted);
         const aborted = () => {
-            signal.removeEventListener('abort', aborted);
+            cleanup();
             reject(signal.reason || new DOMException('Request stopped', 'AbortError'));
         };
         if (signal.aborted) {
@@ -25,7 +26,10 @@ export function waitForSignal(operation, signal) {
             return;
         }
         signal.addEventListener('abort', aborted, { once: true });
-        Promise.resolve(operation).then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
+        Promise.resolve(operation).then(
+            value => { cleanup(); resolve(value); },
+            error => { cleanup(); reject(error); }
+        );
     });
 }
 

@@ -840,7 +840,7 @@ test('completed assistant content uses shared markdown finalization path', () =>
     assert.equal(source.includes('window.MessageTemplates.enhanceInlineLinks(processedContent, scopeId)'), true);
     assert.equal(source.includes('contentEl.innerHTML = this.renderCompletedAssistantContent(message, message.id);'), true);
     assert.equal(
-        /Re-render the completed message[\s\S]*?await this\.chatArea\.finalizeStreamingMessage\(streamingMessage\);[\s\S]*?Finalize reasoning display/.test(appSource),
+        /Re-render the completed message[\s\S]*?await this\.chatArea\.finalizeStreamingMessage\(streamingMessage, \{ appendIfMissing: true \}\);[\s\S]*?Finalize reasoning display/.test(appSource),
         true,
         'normal send completion should run the final render pass before reasoning finalization'
     );

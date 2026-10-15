@@ -1343,7 +1343,7 @@ class ChatApp {
 
     async streamCompletionWithRuntime(messages, modelId, session, onChunk, onTokenUpdate,
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
-        reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
+        reasoningEnabled, reasoningEffort, requestId = null, kind = 'response', onStreamSettled = null) {
         const id = requestId || this.generateId();
         const models = this.getModelsForSession(session);
         let latestUsage = null;
@@ -1365,21 +1365,25 @@ class ChatApp {
                 pricing: responsePricing
             };
         };
+        let streamSettled = false;
         let completed = false;
         let receivedOutput = false;
         let receivedProviderUsage = false;
         try {
             const result = await this.inferenceService.streamCompletion(messages, modelId, session,
                 async (chunk, imageData) => {
+                    if (streamSettled) return;
                     if (chunk || imageData?.images?.length) receivedOutput = true;
                     await onChunk?.(chunk, imageData);
                 }, async usage => {
+                    if (streamSettled) return;
                     if (usage?.modelOnly) {
                         const metadata = withUsagePricing(usage);
                         if (latestUsage) latestUsage = {
                             ...latestUsage, model: metadata.model, pricing: metadata.pricing
                         };
                         await onTokenUpdate?.(usage);
+                        if (streamSettled) return;
                         // Reprice the same preview without treating metadata as
                         // output or replacing the last token counts/provider cost.
                         if (latestUsage) await this.tryRecordRuntimeUsage({ sessionId: session.id,
@@ -1389,20 +1393,28 @@ class ChatApp {
                     latestUsage = withUsagePricing(usage);
                     if (usage?.isStreaming === false || usage?.estimated === false) receivedProviderUsage = true;
                     await onTokenUpdate?.(usage);
+                    if (streamSettled) return;
                     await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
                         usage: latestUsage, kind, final: false });
-                }, files, searchEnabled, controller, onStreamOpen, async (chunk, meta) => {
+                }, files, searchEnabled, controller, (...args) => {
+                    if (!streamSettled) return onStreamOpen?.(...args);
+                }, async (chunk, meta) => {
+                    if (streamSettled) return;
                     if (chunk) receivedOutput = true;
                     await onReasoningChunk?.(chunk, meta);
                 },
                 reasoningEnabled, reasoningEffort,
-                progress => this.setSessionPendingProgress(session.id, progress),
-                health => this.setInferenceHealth(session.id, id, health));
+                progress => { if (!streamSettled) this.setSessionPendingProgress(session.id, progress); },
+                health => { if (!streamSettled) this.setInferenceHealth(session.id, id, health); });
             completed = true;
             latestUsage = result ? withUsagePricing(result) : latestUsage;
             // The later message-accounting write must keep this same snapshot.
             return result ? latestUsage : result;
         } finally {
+            // End delivery ownership before awaiting the required ledger write.
+            // The transport can settle while an already-entered callback waits.
+            streamSettled = true;
+            onStreamSettled?.();
             this.setInferenceHealth(session.id, id, null);
             // A prompt-only estimate is published before connecting. A rejected
             // HTTP request (or canceled queued request) must not turn it into a
@@ -1682,7 +1694,14 @@ class ChatApp {
             return `<img src="${escapeHtmlAttribute(safeSrc)}" alt="${safeAlt}"${safeTitle} />`;
         };
 
-        marked.setOptions({ renderer });
+        const tokenizer = new marked.Tokenizer();
+        tokenizer.del = function (source) {
+            // A single tilde is often an approximation (~483 km), not deletion.
+            // Keep Marked's delimiter/inline rules for explicit ~~strikethrough~~.
+            if (!source.startsWith('~~')) return;
+            return marked.Tokenizer.prototype.del.call(this, source);
+        };
+        marked.setOptions({ renderer, tokenizer });
     }
 
     /**
@@ -5429,6 +5448,16 @@ class ChatApp {
         };
         let inference = await readRequirement();
         if (!inference) return false;
+        if (inference.tickets + memoryTickets > 0) {
+            const ready = await ticketClient.awaitLegacyTransferReady?.();
+            this.throwIfAborted(options.signal);
+            if (ready === false) {
+                const message = 'Your inference tickets are still loading. Try again shortly.';
+                this.showToast(message, 'info', 5000);
+                this.floatingPanel?.showMessage?.(message, 'info', 5000);
+                return false;
+            }
+        }
         const buildBudget = () => buildTurnTicketBudget({
             availableTickets: ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0),
             inferenceTickets: inference.tickets,
@@ -7545,11 +7574,11 @@ class ChatApp {
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
 
-                // Stop settles this reply from the catch block below while a
-                // delivery callback can still be inside one of its awaited
-                // IndexedDB writes. A callback that starts or resumes after Stop
-                // must neither change the reply nor repaint it.
-                const turnStopped = () => abortController.signal.aborted;
+                // A transport timeout aborts its own signal, not the turn's.
+                // Retire this attempt before finalization or retry so callbacks
+                // suspended in a write cannot repaint an already settled reply.
+                let streamActive = true;
+                const turnStopped = () => !streamActive || abortController.signal.aborted;
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -7588,6 +7617,7 @@ class ChatApp {
                             // Save message to DB (always) and append to UI (only if viewing this session)
                             if (chunk || (imageData && imageData.images)) {
                                 await chatDB.saveMessage(streamingMessage);
+                                if (turnStopped()) return;
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
                                 }
@@ -7601,6 +7631,11 @@ class ChatApp {
                             // First content after reasoning: the thinking is over, settle its trace.
                             if (!reasoningEndTime && reasoningStartTime && streamedReasoning.length > 0) {
                                 reasoningEndTime = Date.now();
+                                streamingMessage.streamingReasoning = false;
+                                streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                                streamingMessage.content = streamedContent;
+                                await chatDB.saveMessage(streamingMessage);
+                                if (turnStopped()) return;
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     this.chatArea.settleReasoningDisplay(
                                         streamingMessageId,
@@ -7637,6 +7672,7 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
+                        if (turnStopped()) return;
                         if (!tokenUpdate.modelOnly) streamingTokenCount = tokenUpdate.completionTokens || 0;
                         this.updateResponseModel(streamingMessage, tokenUpdate.model,
                             modelIdForRequest, modelNameToUse, session);
@@ -7645,6 +7681,7 @@ class ChatApp {
                     retrySearchEnabled, // Reuse the accepted prompt settings
                     abortController,
                     async () => {
+                        if (turnStopped()) return;
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
                         streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
@@ -7665,11 +7702,16 @@ class ChatApp {
                             }
                             return;
                         }
-                        // Handle reasoning trace streaming
+                        // Providers can start thinking after they have already sent answer text.
+                        if (!reasoningChunk) return;
+                        if (!reasoningStartTime) reasoningStartTime = Date.now();
+                        streamingMessage.streamingReasoning = true;
+                        streamingMessage.streamingPhase = null;
+                        // Persist the visible answer as well when a reasoning phase resumes.
+                        streamingMessage.content = streamedContent;
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             this.markPendingTurnStarted(streamingMessage);
-                            reasoningStartTime = Date.now();
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
@@ -7677,6 +7719,7 @@ class ChatApp {
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
                             await chatDB.saveMessage(streamingMessage);
+                            if (turnStopped()) return;
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
                                 await this.chatArea.appendMessage(streamingMessage);
@@ -7698,7 +7741,9 @@ class ChatApp {
                     },
                     retryReasoningEnabled,
                     retryReasoningEffort,
-                    streamingMessageId
+                    streamingMessageId,
+                    'response',
+                    () => { streamActive = false; }
                 );
 
                 // Save the final message content with token data, reasoning, and citations
@@ -7741,7 +7786,7 @@ class ChatApp {
                 if (this.chatArea && this.isViewingSession(session.id)) {
                     // Re-render the completed message so partial streaming markdown/citation DOM
                     // is replaced by the final render pipeline.
-                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                    await this.chatArea.finalizeStreamingMessage(streamingMessage, { appendIfMissing: true });
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessageId, streamingMessage.reasoning, streamingMessage.reasoningDuration);
@@ -7779,7 +7824,7 @@ class ChatApp {
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                                await this.chatArea.finalizeStreamingMessage(streamingMessage, { appendIfMissing: true });
                                 // Finalize reasoning display with markdown processing
                                 if (streamingMessage.reasoning) {
                                     this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
@@ -7803,7 +7848,7 @@ class ChatApp {
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
-                            await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                            await this.chatArea.finalizeStreamingMessage(streamingMessage, { appendIfMissing: true });
                         }
                     } else {
                         // Error before first chunk - delete placeholder and show error
@@ -7845,6 +7890,7 @@ class ChatApp {
         if (!operation) return;
         const mutation = this.beginSessionMutation(session.id, { exclusive: true });
         if (!mutation) { this.finishFeatureOperation(operation); return; }
+        let replacement = null;
         try {
         if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
 
@@ -7883,12 +7929,18 @@ class ChatApp {
         })) return;
         if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
 
-        const messagesToDelete = messages.slice(messageIndex + 1);
-        for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+        replacement = await chatDB.beginMessageReplacement(session.id, messageId);
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
+        if (!replacement.matches(messages)) {
+            this.showToast?.('The chat changed while preparing the retry. Your saved conversation was kept.', 'info');
+            return;
         }
-        const remainingMessages = messages.slice(0, messageIndex + 1);
-        await this.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
+        // A fresh ID also prevents late enrichment of the original response from
+        // overwriting the replacement or resurrecting it after cancellation.
+        const candidate = { ...structuredClone(assistantMessage), id: this.generateId() };
+        delete candidate.regenerationNotice;
+        delete candidate.regenerationLaneId;
+        await chatDB.saveMessage(candidate);
         if (this.chatArea && this.isViewingSession(session.id)) {
             await this.chatArea.render();
         }
@@ -7922,15 +7974,25 @@ class ChatApp {
                 }
             }
 
-            await this.councilController.runRegenerateLaneTurn({
+            const result = await this.councilController.runRegenerateLaneTurn({
                 session,
-                assistantMessageId: messageId,
+                assistantMessageId: candidate.id,
                 laneId,
                 userMessage,
                 searchEnabled: this.searchEnabled,
                 abortController,
-                initialPendingPhase
+                initialPendingPhase,
+                deferMemoryExtraction: true
             });
+
+            const completedLane = this.findCouncilStageEntryByLane(result, laneId);
+            const hasAnswer = Boolean(completedLane?.response?.trim() || completedLane?.images?.length);
+            if (completedLane?.status === 'complete' && hasAnswer
+                && !operation.signal.aborted && !this.isSessionDeleted(session.id)) {
+                await chatDB.finishMessageReplacement(replacement, { commit: true });
+                replacement = null;
+                this.triggerPostTurnMemoryExtraction(session);
+            }
 
             if (this.chatArea && this.isViewingSession(session.id)) {
                 await this.chatArea.render();
@@ -7963,8 +8025,31 @@ class ChatApp {
             });
         }
         } finally {
-            this.endSessionMutation(session.id, mutation);
-            this.finishFeatureOperation(operation);
+            try {
+                if (replacement) {
+                    try {
+                        await chatDB.finishMessageReplacement(replacement, {
+                            notice: operation.signal.aborted ? 'stopped' : 'failed',
+                            laneId
+                        });
+                    } catch {
+                        this.showToast?.('Your previous answer was kept, but the retry status could not be saved.', 'info');
+                    }
+                }
+                if (!this.isSessionDeleted(session.id)) {
+                    try {
+                        await this.recomputeSessionCouncilTranscriptHint?.(session);
+                        await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                    } catch {
+                        this.showToast?.('The conversation was kept, but its search index could not be updated.', 'info');
+                    } finally {
+                        if (this.isViewingSession(session.id)) await this.chatArea?.render();
+                    }
+                }
+            } finally {
+                this.endSessionMutation(session.id, mutation);
+                this.finishFeatureOperation(operation);
+            }
         }
     }
 
@@ -8428,11 +8513,11 @@ class ChatApp {
                     session.id
                 ));
 
-                // Stop settles this reply from the catch block below while a
-                // delivery callback can still be inside one of its awaited
-                // IndexedDB writes. A callback that starts or resumes after Stop
-                // must neither change the reply nor repaint it.
-                const turnStopped = () => abortController.signal.aborted;
+                // A transport timeout aborts its own signal, not the turn's.
+                // Retire this attempt before finalization or retry so callbacks
+                // suspended in a write cannot repaint an already settled reply.
+                let streamActive = true;
+                const turnStopped = () => !streamActive || abortController.signal.aborted;
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -8463,6 +8548,11 @@ class ChatApp {
                                 if (reasoningStartTime && streamedReasoning.length > 0) {
                                     reasoningEndTime = Date.now();
                                     const reasoningDuration = reasoningEndTime - reasoningStartTime;
+                                    streamingMessage.streamingReasoning = false;
+                                    streamingMessage.reasoningDuration = reasoningDuration;
+                                    streamingMessage.content = streamedContent;
+                                    await chatDB.saveMessage(streamingMessage);
+                                    if (turnStopped()) return;
 
                                     // Settle the trace now: the answer has begun, so the thinking is over.
                                     if (this.chatArea && this.isViewingSession(session.id)) {
@@ -8485,6 +8575,7 @@ class ChatApp {
                             // Save message to DB (always) and append to UI (only if viewing this session)
                             if (chunk || (imageData && imageData.images)) {
                                 await chatDB.saveMessage(streamingMessage);
+                                if (turnStopped()) return;
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
                                 }
@@ -8501,6 +8592,11 @@ class ChatApp {
                                 firstContentChunk = false;
                                 reasoningEndTime = Date.now();
                                 const reasoningDuration = reasoningEndTime - reasoningStartTime;
+                                streamingMessage.streamingReasoning = false;
+                                streamingMessage.reasoningDuration = reasoningDuration;
+                                streamingMessage.content = streamedContent;
+                                await chatDB.saveMessage(streamingMessage);
+                                if (turnStopped()) return;
 
                                 // Settle the trace now: the answer has begun, so the thinking is over.
                                 if (this.chatArea && this.isViewingSession(session.id)) {
@@ -8539,6 +8635,7 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
+                        if (turnStopped()) return;
                         if (!tokenUpdate.modelOnly) streamingTokenCount = tokenUpdate.completionTokens || 0;
                         this.updateResponseModel(streamingMessage, tokenUpdate.model,
                             modelIdForRequest, modelNameToUse, session);
@@ -8547,6 +8644,7 @@ class ChatApp {
                     searchEnabled,
                     abortController,
                     async () => {
+                        if (turnStopped()) return;
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
                         streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
@@ -8567,17 +8665,24 @@ class ChatApp {
                             }
                             return;
                         }
-                        // Handle reasoning trace streaming
+                        // Providers can start thinking after they have already sent answer text.
+                        if (!reasoningChunk) return;
+                        const reasoningResumed = !streamingMessage.streamingReasoning;
+                        if (!reasoningStartTime) reasoningStartTime = Date.now();
+                        streamingMessage.streamingReasoning = true;
+                        streamingMessage.streamingPhase = null;
+                        // Persist the visible answer as well when a reasoning phase resumes.
+                        streamingMessage.content = streamedContent;
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             this.markPendingTurnStarted(streamingMessage);
-                            reasoningStartTime = Date.now();
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
                             streamingMessage.streamingReasoning = true;
                             streamedReasoning = reasoningChunk;
                             await chatDB.saveMessage(streamingMessage);
+                            if (turnStopped()) return;
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
                                 await this.chatArea.appendMessage(streamingMessage);
@@ -8586,7 +8691,9 @@ class ChatApp {
                             streamedReasoning += reasoningChunk;
                             // Thinking after an answer segment (tools): the trace settles again at the next content.
                             firstContentChunk = true;
+                            reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
+                            if (reasoningResumed) await chatDB.saveMessage(streamingMessage);
                         }
 
                         // Update UI with new reasoning content (only if viewing this session)
@@ -8597,7 +8704,9 @@ class ChatApp {
                     },
                     submission.reasoningEnabled,
                     submission.reasoningEffort,
-                    streamingMessageId
+                    streamingMessageId,
+                    'response',
+                    () => { streamActive = false; }
                 );
 
                 // Save the final message content with token data, reasoning, and citations
@@ -8641,7 +8750,7 @@ class ChatApp {
 
                 // Re-render the message to finalize its state (only if viewing this session)
                 if (this.chatArea && this.isViewingSession(session.id)) {
-                    await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                    await this.chatArea.finalizeStreamingMessage(streamingMessage, { appendIfMissing: true });
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
                         this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
@@ -8677,7 +8786,7 @@ class ChatApp {
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
-                                await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                                await this.chatArea.finalizeStreamingMessage(streamingMessage, { appendIfMissing: true });
                                 // Finalize reasoning display with markdown processing
                                 if (streamingMessage.reasoning) {
                                     this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
@@ -8776,7 +8885,7 @@ class ChatApp {
                     await chatDB.saveMessage(streamingMessage);
                     // Only update UI if still viewing the same session
                     if (this.chatArea && this.isViewingSession(session.id)) {
-                        await this.chatArea.finalizeStreamingMessage(streamingMessage);
+                        await this.chatArea.finalizeStreamingMessage(streamingMessage, { appendIfMissing: true });
                     }
                 } else {
                     if (typingId && this.isViewingSession(session.id)) this.removeTypingIndicator(typingId);

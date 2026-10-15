@@ -661,7 +661,7 @@ class ChatDatabase {
         return draft;
     }
 
-    async finishMessageReplacement(draft, { commit = false, notice = null } = {}) {
+    async finishMessageReplacement(draft, { commit = false, notice = null, laneId = null } = {}) {
         if (this.messageReplacements.get(draft.sessionId) !== draft) return;
         let committed = false;
         try {
@@ -688,7 +688,12 @@ class ChatDatabase {
                             for (const message of draft.messages()) store.put(message);
                         } else if (notice) {
                             const original = current.find(message => message.id === draft.messageId);
-                            if (original) store.put({ ...original, regenerationNotice: notice });
+                            if (original) {
+                                const kept = { ...original, regenerationNotice: notice };
+                                delete kept.regenerationLaneId;
+                                if (laneId) kept.regenerationLaneId = laneId;
+                                store.put(kept);
+                            }
                         }
                     };
                 };

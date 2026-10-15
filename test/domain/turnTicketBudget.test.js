@@ -53,8 +53,8 @@ test('Parallel lane regeneration preflights Memory with only that lane', () => {
     const method = source.slice(start, end);
     assert.match(method, /preflightTurnTicketBudget\(session, regenerationContent, \{\s*councilStageEntry: stageEntry/);
     assert.ok(
-        method.indexOf('preflightTurnTicketBudget') < method.indexOf('messagesToDelete'),
-        'preflight must run before later messages are deleted'
+        method.indexOf('preflightTurnTicketBudget') < method.indexOf('beginMessageReplacement'),
+        'preflight must run before the replacement draft starts'
     );
 });
 

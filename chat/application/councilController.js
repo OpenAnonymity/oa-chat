@@ -189,7 +189,8 @@ export default class CouncilController {
         userMessage,
         searchEnabled,
         abortController,
-        initialPendingPhase
+        initialPendingPhase,
+        deferMemoryExtraction = false
     }) {
         throwIfAborted(abortController?.signal || null);
         if (!session?.id || !assistantMessageId || !laneId) return null;
@@ -317,7 +318,7 @@ export default class CouncilController {
             this.app.chatArea.revealCouncilLaneError?.(assistantMessage.id, laneId);
         }
         await this.app.recomputeSessionCouncilTranscriptHint?.(session);
-        if (stageEntry.status === 'complete') {
+        if (stageEntry.status === 'complete' && !deferMemoryExtraction) {
             this.app.triggerPostTurnMemoryExtraction?.(session);
         }
         return assistantMessage;

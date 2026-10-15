@@ -36,6 +36,8 @@ const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
 const { chatDB } = await import('../../chat/db.js');
+const { OpenRouterAPI } = await import('../../chat/publicInferenceApi.js');
+const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
 
@@ -175,6 +177,30 @@ test('a content delivery still writing when Stop lands cannot repaint or re-save
     assert.equal(assistant().length, savesBefore);
 });
 
+test('Stop during desktop reasoning-to-answer persistence prevents late trace paints and image saves', async t => {
+    const restore = installBrowser();
+    const entered = deferred();
+    const { app, gates, assistant, paints } = streamHarness(async (...args) => {
+        await args[9]('Reasoning before the answer.');
+        const gate = gates.saveMessage = deferred();
+        const late = args[3]('Answer text', { images: ['synthetic-late-image'] });
+        entered.resolve({ late, gate });
+        return untilStopped(args[7]);
+    });
+    t.after(() => { gates.saveMessage?.resolve(); restore(); });
+    const turn = app.sendMessage();
+    const { late, gate } = await entered.promise;
+    app.stopSessionStreaming('one');
+    await turn;
+    const settled = structuredClone(assistant().at(-1));
+    const paintsBeforeResume = paints.length;
+    gate.resolve();
+    await late;
+    assert.equal(paints.length, paintsBeforeResume);
+    assert.deepEqual(assistant().at(-1), settled);
+    assert.equal(settled.images, undefined);
+});
+
 test('a first thinking chunk still being written when Stop lands shows the row once and never repaints it as thinking', async t => {
     const restore = installBrowser();
     const entered = deferred();
@@ -198,11 +224,10 @@ test('a first thinking chunk still being written when Stop lands shows the row o
     gate.resolve();
     assert.equal(await late, 'resumed');
     await new Promise(resolve => setTimeout(resolve, 5));
-    // The row the delivery was about to show still appears (with the settled
-    // record), but nothing animates or re-marks it as thinking afterwards.
-    assert.deepEqual(paintsAfter('finalizeReasoningDisplay').map(call => call.name), ['appendMessage']);
-    const [shown] = paintsAfter('finalizeReasoningDisplay')[0].args;
-    assert.equal(shown.streamingReasoning, false);
+    // The turn owner renders a missing row during finalization. The retired
+    // callback must not append anything after the composer has been released.
+    assert.deepEqual(paintsAfter('finalizeReasoningDisplay').map(call => call.name), []);
+    assert.equal(paints.find(call => call.name === 'finalizeStreamingMessage').args[1].appendIfMissing, true);
     const persisted = assistant().at(-1);
     assert.deepEqual(persisted, settled, 'a reload must not show the stopped reply as thinking');
 });
@@ -290,4 +315,124 @@ test('the required save still holds the composer: a follow-up waits for the repl
     await app.sendMessage();
     assert.equal(calls, 2);
     assert.equal(assistant().at(-1).content, 'Follow-up answer.');
+});
+
+
+// Keep the real SSE parser/watchdog in this regression: its timeout aborts the
+// transport signal without aborting ChatApp's turn controller. The DB fixture
+// delays a save's promise after recording the write, not a real IDB transaction.
+for (const operation of ['send', 'regenerate']) {
+    for (const [delivery, holdAccounting] of [['reasoning', false], ['content', false], ['reasoning', true], ['content', true]]) {
+        test(`${operation}: real timeout retires held ${delivery}${holdAccounting ? ' during accounting' : ' before follow-up'}`, { timeout: 5000 }, async t => {
+            const restore = installBrowser();
+            const gate = deferred(), entered = deferred(), ledger = deferred(), ledgerEntered = deferred();
+            let stream, cancelled = false, calls = 0, hold = true, outerSignal;
+            const api = new OpenRouterAPI({
+                networkTransport: { fetchWithRetry: async () => ({ ok: true, status: 200,
+                    body: new ReadableStream({ start(controller) { stream = controller; }, cancel() { cancelled = true; } }) }) },
+                inferenceTiming: { warningMs: 40, connectionMs: 1000, idleMs: 150, outputMs: 500, pollMs: 5 }
+            });
+            const { app, records, paints } = streamHarness(async (...args) => {
+                calls++;
+                if (calls > 1) {
+                    await args[3]('FOLLOWUP_OK');
+                    return { completionTokens: 2, isStreaming: false };
+                }
+                outerSignal = args[7].signal;
+                args[2] = 'synthetic';
+                return api.streamCompletion(...args);
+            });
+            const save = chatDB.saveMessage;
+            chatDB.saveMessage = async message => {
+                await save(message);
+                if (hold && message.role === 'assistant' && (message.reasoning || message.content)) {
+                    hold = false;
+                    entered.resolve();
+                    await gate.promise;
+                }
+            };
+            if (holdAccounting) app.tryRecordRuntimeUsage = async usage => {
+                if (usage.final !== false) { ledgerEntered.resolve(); await ledger.promise; }
+            };
+            t.after(() => { gate.resolve(); ledger.resolve(); restore(); });
+            if (operation === 'regenerate') records.set('prompt', { id: 'prompt', sessionId: 'one', role: 'user', content: 'Original prompt', model: 'Accepted model' });
+            const first = operation === 'send' ? app.sendMessage() : app.regenerateResponse();
+            while (!stream) await new Promise(resolve => setTimeout(resolve, 1));
+            stream.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ choices: [{ delta: {
+                [delivery]: 'PARTIAL_OUTPUT_LONG_ENOUGH_TO_FLUSH'
+            } }] }) + '\n\n'));
+            await entered.promise;
+            if (holdAccounting) {
+                await ledgerEntered.promise;
+                assert.equal(cancelled, true);
+                assert.equal(app.getSessionStreamingState('one').isStreaming, true, 'accounting still owns the turn');
+                const count = paints.length;
+                gate.resolve();
+                await new Promise(resolve => setTimeout(resolve, 40));
+                assert.equal(paints.length, count, 'no repaint after timeout while accounting waits');
+                ledger.resolve();
+            }
+            await first;
+            assert.equal(cancelled, true, 'the real watchdog cancelled the reader');
+            assert.equal(outerSignal.aborted, false, 'a timeout is not a user Stop');
+            assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+            assert.ok(paints.some(call => call.name === 'finalizeStreamingMessage' && call.args[1]?.appendIfMissing), 'the settled partial reply is rendered before releasing the turn');
+            app.elements.messageInput.value = 'FOLLOWUP';
+            await app.sendMessage();
+            assert.equal(calls, 2, 'exactly one request per turn');
+            assert.ok([...records.values()].some(message => message.content === 'FOLLOWUP_OK'));
+            const before = structuredClone([...records.values()]), paintCount = paints.length;
+            gate.resolve();
+            await new Promise(resolve => setTimeout(resolve, 40));
+            assert.equal(paints.length, paintCount, 'no late append or thinking update');
+            assert.deepEqual([...records.values()], before, 'no stale persistence after follow-up');
+        });
+    }
+
+    for (const accounting of ['transport', 'message']) {
+    test(`${operation}: successful completion retires callbacks while ${accounting} usage is still awaited`, async t => {
+        const restore = installBrowser();
+        const usage = deferred(), usageEntered = deferred();
+        let callbacks;
+        const { app, records, paints } = streamHarness(async (...args) => {
+            callbacks = args;
+            await args[3]('Complete answer');
+            return { completionTokens: 2, isStreaming: false };
+        });
+        const holdUsage = async () => { usageEntered.resolve(); await usage.promise; };
+        if (accounting === 'transport') app.tryRecordRuntimeUsage = async data => { if (data.final !== false) await holdUsage(); };
+        else app.recordRuntimeUsage = holdUsage;
+        t.after(() => { usage.resolve(); restore(); });
+        if (operation === 'regenerate') records.set('prompt', { id: 'prompt', sessionId: 'one', role: 'user', content: 'Original prompt', model: 'Accepted model' });
+        const turn = operation === 'send' ? app.sendMessage() : app.regenerateResponse();
+        await usageEntered.promise;
+        assert.equal(app.getSessionStreamingState('one').isStreaming, true, 'usage remains required');
+        const before = structuredClone([...records.values()]), count = paints.length;
+        await callbacks[3]('STALE', { images: ['synthetic-image'] });
+        callbacks[4]({ model: 'Stale model', completionTokens: 999 });
+        await callbacks[8]();
+        await callbacks[9]('STALE REASONING');
+        await callbacks[9]('', { withheld: true });
+        assert.equal(paints.length, count);
+        assert.deepEqual([...records.values()], before);
+        usage.resolve();
+        await turn;
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+        const answer = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(answer.content, 'Complete answer');
+        assert.equal(answer.tokenCount, 2);
+    });
+    }
+}
+
+test('finalization renders a missing partial row only when its owner explicitly requests it', async t => {
+    const restore = installBrowser();
+    t.after(restore);
+    const appended = [];
+    const area = { settledReasoningIds: new Map(), appendMessage: async message => appended.push(structuredClone(message)) };
+    const message = { id: 'partial', role: 'assistant', content: 'Kept partial', streamingReasoning: false };
+    await ChatArea.prototype.finalizeStreamingMessage.call(area, message);
+    assert.equal(appended.length, 0, 'other finalizers retain their missing-row behavior');
+    await ChatArea.prototype.finalizeStreamingMessage.call(area, message, { appendIfMissing: true });
+    assert.deepEqual(appended, [message]);
 });

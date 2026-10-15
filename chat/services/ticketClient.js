@@ -648,8 +648,21 @@ class TicketClient {
      * tickets are held from spending and counted as moving from the first
      * screen after sign-up. Only a wallet that already holds tickets asks.
      */
-    async primeLegacyTransfer() {
-        if (this.legacyTransferPrimed) return;
+    primeLegacyTransfer() {
+        if (this.legacyTransferPrimePromise) return this.legacyTransferPrimePromise;
+        // An account run already owns discovery. Reuse it rather than let a
+        // second status lookup race its settled holds.
+        if (this.legacyTransferRun && this.legacyTransferReadiness) return this.legacyTransferReadiness;
+        if (this.legacyTransferPrimed) return Promise.resolve(true);
+        const pending = this.runLegacyTransferPrime().finally(() => {
+            if (this.legacyTransferPrimePromise === pending) this.legacyTransferPrimePromise = null;
+        });
+        this.legacyTransferPrimePromise = pending;
+        return pending;
+    }
+
+    async runLegacyTransferPrime() {
+        const readinessAtStart = this.legacyTransferReadiness;
         this.legacyTransferPrimed = true;
         try {
             await this.ticketStore.init?.();
@@ -658,18 +671,28 @@ class TicketClient {
                 // version account is released, the wallet opens only after
                 // this runs; the watcher asks again when tickets appear.
                 this.legacyTransferPrimed = false;
-                return;
+                if (!this.legacyTransferRun && this.legacyTransferReadiness === readinessAtStart) this.legacyTransferReadiness = null;
+                return true;
             }
             const info = await this.fetchLegacyTransferInfo();
             const keyId = normalizeTicketKeyId(info?.key_id);
-            if (info?.enabled === true && keyId && !this.legacyTransferRun) {
-                this.ticketStore.setHeldKeyIds([keyId]);
+            if (!this.legacyTransferRun && this.legacyTransferReadiness === readinessAtStart) {
+                this.ticketStore.setHeldKeyIds(info?.enabled === true && keyId ? [keyId] : []);
+                this.legacyTransferReadiness = Promise.resolve(true);
                 this.ticketStore.emitUpdate?.();
             }
+            return this.legacyTransferReadiness ? await this.legacyTransferReadiness : true;
         } catch (error) {
             // The move itself fetches the same status again after sign-in.
             this.legacyTransferPrimed = false;
             console.warn('Ticket move status could not be read yet:', error);
+            // A newer account-run discovery owns its result, even if it has
+            // already completed while this older status request was pending.
+            if (this.legacyTransferReadiness !== readinessAtStart && this.legacyTransferReadiness) {
+                return await this.legacyTransferReadiness;
+            }
+            if (!this.legacyTransferRun) this.legacyTransferReadiness = Promise.resolve(false);
+            return false;
         }
     }
 
@@ -761,13 +784,21 @@ class TicketClient {
         if (!this.legacyTransferRun) {
             const accountId = this.getLegacyDisplayAccountId();
             if (!accountId) return Promise.resolve({ status: 'signed-out', moved: 0 });
+            let settleReadiness;
+            const readiness = new Promise(resolve => { settleReadiness = resolve; });
+            this.legacyTransferReadiness = readiness;
             this.unannouncedLegacyMoves ||= new Map();
             this.legacyTransferRun = (async () => {
                 let result = null;
                 try {
-                    result = await this.getLegacyTransfer().run({ expectedAccountId: accountId });
+                    result = await this.getLegacyTransfer().run({ expectedAccountId: accountId, onReady: () => settleReadiness(true) });
                     return result;
                 } finally {
+                    // A failed discovery must release waiters without declaring
+                    // unknown old tickets spendable. Only this run owns its gate.
+                    settleReadiness(false);
+                    // Retain the outcome until another discovery replaces it;
+                    // an immediate retry after failure must not spend unknown tickets.
                     // A run that only redeems a move's saved code (the move
                     // itself settled earlier) has nothing to settle again.
                     const ownsDisplay = accountId && this.getLegacyDisplayAccountId() === accountId;
@@ -834,6 +865,23 @@ class TicketClient {
 
     isLegacyTransferRunning() {
         return Boolean(this.legacyTransferRun);
+    }
+
+    /** Wait only until old issuer IDs are held, not for ticket migration. */
+    async awaitLegacyTransferReady(timeoutMs = LEGACY_TRANSFER_WAIT_MS) {
+        const pending = this.legacyTransferRun
+            ? this.legacyTransferReadiness
+            : this.legacyTransferPrimePromise || this.legacyTransferReadiness;
+        if (!pending) return true;
+        let timer;
+        try {
+            return await Promise.race([
+                pending.catch(() => false),
+                new Promise(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); })
+            ]);
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     /** Wait (bounded) for a running move so a send sees the moved tickets. */

@@ -1,4 +1,4 @@
-import { discardResponseBody } from './inference/reliability.js';
+import { discardResponseBody, waitForSignal } from './inference/reliability.js';
 /**
  * Fetch Retry Utility
  * Industry-standard retry mechanism with exponential backoff and jitter.
@@ -34,6 +34,7 @@ const DEFAULT_CONFIG = {
 function isRetryable(error, response) {
     // Network-level failures (fetch itself failed)
     if (error) {
+        if (error.isRequestTimeout || error.isUserAbort) return false;
         if (error.name === 'TypeError') return true;  // Network failure
         if (error.name === 'AbortError') return true; // Timeout (our timeout, not user abort)
         if (error.message?.includes('Failed to fetch')) return true;
@@ -98,9 +99,19 @@ function getDelay(attempt, baseDelayMs, maxDelayMs, retryAfterMs = null) {
  * @param {number} ms - Duration in milliseconds
  * @returns {Promise<void>}
  */
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+async function sleep(ms, signal) {
+    let timer;
+    try {
+        await waitForSignal(new Promise(resolve => { timer = setTimeout(resolve, ms); }), signal);
+    } finally {
+        clearTimeout(timer);
+    }
 }
+
+function userAbortError() {
+    return Object.assign(new Error('Request aborted'), { name: 'AbortError', isUserAbort: true });
+}
+
 
 /**
  * Fetch with automatic retry on transient failures.
@@ -140,11 +151,12 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
         timeoutMs = DEFAULT_CONFIG.timeoutMs,
         fetchFn = fetch,
         fetchConfig = {},
-        signal: externalSignal,
+        signal: configuredSignal,
         context = 'Request',
         onRetry
     } = config;
 
+    const externalSignal = configuredSignal || init.signal;
     let lastError = null;
     let lastResponse = null;
 
@@ -159,6 +171,8 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
 
         let timeoutId = null;
         let handedOff = false;
+        let unlink = () => {};
+        const release = () => { clearTimeout(timeoutId); timeoutId = null; unlink(); };
         try {
             // Determine the signal to use
             let fetchSignal = externalSignal || null;
@@ -166,12 +180,19 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
             // Only create timeout if timeoutMs is set (> 0)
             if (timeoutMs && timeoutMs > 0) {
                 const timeoutController = new AbortController();
-                timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+                timeoutId = setTimeout(() => timeoutController.abort(Object.assign(
+                    new Error(`${context} timed out after ${timeoutMs}ms. Please try again.`),
+                    { name: 'TimeoutError', isRequestTimeout: true }
+                )), timeoutMs);
 
                 // Combine external signal with timeout
-                fetchSignal = externalSignal
-                    ? createLinkedSignal(externalSignal, timeoutController.signal)
-                    : timeoutController.signal;
+                if (externalSignal) {
+                    const linked = createLinkedSignal(externalSignal, timeoutController.signal);
+                    fetchSignal = linked.signal;
+                    unlink = linked.dispose;
+                } else {
+                    fetchSignal = timeoutController.signal;
+                }
             }
 
             const fetchInit = {
@@ -180,7 +201,13 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
             };
 
             // Make the request using the provided fetch function
-            const response = await fetchFn(url, fetchInit, fetchConfig);
+            const pendingResponse = Promise.resolve(fetchFn(url, fetchInit, fetchConfig));
+            // A relay may ignore abort. Bound the caller's wait and dispose any
+            // response that arrives after it stopped; never replay a timeout.
+            pendingResponse.then(response => {
+                if (fetchSignal?.aborted) discardResponseBody(response.body);
+            }, () => {});
+            const response = await waitForSignal(pendingResponse, fetchSignal);
 
             // Check if response indicates a retryable error
             if (RETRYABLE_STATUS.has(response.status)) {
@@ -200,7 +227,7 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
                     }
 
                     console.warn(`⚠️ ${context} attempt ${attempt + 1}/${maxAttempts} failed (${response.status}). Retrying in ${Math.round(delay)}ms...`);
-                    await sleep(delay);
+                    await sleep(delay, externalSignal);
                     continue;
                 }
             }
@@ -208,22 +235,16 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
             // Non-retryable status or success - return response
             if (holdDeadline) {
                 handedOff = true;
-                const release = () => {
-                    if (timeoutId !== null) {
-                        clearTimeout(timeoutId);
-                        timeoutId = null;
-                    }
-                };
                 return { response, signal: fetchSignal, release };
             }
+            // Raw callers own body consumption and cancellation. On older
+            // browsers without AbortSignal.any, keep the external link alive.
+            unlink = () => {};
             return { response, signal: fetchSignal, release: () => {} };
 
         } catch (error) {
             // Check if this is a user-initiated abort
-            if (error.name === 'AbortError' && externalSignal?.aborted) {
-                error.isUserAbort = true;
-                throw error;
-            }
+            if (externalSignal?.aborted) throw userAbortError();
 
             lastError = error;
 
@@ -241,16 +262,15 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
                     : error.message;
 
                 console.warn(`⚠️ ${context} attempt ${attempt + 1}/${maxAttempts} failed: ${errorMsg}. Retrying in ${Math.round(delay)}ms...`);
-                await sleep(delay);
+                try { await sleep(delay, externalSignal); }
+                catch { throw userAbortError(); }
                 continue;
             }
 
             // Non-retryable error or final attempt
             throw error;
         } finally {
-            if (timeoutId !== null && !handedOff) {
-                clearTimeout(timeoutId);
-            }
+            if (!handedOff) release();
         }
     }
 
@@ -270,18 +290,28 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
  * @returns {AbortSignal} Combined signal
  */
 function createLinkedSignal(signal1, signal2) {
+    // Native composition keeps cancellation alive for raw streaming responses
+    // without retaining one listener on the caller for every completed request.
+    if (typeof AbortSignal.any === 'function') {
+        return { signal: AbortSignal.any([signal1, signal2]), dispose() {} };
+    }
     const controller = new AbortController();
 
-    const abort = () => controller.abort();
-
-    if (signal1.aborted || signal2.aborted) {
-        controller.abort();
-    } else {
-        signal1.addEventListener('abort', abort, { once: true });
-        signal2.addEventListener('abort', abort, { once: true });
+    const abort1 = () => controller.abort(signal1.reason);
+    const abort2 = () => controller.abort(signal2.reason);
+    if (signal1.aborted) abort1();
+    else if (signal2.aborted) abort2();
+    else {
+        signal1.addEventListener('abort', abort1, { once: true });
+        signal2.addEventListener('abort', abort2, { once: true });
     }
-
-    return controller.signal;
+    return {
+        signal: controller.signal,
+        dispose() {
+            signal1.removeEventListener('abort', abort1);
+            signal2.removeEventListener('abort', abort2);
+        }
+    };
 }
 
 /**
@@ -300,7 +330,7 @@ export async function fetchRetryJson(url, init = {}, config = {}) {
     const { response, signal, release } = await fetchRetryWithDeadline(url, init, config, true);
     let text;
     try {
-        text = await readBodyTextWithDeadline(response, signal, config);
+        text = await readBodyTextWithDeadline(response, signal, { ...config, signal: config.signal || init.signal });
     } finally {
         release();
     }
@@ -352,33 +382,29 @@ function createBodyAbortError(config, signal) {
  * headers have been delivered.
  */
 export async function readBodyTextWithDeadline(response, signal, config = {}) {
-    const textPromise = response.text();
-    if (!signal) return textPromise;
-    // Never surface a rejection after the race has settled.
-    textPromise.catch(() => {});
-    if (signal.aborted) {
-        cancelResponseBody(response);
-        throw createBodyAbortError(config, signal);
-    }
-    let onAbort = null;
-    const aborted = new Promise((_, reject) => {
-        onAbort = () => {
-            cancelResponseBody(response);
-            reject(createBodyAbortError(config, signal));
-        };
-        signal.addEventListener('abort', onAbort, { once: true });
-    });
+    // Own the reader: response.text() locks the body, preventing body.cancel()
+    // from releasing a stalled transport when the deadline expires.
+    const reader = response.body?.getReader?.();
+    let complete = false;
     try {
-        return await Promise.race([textPromise, aborted]);
-    } catch (error) {
-        // A native abort surfaces as the transport's own AbortError; normalise
-        // it so callers see one shape for "the deadline passed mid-body".
-        if (signal.aborted && error?.name === 'AbortError' && !error.isUserAbort && !error.isBodyTimeout) {
-            throw createBodyAbortError(config, signal);
+        if (signal?.aborted) throw createBodyAbortError(config, signal);
+        if (!reader) return await waitForSignal(response.text(), signal);
+        const decoder = new TextDecoder();
+        let text = '';
+        while (true) {
+            const { done, value } = await waitForSignal(reader.read(), signal);
+            if (done) { complete = true; return text + decoder.decode(); }
+            text += decoder.decode(value, { stream: true });
         }
+    } catch (error) {
+        if (signal?.aborted) throw createBodyAbortError(config, signal);
         throw error;
     } finally {
-        if (onAbort) signal.removeEventListener('abort', onAbort);
+        if (!complete) {
+            if (reader) discardResponseBody(reader);
+            else cancelResponseBody(response);
+        }
+        reader?.releaseLock();
     }
 }
 

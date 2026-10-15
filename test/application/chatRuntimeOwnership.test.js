@@ -713,6 +713,45 @@ describe('production ChatApp runtime ownership', () => {
         } finally { globalThis.MutationObserver = previousObserver; }
     });
 
+    test('Markdown keeps approximation tildes literal and requires double tildes for strikethrough', () => {
+        const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
+        // A private parser avoids changing global options in the shared test process.
+        globalThis.marked = new markedApi.Marked();
+        const app = appHarness();
+        app.escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            app.configureMarkedRenderer();
+            for (const text of [
+                'Hubble (~483 km); Webb (~1.5 million km away).',
+                '~single~', '~~unclosed~', '~one ~~deleted~~ two~',
+                '~483 **km** and ~1.5 _million_',
+            ]) {
+                const html = app.processContentWithLatex(text);
+                if (text.includes('~~deleted~~')) assert.match(html, /~one <del>deleted<\/del> two~/);
+                else assert.doesNotMatch(html, /<del>/);
+            }
+            assert.match(app.processContentWithLatex('Hubble (~483 km); Webb (~1.5 million km away).'),
+                /Hubble \(~483 km\); Webb \(~1\.5 million km away\)\./);
+            assert.match(app.processContentWithLatex('~~old **value**~~ → ~5; ~~other~~'),
+                /<del>old <strong>value<\/strong><\/del> → ~5; <del>other<\/del>/);
+            assert.match(app.processContentWithLatex('`~483 and ~~old~~`'), /<code>~483 and ~~old~~<\/code>/);
+            const fenced = app.processContentWithLatex('~~~text\n~483 and ~~old~~\n~~~');
+            assert.match(fenced, /~483 and ~~old~~/);
+            assert.doesNotMatch(fenced, /<del>/);
+            assert.match(app.processContentWithLatex('\\~literal\\~ and $x \\sim y$'), /~literal~ and \$x \\sim y\$/);
+            assert.match(app.processContentWithLatex('[~483 km](https://example.invalid/~distance)'),
+                /href="https:\/\/example\.invalid\/~distance">~483 km<\/a>/);
+            // Untrusted model HTML still uses the existing escaping renderer.
+            assert.doesNotMatch(app.processContentWithLatex('~~<script>alert(1)</script>~~'), /<script>/);
+            // Reconfiguration must not accumulate extension wrappers.
+            app.configureMarkedRenderer();
+            assert.match(app.processContentWithLatex('~approx~ ~~deleted~~'), /~approx~ <del>deleted<\/del>/);
+        } finally {
+            if (previousMarked) Object.defineProperty(globalThis, 'marked', previousMarked);
+            else delete globalThis.marked;
+        }
+    });
+
     test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
         const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
         globalThis.marked = markedApi;
@@ -2521,6 +2560,109 @@ test('search and council metadata never persist an unfinished replacement', asyn
         assert.equal(session.hasCouncilTranscript,undefined);
     } finally { chatDB.messageReplacements.delete('one'); restore(); }
 });
+
+for (const outcome of ['complete', 'stopped', 'partial-stop', 'failed', 'empty', 'commit-failed', 'late-stop', 'preflight-edit']) {
+    test(`Parallel lane regeneration ${outcome} keeps the saved transcript until a usable replacement commits`, async t => {
+        const restore = installBrowser();
+        const { MessageReplacement } = await import('../../chat/services/messageReplacement.js');
+        const { default: CouncilController } = await import('../../chat/application/councilController.js');
+        try {
+            const app = appHarness();
+            const session = app.getCurrentSession();
+            const original = [
+                { id: 'u', sessionId: 'one', role: 'user', content: 'Question', timestamp: 1 },
+                { id: 'original', sessionId: 'one', role: 'assistant', content: 'Original A', timestamp: 2,
+                    council: { enabled: true, canonicalStage1Label: 'A', stage1: [
+                        { laneId: 'primary', label: 'A', model: 'Model one', status: 'complete', response: 'Original A' },
+                        { laneId: 'secondary', label: 'B', model: 'Model two', status: 'complete', response: 'Original B' }
+                    ] } },
+                { id: 'later', sessionId: 'one', role: 'user', content: 'Later follow-up', timestamp: 3 }
+            ];
+            let durable = structuredClone(original), active = null, extractions = 0;
+            const operation = { controller: new AbortController() };
+            operation.signal = operation.controller.signal;
+            app.supportsFeature = () => true;
+            app.beginFeatureOperation = () => operation;
+            let released = false;
+            app.finishFeatureOperation = () => { released = true; };
+            app.reserveAccessAcquisitionHandoff = () => {};
+            app.preflightTurnTicketBudget = async () => {
+                if (outcome === 'preflight-edit') durable[1].council.stage1[1].response = 'Edited in another tab';
+                return true;
+            };
+            app.generateId = () => 'candidate';
+            app.resolvePendingPhaseForSession = () => 'waiting-response';
+            app.setSessionStreamingState = () => {};
+            app.startPromptSlideUpEffect = app.updateScrollButtonVisibility = app.focusMessageInput = () => {};
+            app.recomputeSessionCouncilTranscriptHint = app.refreshSessionConversationSearchText = async () => {};
+            app.chatArea = { render: async () => {}, appendMessage: async () => {} };
+            app.markSessionHasCouncilTranscript = async () => {};
+            app.addMessage = async () => {};
+            app.triggerPostTurnMemoryExtraction = () => {
+                assert.equal(active, null, 'memory extraction must wait for durable commit');
+                extractions++;
+            };
+            t.mock.method(chatDB, 'getSessionMessages', async () => active ? active.messages() : structuredClone(durable));
+            t.mock.method(chatDB, 'beginMessageReplacement', async (id, messageId) => {
+                active = new MessageReplacement(id, messageId, durable); return active;
+            });
+            t.mock.method(chatDB, 'saveMessage', async message => {
+                assert.ok(active, 'regeneration must draft rather than overwrite saved answers');
+                active.save(message);
+            });
+            t.mock.method(chatDB, 'deleteMessage', async () => { assert.fail('must not delete saved follow-ups'); });
+            t.mock.method(chatDB, 'finishMessageReplacement', async (draft, options) => {
+                assert.equal(draft, active);
+                if (options.commit && outcome === 'commit-failed') throw Error('Synthetic quota failure');
+                if (options.commit) durable = draft.messages();
+                else {
+                    assert.equal(options.laneId, 'primary', 'Retry must target only the selected lane');
+                    durable.find(row => row.id === 'original').regenerationNotice = options.notice;
+                }
+                active = null;
+            });
+            // Run the actual lane controller, mocking only provider/access and UI.
+            const controller = new CouncilController({ app, chatDB, inferenceService: {}, ticketClient: {} });
+            app.councilController = controller;
+            app.state.models = [{ id: 'test/one', name: 'Model one' }];
+            app.sanitizeMessagesForApi = rows => rows;
+            app.renderSessions = () => {};
+            controller.resolveModelEntries = () => [];
+            controller.resolveEntryForStage1Entry = () => ({ id: 'test/one', name: 'Model one', laneId: 'primary' });
+            controller.assertSufficientTicketsForEntries = () => {};
+            controller.buildLaneConversationMessages = rows => rows;
+            controller.ensureAccessForEntries = async () => {};
+            controller.sendLaneCompletion = async ({ streamTarget }) => {
+                assert.notEqual(outcome, 'preflight-edit', 'changed source must stop before inference');
+                assert.deepEqual(durable, original, 'disk/reload must still show the entire original transcript');
+                if (outcome === 'partial-stop') {
+                    streamTarget.laneState.response = 'Partial replacement';
+                    await chatDB.saveMessage(streamTarget.assistantMessage);
+                    assert.deepEqual(durable, original, 'stream progress must remain a draft');
+                }
+                if (['stopped', 'partial-stop', 'late-stop', 'preflight-edit'].includes(outcome)) operation.controller.abort();
+                if (['stopped', 'partial-stop'].includes(outcome)) throw Object.assign(Error('Stop'), { name: 'AbortError' });
+                if (outcome === 'failed') throw Error('Synthetic provider error');
+                return { content: outcome === 'empty' ? '' : 'Replacement A' };
+            };
+            await app.regenerateCouncilLane('original', 'primary', { skipMemoryAugment: true });
+            if (outcome === 'complete') {
+                assert.deepEqual(durable.map(row => row.id), ['u', 'candidate']);
+                assert.equal(durable[1].council.stage1[0].response, 'Replacement A');
+                assert.deepEqual(durable[1].council.stage1[1], original[1].council.stage1[1]);
+                assert.equal(extractions, 1);
+            } else {
+                if (outcome === 'preflight-edit') original[1].council.stage1[1].response = 'Edited in another tab';
+                assert.deepEqual(durable.map(({regenerationNotice, ...row}) => row), original);
+                assert.equal(durable[1].regenerationNotice, operation.signal.aborted ? 'stopped' : 'failed');
+                assert.equal(extractions, 0);
+            }
+            assert.equal(active, null);
+            assert.equal(released, true);
+            assert.equal(app.exclusiveSessionMutationOwners.size, 0);
+        } finally { restore(); }
+    });
+}
 
 for (const outcome of ['complete', 'failed', 'empty', 'stopped']) {
     test(`regeneration ${outcome} selects the correct durable replacement outcome`, async t => {

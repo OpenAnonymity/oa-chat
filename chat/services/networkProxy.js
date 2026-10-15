@@ -2,6 +2,7 @@ import { DEMO_PROXY_FETCH_TIMEOUT_MS, PROXY_URL } from '../config.js';
 import transportHints from './inference/transportHints.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
+import { discardResponseBody, waitForSignal } from './inference/reliability.js';
 import { guardProxyFetch, resolveProxyFetchTimeoutMs } from './proxyFetchGuard.js';
 
 const DEFAULT_SETTINGS = {
@@ -596,33 +597,52 @@ class NetworkProxy {
      * Wrap a response to track when its body stream is fully consumed.
      * This ensures activeRequestCount stays elevated during streaming.
      */
-    wrapResponseForTracking(response) {
-        // If no body (e.g., HEAD request, 204), decrement immediately
+    wrapResponseForTracking(response, signal = null) {
         if (!response.body) {
             this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
             this.emitChange();
             return response;
         }
 
-        const originalBody = response.body;
+        const reader = response.body.getReader();
         const self = this;
-        let decremented = false;
-
-        const decrementOnce = () => {
-            if (!decremented) {
-                decremented = true;
-                self.activeRequestCount = Math.max(0, self.activeRequestCount - 1);
-                self.emitChange();
-            }
+        let finished = false;
+        let onAbort;
+        const finish = (cancel = false) => {
+            if (finished) return;
+            finished = true;
+            signal?.removeEventListener('abort', onAbort);
+            if (cancel) discardResponseBody(reader);
+            reader.releaseLock();
+            self.activeRequestCount = Math.max(0, self.activeRequestCount - 1);
+            self.emitChange();
         };
-
-        // Some browsers still ignore transformer.cancel. Observe pipe settlement
-        // too, while retaining prompt cancellation where the callback is supported.
-        const trackingStream = new TransformStream({ flush: decrementOnce, cancel: decrementOnce });
-        originalBody.pipeTo(trackingStream.writable).then(decrementOnce, decrementOnce);
-        const trackedBody = trackingStream.readable;
-
-        // Return a new Response with the tracked body
+        // TransformStream has no abort/cancel transformer hooks. Own the
+        // reader so Stop and upstream errors release tracking just like EOF.
+        const trackedBody = new ReadableStream({
+            start(controller) {
+                onAbort = () => {
+                    if (finished) return;
+                    controller.error(signal.reason || new DOMException('Request stopped', 'AbortError'));
+                    finish(true);
+                };
+                if (signal?.aborted) onAbort();
+                else signal?.addEventListener('abort', onAbort, { once: true });
+            },
+            async pull(controller) {
+                try {
+                    const { done, value } = await reader.read();
+                    if (finished) return;
+                    if (done) { controller.close(); finish(); }
+                    else controller.enqueue(value);
+                } catch (error) {
+                    if (finished) return;
+                    controller.error(error);
+                    finish();
+                }
+            },
+            cancel() { finish(true); }
+        }, { highWaterMark: 0 });
         return new Response(trackedBody, {
             status: response.status,
             statusText: response.statusText,
@@ -653,7 +673,7 @@ class NetworkProxy {
             // down when nothing else is using it; a guard timeout, which means
             // the relay itself stopped answering, always does.
             const othersInFlight = this.activeRequestCount > 1;
-            const requestAborted = error?.name === 'AbortError' && signal?.aborted === true;
+            const requestAborted = signal?.aborted === true;
             const sessionUnresponsive = error?.code === 'PROXY_TIMEOUT';
             if (sessionUnresponsive || (requestAborted && !othersInFlight)) {
                 try {
@@ -692,7 +712,7 @@ class NetworkProxy {
         this.emitChange();
 
         try {
-            await this.ensureProxyApplied();
+            await waitForSignal(this.ensureProxyApplied(), init.signal);
 
             // Double-check that session is available after initialization
             if (!this.httpSession) {
@@ -733,7 +753,7 @@ class NetworkProxy {
 
             // Wrap response to track when body is fully consumed (important for streaming)
             // This keeps activeRequestCount elevated until streaming completes
-            return this.wrapResponseForTracking(response);
+            return this.wrapResponseForTracking(response, init.signal);
         } catch (error) {
             // On error, decrement immediately since there's no body to consume
             this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);

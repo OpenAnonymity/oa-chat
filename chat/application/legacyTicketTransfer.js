@@ -56,12 +56,13 @@ export class LegacyTicketTransfer {
         });
     }
 
-    async run({ expectedAccountId } = {}) {
+    async run({ expectedAccountId, onReady = () => {} } = {}) {
         const info = await this.fetchInfo();
         const keyId = normalizeTicketKeyId(info?.key_id);
         const recoveryOnly = !keyId || info?.enabled !== true;
         // Closing new transfers must not strand credit already committed.
         this.holdKeyIds(recoveryOnly ? [] : [keyId]);
+        onReady();
         if (!this.lockManager?.request) {
             throw new Error('This browser cannot safely coordinate the ticket move across tabs.');
         }
