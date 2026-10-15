@@ -1894,3 +1894,627 @@ test('invalid deposit amounts never start wallet work', () => {
     }
 });
 
+// ---------------------------------------------------------------------------
+// Payment history across protocol versions
+// ---------------------------------------------------------------------------
+//
+// The other versions' payments are read by the facade (which owns the read)
+// and drawn by the version helpers; this dialog only places them: merged into
+// the list by date, as text, and never counted as a return this version has
+// pending. The facade here is a stand-in over the real helpers, the real
+// provider projection and the real renderers.
+
+const { createVersionUi } = await import('../../chat/zkapi/versioning/ui.js');
+const { projectOtherHistory } = await import('../../chat/zkapi/versioning/otherVersionHistory.mjs');
+const { createDocument: createMiniDocument } = await import('./_miniDom.mjs');
+
+const HISTORY_NOW = Date.parse('2026-11-15T12:00:00Z');
+const HISTORY_DAY = 86_400_000;
+const LOADED_DEPLOYMENT = 'zkapi-native-eth-mainnet-concession-v1-loaded';
+const PREVIOUS_DEPLOYMENT = 'zkapi-native-eth-mainnet-note-bound-v1-previous';
+const HISTORY_VAULT = `0x${'44'.repeat(20)}`;
+const historyTable = (previousLabel = 'Version 1') => [
+    { id: 'v1', ordinal: 1, label: previousLabel, adapter: 'note-bound-v1', status: 'exit-only',
+        deploymentId: PREVIOUS_DEPLOYMENT, chainId: 1, vault: HISTORY_VAULT },
+    { id: 'v2', ordinal: 2, label: 'Version 2', adapter: 'concession-v1', status: 'active',
+        deploymentId: LOADED_DEPLOYMENT, chainId: 1, vault: `0x${'22'.repeat(20)}` }
+];
+
+// What the provider hands the facade for a wallet that holds an unfinished
+// withdrawal and an old deposit of version 1 (public fields only).
+function otherVersionRows({ label = 'Version 1', chainId = 1, withdrawalAt = HISTORY_NOW - 2 * HISTORY_DAY } = {}) {
+    const hash = `0x${'ab'.repeat(32)}`;
+    return projectOtherHistory({
+        deposits: [{ recordId: 'old-v1-deposit', type: 'deposit', deploymentId: PREVIOUS_DEPLOYMENT, noteId: 4,
+            amount: 2_000_000, expiryTs: Math.floor((HISTORY_NOW + 30 * HISTORY_DAY) / 1000), status: 'confirmed',
+            createdAt: HISTORY_NOW - 40 * HISTORY_DAY, confirmedAt: HISTORY_NOW - 40 * HISTORY_DAY + 60_000,
+            transactionHash: hash }],
+        withdrawals: [{ recordId: 'raw-record-5', deploymentId: PREVIOUS_DEPLOYMENT, chainId, contractAddress: HISTORY_VAULT,
+            noteId: 5, mode: 'mutual', phase: 'parked', destination: `0x${'34'.repeat(20)}`, finalBalance: 1_900_000,
+            createdAt: withdrawalAt, updatedAt: withdrawalAt }]
+    }, { table: historyTable(label), loadedDeploymentId: LOADED_DEPLOYMENT, nowMs: HISTORY_NOW }).rows;
+}
+
+function historyFacade({ rows = otherVersionRows(), previous = { versionId: 'v1', canOpen: true }, holding = 'none',
+    multiVersion = true } = {}) {
+    const calls = { ensure: 0, switches: [] };
+    const facade = {
+        multiVersion,
+        calls,
+        rows,
+        state: () => ({ previous, holding, show: false, phase: 'current', gate: { canStart: true }, upgrade: {}, exit: null }),
+        depositGate: () => ({ canStart: true, canResume: false, code: null, successor: null }),
+        subscribe: () => () => {},
+        registerBusy: () => () => {},
+        history: {
+            rows: () => facade.rows,
+            ensureFresh() { calls.ensure += 1; return Promise.resolve(); },
+            signature: () => 'history'
+        },
+        requestSwitch(options) { calls.switches.push(options); return { ok: true }; }
+    };
+    facade.ui = createVersionUi({ facade });
+    return facade;
+}
+
+// The dialog reads the moment from Date.now when it draws, and the fixtures'
+// deposit expires thirty days after HISTORY_NOW: without a pinned clock the
+// deposit reads as expired once the real date passes that day, and a derived
+// expiry row appears in the list.
+const clockPinned = new WeakSet();
+function pinHistoryClock(t) {
+    if (clockPinned.has(t)) return;
+    clockPinned.add(t);
+    t.mock.method(Date, 'now', () => HISTORY_NOW);
+}
+
+// What the client held before a test first touched it, recorded once per test:
+// a test that builds several modals must still leave the client as it found it
+// (hooks run in the order they were added, so a restore recorded by a later
+// call would put back an earlier call's facade).
+const historyBefore = new WeakSet();
+
+function historyModal(t, { facade, deposits = [], withdrawals = [], note = null } = {}) {
+    pinHistoryClock(t);
+    if (!historyBefore.has(t)) {
+        historyBefore.add(t);
+        const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawals: zkapiClient.withdrawals,
+            deposits: zkapiClient.deposits, oaVersioning: zkapiClient.oaVersioning };
+        t.after(() => {
+            Object.assign(zkapiClient, original);
+            if (original.oaVersioning === undefined) delete zkapiClient.oaVersioning;
+        });
+    }
+    Object.assign(zkapiClient, { wallet: { has_note: Boolean(note), note }, config: { funding: { chain_id: 1 } },
+        withdrawals, deposits });
+    if (facade) zkapiClient.oaVersioning = facade;
+    else delete zkapiClient.oaVersioning;
+    const modal = Object.create(AccountModal.prototype);
+    Object.assign(modal, { busy: false, isOpen: true, view: 'withdrawals', status: '', statusError: false,
+        overlay: { querySelector: () => null, querySelectorAll: () => [] } });
+    return modal;
+}
+
+const FOREIGN_ACTIONS = /data-sync-withdrawal|data-finalize-withdrawal|data-withdraw-background|data-restore-withdrawal|data-retry-|data-cancel-background-preparation|data-recover-finalization|data-resolve-challenged|data-view-current-deposit|data-sync-late-withdrawal|data-claim-payout|data-zkapi-version-action/;
+// The rows of the other versions, with the dialog's own around them cut away.
+const foreignRows = html => [...html.matchAll(/<section[^>]*data-other-version-record="[^"]*"[\s\S]*?<\/section>/g)].map(match => match[0]);
+
+test('the payments of other versions are rows of Payment history, by date, as text and nothing to act on', t => {
+    const hash = `0x${'cd'.repeat(32)}`;
+    const modal = historyModal(t, {
+        facade: historyFacade(),
+        deposits: [{ recordId: 'new-deposit', status: 'confirmed', amount: 3_000_000, confirmedAt: HISTORY_NOW - HISTORY_DAY, transactionHash: hash }],
+        withdrawals: [{ recordId: 'own-return', mode: 'mutual', phase: 'closed', payoutVerified: true, finalBalance: 1_000_000,
+            destination: `0x${'12'.repeat(20)}`, createdAt: HISTORY_NOW - 10 * HISTORY_DAY }]
+    });
+    const html = modal.renderWithdrawalRecords();
+    const at = pattern => html.search(pattern);
+    // Newest first: this version's deposit, version 1's withdrawal (2 days
+    // old), this version's return (10 days), version 1's deposit (40 days).
+    const order = [at(/data-deposit-record="new-deposit"/), at(/data-other-version-record="v1:withdrawal:5"/),
+        at(/data-withdrawal-record="own-return"/), at(/data-other-version-record="v1:deposit:4"/)];
+    assert.ok(order.every(position => position >= 0), `all four rows are drawn: ${order}`);
+    assert.deepEqual([...order].sort((left, right) => left - right), order, 'by date, newest first');
+    // They are said as another version's, with the version named.
+    const rows = foreignRows(html);
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+        assert.match(row, /data-zkapi-history-version="v1"/);
+        assert.match(row, /Version 1/);
+        // Whatever the dialog's own handlers act on is absent: a note or
+        // record number of another contract would act on this one.
+        assert.doesNotMatch(row, FOREIGN_ACTIONS);
+    }
+    assert.match(rows.find(row => /v1:withdrawal:5/.test(row)), /data-zkapi-history-open="v1"/);
+    // Its transaction link follows the row's own network, not the page's.
+    assert.match(rows.find(row => /v1:deposit:4/.test(row)), new RegExp(`https://etherscan.io/tx/0x${'ab'.repeat(32)}`));
+    // The dialog's own row links its own transaction.
+    assert.match(html, new RegExp(`data-deposit-record="new-deposit"[\\s\\S]*?https://etherscan.io/tx/${hash}`));
+});
+
+test('another version’s unfinished withdrawal is not a return this version has pending', t => {
+    // Nothing of this version's own: only the other version's rows.
+    const modal = historyModal(t, { facade: historyFacade() });
+    const html = modal.renderWithdrawalRecords();
+    assert.match(html, /data-other-version-record="v1:withdrawal:5"/);
+    assert.doesNotMatch(html, /Your deposits and withdrawals will appear here/, 'not the empty state');
+    // None of the lines and buttons a pending return of this version brings.
+    assert.doesNotMatch(html, /These withdrawals run separately|You can add a new private balance while a return is pending|zkapi-sync-all-withdrawals-btn|Check on-chain status|Check expiry payments/);
+    assert.doesNotMatch(modal.renderWithdrawalStatusLink(), /to check/);
+    assert.doesNotMatch(modal.renderWithdrawalStatusLink(), /withdrawal[s]? to check/);
+    // And the label of the disclosure counts this version's own work only.
+    zkapiClient.withdrawals = [{ recordId: 'own-open', mode: 'mutual', phase: 'submitted_unconfirmed', finalBalance: 1 }];
+    assert.match(modal.renderWithdrawalStatusLink(), /1 withdrawal to check/);
+});
+
+test('a list with nothing of this version and nothing of another is still the empty state', t => {
+    const modal = historyModal(t, { facade: historyFacade({ rows: [] }) });
+    const html = modal.renderWithdrawalRecords();
+    assert.match(html, /Your deposits and withdrawals will appear here/);
+    assert.doesNotMatch(html, /data-other-version-record/);
+});
+
+test('what another version’s row says is escaped, and it cannot add an element to the dialog', t => {
+    const hostile = '<img src=x onerror=alert(1)>"\'&<script>boom()</script>';
+    const modal = historyModal(t, { facade: historyFacade({ rows: otherVersionRows({ label: hostile }) }) });
+    const html = modal.renderWithdrawalRecords();
+    assert.doesNotMatch(html, /<img src=x|<script>boom/);
+    assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+    // Parsed, the rows contribute only the elements the renderer writes.
+    const root = createMiniDocument().createElement('div');
+    root.innerHTML = html;
+    assert.equal(root.querySelectorAll('img').length + root.querySelectorAll('script').length, 0);
+    assert.equal(root.querySelectorAll('[data-other-version-record]').length, 2);
+});
+
+test('a page that has no versions to tell apart draws today’s Payment history, rows or not', t => {
+    const records = {
+        deposits: [{ recordId: 'new-deposit', status: 'confirmed', amount: 3_000_000, confirmedAt: HISTORY_NOW - HISTORY_DAY }],
+        withdrawals: [{ recordId: 'own-return', mode: 'mutual', phase: 'closed', payoutVerified: true, finalBalance: 1_000_000,
+            destination: `0x${'12'.repeat(20)}`, createdAt: HISTORY_NOW - 10 * HISTORY_DAY }]
+    };
+    const without = historyModal(t, records).renderWithdrawalRecords();
+    // A facade that is not multi-version has no `ui` and no `history`.
+    const dormant = { multiVersion: false, state: () => null, ui: null, depositGate: () => ({ canStart: true, canResume: false, code: null }),
+        subscribe: () => () => {}, registerBusy: () => () => {} };
+    assert.equal(historyModal(t, { ...records, facade: dormant }).renderWithdrawalRecords(), without);
+    // Even a facade that held rows would not draw them when it says it is
+    // not multi-version (its state is null, so there is no version context).
+    const stale = historyFacade({ multiVersion: false });
+    stale.state = () => null;
+    assert.equal(historyModal(t, { ...records, facade: stale }).renderWithdrawalRecords(), without);
+    // Helpers that have not loaded yet: the same list, no rows.
+    const early = historyFacade();
+    early.ui = null;
+    assert.equal(historyModal(t, { ...records, facade: early }).renderWithdrawalRecords(), without);
+});
+
+test('another version’s list is read when the dialog opens and when its history opens, never from a render', t => {
+    const facade = historyFacade();
+    const modal = historyModal(t, { facade });
+    // A render, whichever view it draws, asks nothing of the facade.
+    Object.assign(modal, { isOpen: true, overlay: { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] } });
+    modal.render();
+    modal.view = 'withdrawals';
+    modal.render();
+    modal.renderWithdrawalRecords();
+    modal.renderWithdrawalStatusLink();
+    assert.equal(facade.calls.ensure, 0, 'drawing is read-only');
+    // Opening the dialog does (the wallet client is not started by this test).
+    const originalDocument = globalThis.document;
+    globalThis.document = { ...originalDocument, activeElement: null, getElementById: () => null,
+        addEventListener() {}, removeEventListener() {} };
+    t.after(() => { globalThis.document = originalDocument; });
+    const closed = Object.create(AccountModal.prototype);
+    Object.assign(closed, { busy: false, isOpen: false, view: 'balance', status: '', statusError: false, walletMethodReady: false,
+        overlay: { innerHTML: '', classList: { add() {}, remove() {} }, removeAttribute() {}, querySelector: () => null,
+            querySelectorAll: () => [], addEventListener() {} } });
+    closed.open('balance');
+    assert.equal(facade.calls.ensure, 1);
+    // Navigating to Payment history does; the other views do not.
+    closed.goToView('withdrawals');
+    assert.equal(facade.calls.ensure, 2);
+    closed.goToView('withdraw');
+    assert.equal(facade.calls.ensure, 2, 'other views do not ask');
+    // A facade announcement re-reads only while the history is on screen.
+    closed.view = 'balance';
+    closed.historyOpen = false;
+    closed.handleVersionChange();
+    assert.equal(facade.calls.ensure, 2);
+    closed.historyOpen = true;
+    closed.handleVersionChange();
+    assert.equal(facade.calls.ensure, 3);
+    closed.historyOpen = false;
+    closed.view = 'withdrawals';
+    closed.handleVersionChange();
+    assert.equal(facade.calls.ensure, 4);
+    // A page with no versions has nothing to ask.
+    delete zkapiClient.oaVersioning;
+    assert.doesNotThrow(() => closed.refreshOtherVersionHistory());
+    assert.equal(facade.calls.ensure, 4);
+});
+
+test('opening Payment history reads the other versions’ payments, once per opening, and closing it reads nothing', t => {
+    const facade = historyFacade();
+    const modal = historyModal(t, { facade, note: { note_id: 7, deposit_amount: 2_000_000, current_balance: 1_500_000,
+        expiry_ts: Math.floor(HISTORY_NOW / 1000) + 20 * 86_400 } });
+    // A real tree: the disclosure's own trigger is what the person clicks.
+    const root = createMiniDocument().createElement('div');
+    Object.assign(modal, { view: 'balance', overlay: root, historyOpen: false });
+    modal.render();
+    assert.equal(facade.calls.ensure, 0, 'drawn closed: nothing read');
+    const trigger = root.querySelector('#zkapi-withdrawal-status-btn');
+    assert.ok(trigger, 'the Payment history disclosure is on the balance');
+    trigger.click();
+    assert.equal(modal.historyOpen, true);
+    assert.equal(facade.calls.ensure, 1);
+    trigger.click();
+    assert.equal(modal.historyOpen, false);
+    assert.equal(facade.calls.ensure, 1, 'closing it asks nothing');
+    // Its rows are in the disclosure, merged with this version's own.
+    assert.match(root.innerHTML, /data-other-version-record="v1:withdrawal:5"/);
+});
+
+test('payment history is drawn again once when the other versions’ list changes, and on no other tick', t => {
+    const facade = historyFacade();
+    const modal = historyModal(t, { facade });
+    let renders = 0;
+    modal.render = () => { renders += 1; modal.renderWithdrawalRecords(); };
+    modal.renderWithdrawalRecords();
+    modal.handleZkapiClock(HISTORY_NOW);
+    assert.equal(renders, 0, 'nothing changed');
+    // The facade's signature moves with a read that changed a row.
+    facade.history.signature = () => 'read-2';
+    facade.ui = { ...facade.ui, historySignature: () => 'read-2' };
+    modal.handleZkapiClock(HISTORY_NOW + 1000);
+    assert.equal(renders, 1);
+    modal.handleZkapiClock(HISTORY_NOW + 2000);
+    assert.equal(renders, 1, 'the same list is not drawn again');
+});
+
+test('opening a version from its row asks the facade for that version, with the reason the row gave', t => {
+    const facade = historyFacade();
+    const modal = historyModal(t, { facade });
+    const root = createMiniDocument().createElement('div');
+    root.innerHTML = modal.renderWithdrawalRecords();
+    modal.overlay = root;
+    modal.noticeVersionOutcome = text => { modal.said = text; };
+    modal.attachHistoryOpen();
+    // Bound once however often the dialog draws.
+    modal.attachHistoryOpen();
+    const button = root.querySelector('[data-zkapi-history-open]');
+    assert.ok(button, 'the way into version 1 is on its row');
+    button.click();
+    assert.deepEqual(facade.calls.switches, [{ reason: 'finish_previous', view: 'withdrawals', prefer: 'v1' }]);
+    // A credited payout asks for the claim.
+    const credit = facade.ui.historyItems && otherVersionRows();
+    assert.ok(credit.length);
+    facade.calls.switches.length = 0;
+    button.dataset.zkapiHistoryReason = 'claim_credit';
+    button.click();
+    assert.deepEqual(facade.calls.switches, [{ reason: 'claim_credit', view: 'withdrawals', prefer: 'v1' }]);
+    // A refusal is said in words, and nothing reloads by itself.
+    facade.requestSwitch = options => { facade.calls.switches.push(options); return { ok: false, why: 'busy' }; };
+    button.click();
+    assert.equal(modal.said, 'Finish the current step first.');
+    // Clicks elsewhere in the dialog do nothing.
+    facade.calls.switches.length = 0;
+    root.append(root.ownerDocument.createElement('p'));
+    root.querySelector('p').click();
+    assert.deepEqual(facade.calls.switches, []);
+});
+
+test('a transaction link takes the network of the row it belongs to', () => {
+    const modal = Object.create(AccountModal.prototype);
+    const original = zkapiClient.config;
+    zkapiClient.config = { funding: { chain_id: 1 } };
+    try {
+        const hash = `0x${'ab'.repeat(32)}`;
+        assert.equal(modal.paymentTransactionUrl(hash), `https://etherscan.io/tx/${hash}`);
+        assert.equal(modal.paymentTransactionUrl(hash, 11155111), `https://sepolia.etherscan.io/tx/${hash}`);
+        assert.equal(modal.paymentTransactionUrl(hash, 1), `https://etherscan.io/tx/${hash}`);
+        // A network that is not known, or a row with none, has no link.
+        assert.equal(modal.paymentTransactionUrl(hash, 999), null);
+        assert.equal(modal.paymentTransactionUrl(hash, null), null);
+        assert.equal(modal.paymentTransactionUrl('javascript:alert(1)', 1), null);
+    } finally { zkapiClient.config = original; }
+});
+
+// ---------------------------------------------------------------------------
+// The panel's count of payouts to claim
+// ---------------------------------------------------------------------------
+
+test('a payout the payment contract holds is "to claim" in the panel, never "returned"', () => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal,
+        withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
+    Object.assign(zkapiClient, { wallet: { has_note: false, note: null }, config: { funding: { chain_id: 1 } },
+        withdrawal: null, lastError: null });
+    const panel = Object.create(RightPanel.prototype);
+    panel.app = { integration: { getTransition: () => null } };
+    panel.escapeHtml = value => String(value ?? '');
+    const history = html => /id="zkapi-panel-withdrawals"[^>]*><span>Payment history<\/span><strong[^>]*>([^<]*)</.exec(html)?.[1] ?? null;
+    const escape = (recordId, extra = {}) => ({ recordId, mode: 'escape', phase: 'closed_unconfirmed', chainStatus: 'closed',
+        finalBalance: 1_000_000, finalizeTransactionHash: `0x${'ab'.repeat(32)}`, payoutVerified: false, ...extra });
+    try {
+        // A returned payout is still "returned".
+        zkapiClient.withdrawals = [escape('paid', { payoutVerified: true })];
+        assert.equal(history(panel.billingSectionHTML()), '1 returned');
+        // A credited one is held for the person to claim.
+        zkapiClient.withdrawals = [escape('held', { payoutCredited: true, creditedAmount: 800_000, payoutCreditEvidence: 'receipt' })];
+        assert.equal(history(panel.billingSectionHTML()), '1 to claim');
+        // Two of them, and a delivered one that is not counted.
+        zkapiClient.withdrawals = [
+            escape('a', { payoutCredited: true }), escape('b', { payoutCredited: true, phase: 'closed' }),
+            escape('claimed', { payoutCredited: true, payoutClaimed: true, payoutVerified: true })
+        ];
+        assert.equal(history(panel.billingSectionHTML()), '2 to claim');
+        // A payout held with no finalization of its own is not an open
+        // withdrawal of the SDK, and is still listed to claim.
+        zkapiClient.withdrawals = [{ recordId: 'cleared', mode: 'escape', phase: 'closed', payoutCredited: true,
+            payoutCreditEvidence: 'vault_credit', creditedAmount: null, finalBalance: 1_000_000 }];
+        assert.equal(zkapiClient.openWithdrawals.length, 0);
+        assert.equal(history(panel.billingSectionHTML()), '1 to claim');
+        // A withdrawal that needs attention is said first.
+        zkapiClient.withdrawals = [escape('held', { payoutCredited: true }), escape('stuck', { phase: 'ambiguous', error: 'no receipt' })];
+        assert.equal(history(panel.billingSectionHTML()), '1 needs attention');
+        // Nothing credited: the label is what it always was.
+        zkapiClient.withdrawals = [];
+        assert.equal(history(panel.billingSectionHTML()), null);
+    } finally { Object.assign(zkapiClient, original); }
+});
+
+// ---------------------------------------------------------------------------
+// The panel's notices of a revision 3 balance
+// ---------------------------------------------------------------------------
+
+test('the panel carries the new notices through its banner, and Withdraw from one opens the dialog’s Withdraw view', async t => {
+    const { createZkapiVersioning } = await import('../../chat/zkapi/versioning/index.js');
+    const { getAdapter } = await import('../../chat/zkapi/versioning/adapters/index.mjs');
+    const { activatedRegistry, resolvedTable } = await import('./_registryFixtures.mjs');
+    const { attachVersionNotices } = await import('../../chat/zkapi/components/VersionNotices.js');
+    const shapes = JSON.parse(fs.readFileSync(new URL('../fixtures/zkapi-v2-real-shapes/snapshots.json', import.meta.url), 'utf8'));
+    const real = structuredClone(shapes.scenarios.near_expiry);
+    const table = resolvedTable(activatedRegistry(), 'mainnet');
+    const version = table.find(row => row.adapter === 'concession-v1');
+    const selection = { version, reason: 'runtime_holds_note', slotOwner: version.id, open: {}, credits: {},
+        foreignDeploymentId: null, depositBlock: null, draftDiscarded: false, slotKind: 'note' };
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawals: zkapiClient.withdrawals,
+        deposits: zkapiClient.deposits, withdrawal: zkapiClient.withdrawal, lastError: zkapiClient.lastError,
+        oaVersioning: zkapiClient.oaVersioning };
+    // Not client fields: they are put back on their own owners below. Putting
+    // them in `original` would assign them onto the client when it is restored.
+    const globalsBefore = { dispatchEvent: globalThis.dispatchEvent, now: Date.now };
+    Object.assign(zkapiClient, { wallet: real.clientSnapshot.wallet, config: real.clientSnapshot.config,
+        withdrawals: real.clientSnapshot.withdrawals, deposits: real.clientSnapshot.deposits, withdrawal: null, lastError: null });
+    Date.now = () => shapes.generatedAtMs;
+    const store = { getItem: () => null, setItem() {}, removeItem() {} };
+    const facade = createZkapiVersioning({
+        buildTable: table, network: 'mainnet', now: () => shapes.generatedAtMs,
+        context: () => ({ table, version, selection, adapter: getAdapter(version.adapter) }),
+        localStorage: store, sessionStorage: store, reload() {}, setTimer: () => null, clearTimer() {}
+    });
+    zkapiClient.oaVersioning = facade;
+    const { createVersionUi: composeUi } = await import('../../chat/zkapi/versioning/ui.js');
+    facade.attach({ client: zkapiClient, runtime: { runtime: real.runtime }, ui: composeUi({ facade }) });
+    const events = [];
+    globalThis.dispatchEvent = event => { events.push(event); return true; };
+    t.after(() => {
+        facade.resetForTests();
+        Object.assign(zkapiClient, original);
+        if (original.oaVersioning === undefined) delete zkapiClient.oaVersioning;
+        globalThis.dispatchEvent = globalsBefore.dispatchEvent;
+        Date.now = globalsBefore.now;
+    });
+    const panel = Object.create(RightPanel.prototype);
+    panel.app = { integration: { getTransition: () => null }, showToast() {} };
+    panel.escapeHtml = value => String(value ?? '');
+    const html = panel.billingSectionHTML();
+    assert.match(html, /data-zkapi-version-banner="panel"/);
+    assert.match(html, /data-zkapi-version-notice="near"/);
+    const { createDocument } = await import('./_miniDom.mjs');
+    const root = createDocument().createElement('div');
+    root.innerHTML = html;
+    attachVersionNotices(root, panel.versionActionContext());
+    const button = root.querySelector('[data-zkapi-version-notice="near"] [data-zkapi-version-action="open-withdraw"]');
+    assert.ok(button, 'the notice offers Withdraw');
+    button.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'zkapi-payment-required');
+    assert.deepEqual(events[0].detail, { view: 'withdraw' });
+});
+
+test('a row of another version says why it cannot be opened yet only when this version holds the wallet', t => {
+    const held = historyModal(t, { facade: historyFacade({ previous: { versionId: 'v1', canOpen: false }, holding: 'note' }) });
+    const heldRow = foreignRows(held.renderWithdrawalRecords()).find(row => /v1:withdrawal:5/.test(row));
+    assert.doesNotMatch(heldRow, /data-zkapi-history-open/);
+    assert.match(heldRow, /First withdraw or finish the balance on this version, then open version 1\./);
+    // Nothing is claimed about the wallet when the state does not say.
+    const unknown = historyModal(t, { facade: historyFacade({ previous: { versionId: 'v1', canOpen: false }, holding: null }) });
+    const unknownRow = foreignRows(unknown.renderWithdrawalRecords()).find(row => /v1:withdrawal:5/.test(row));
+    assert.doesNotMatch(unknownRow, /First withdraw or finish/);
+});
+
+// A balance held by an exit lock with no withdrawal of its own, through the real
+// facade over the SDK's own snapshot (test/fixtures/zkapi-v2-real-shapes): the
+// panel, the composer and the balance control said "Ready to chat" for it. They
+// say frozen, in the words the balance dialog's notice uses, when the version
+// helpers say so, and say what they said before when they do not.
+async function frozenPage(t, { scenario = 'mutual_lock_with_ownership_proof', versioned = true, edit = null } = {}) {
+    const { createZkapiVersioning } = await import('../../chat/zkapi/versioning/index.js');
+    const { getAdapter } = await import('../../chat/zkapi/versioning/adapters/index.mjs');
+    const { activatedRegistry, resolvedTable } = await import('./_registryFixtures.mjs');
+    const { createVersionUi: composeUi } = await import('../../chat/zkapi/versioning/ui.js');
+    const shapes = JSON.parse(fs.readFileSync(new URL('../fixtures/zkapi-v2-real-shapes/snapshots.json', import.meta.url), 'utf8'));
+    const real = structuredClone(shapes.scenarios[scenario]);
+    edit?.(real.clientSnapshot);
+    const table = resolvedTable(activatedRegistry(), 'mainnet');
+    const version = table.find(row => row.adapter === 'concession-v1');
+    const selection = { version, reason: 'runtime_holds_note', slotOwner: version.id, open: {}, credits: {},
+        foreignDeploymentId: null, depositBlock: null, draftDiscarded: false, slotKind: 'note' };
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawals: zkapiClient.withdrawals,
+        deposits: zkapiClient.deposits, withdrawal: zkapiClient.withdrawal, lastError: zkapiClient.lastError,
+        activities: zkapiClient.activities, oaVersioning: zkapiClient.oaVersioning };
+    const nowBefore = Date.now;
+    Object.assign(zkapiClient, { wallet: real.clientSnapshot.wallet, config: real.clientSnapshot.config,
+        withdrawals: real.clientSnapshot.withdrawals, deposits: real.clientSnapshot.deposits, withdrawal: null,
+        lastError: null, activities: [] });
+    Date.now = () => shapes.generatedAtMs;
+    const store = { getItem: () => null, setItem() {}, removeItem() {} };
+    const facade = createZkapiVersioning({
+        buildTable: table, network: 'mainnet', now: () => shapes.generatedAtMs,
+        context: () => ({ table, version, selection, adapter: getAdapter(version.adapter) }),
+        localStorage: store, sessionStorage: store, reload() {}, setTimer: () => null, clearTimer() {}
+    });
+    facade.attach({ client: zkapiClient, runtime: { runtime: real.runtime }, ui: composeUi({ facade }) });
+    if (versioned) zkapiClient.oaVersioning = facade;
+    else delete zkapiClient.oaVersioning;
+    t.after(() => {
+        facade.resetForTests();
+        Object.assign(zkapiClient, original);
+        if (original.oaVersioning === undefined) delete zkapiClient.oaVersioning;
+        Date.now = nowBefore;
+    });
+    return { facade, shapes, setProposal: proposal => { zkapiClient.config = { ...zkapiClient.config, ux_proposal: proposal }; } };
+}
+
+test('a frozen balance is said frozen on the panel, the composer and the balance control, for every proposal', async t => {
+    const { getZkapiExperience, updateZkapiBalanceControl } = await import('../../chat/zkapi/components/ZkapiStateExperience.js');
+    const { versionCopyText: copyText } = await import('../../chat/zkapi/versioning/copy.mjs');
+    const page = await frozenPage(t);
+    const app = { integration: { getTransition: () => null } };
+    assert.notEqual(page.facade.state().exit.frozen, null, 'the facade knows');
+    const detail = copyText('exit.frozen', { });
+    for (const proposal of ['quiet', 'guided', 'activity', 'receipt', 'relay', 'ambient', 'capsule']) {
+        page.setProposal(proposal);
+        const experience = getZkapiExperience(app);
+        assert.equal(experience.proposal, proposal);
+        for (const key of ['primary', 'composerPrimary', 'balancePrimary', 'panelPrimary']) {
+            assert.equal(experience[key].title, 'Balance frozen', `${proposal} ${key}`);
+            assert.equal(experience[key].detail, detail, `${proposal} ${key}`);
+        }
+        // The panel.
+        const panel = renderZkapiPanelExperience(experience);
+        assert.ok(panel, `${proposal}: the panel says something`);
+        assert.match(panel, /Balance frozen/);
+        assert.doesNotMatch(panel, /Withdrawal ready|No transaction is moving|Ready to chat/);
+        // The composer: a chat that cannot start is said where it is typed.
+        const element = composerElement();
+        renderZkapiComposerStatus(element, app);
+        assert.notEqual(element.className, 'hidden', proposal);
+        assert.match(element.innerHTML, /Balance frozen/);
+        assert.doesNotMatch(element.innerHTML, /Withdrawal ready|No transaction is moving|Ready to chat/);
+        assert.equal(element.getAttribute('aria-busy'), 'false');
+        assert.equal(element.dataset.tone, 'waiting');
+        // The balance control: the same dot a withdrawal in motion has, and the same words as its title.
+        const button = { dataset: {}, attributes: new Map(), title: '',
+            querySelector: () => ({ textContent: '' }),
+            setAttribute(name, value) { this.attributes.set(name, value); } };
+        updateZkapiBalanceControl(button, app);
+        assert.equal(button.dataset.status, 'waiting', proposal);
+        assert.equal(button.dataset.phase, 'withdrawal');
+        // (The build's version is named after the words, as it is for every state.)
+        assert.equal(button.title, `Balance frozen. ${detail} · Version 2`);
+    }
+});
+
+test('the right panel’s header calls a frozen balance frozen, not ready', async t => {
+    const page = await frozenPage(t);
+    page.setProposal('quiet');
+    const panel = Object.create(RightPanel.prototype);
+    panel.app = { integration: { getTransition: () => null }, showToast() {} };
+    panel.escapeHtml = value => String(value ?? '');
+    const html = panel.billingSectionHTML();
+    assert.match(html, />Balance frozen</);
+    assert.doesNotMatch(html, />ready</);
+    assert.doesNotMatch(html, /data-private-balance-readiness/, 'the green readiness badge is for a balance that can chat');
+});
+
+test('a frozen balance another device has used says so on the panel, the composer, the balance control and the header', async t => {
+    const { getZkapiExperience, updateZkapiBalanceControl } = await import('../../chat/zkapi/components/ZkapiStateExperience.js');
+    const { versionCopyText: copyText } = await import('../../chat/zkapi/versioning/copy.mjs');
+    const { renderVersionBanner } = await import('../../chat/zkapi/components/VersionNotices.js');
+    const page = await frozenPage(t, { edit: client => { client.config.exit.device_not_newest = true; } });
+    const app = { integration: { getTransition: () => null } };
+    const state = page.facade.state();
+    assert.notEqual(state.exit.frozen, null, 'the lock still holds the balance');
+    assert.equal(state.exit.deviceNotNewest, true);
+    const label = copyText('exit.device.label');
+    const detail = copyText('exit.device');
+    const WITHDRAWABLE = /can still withdraw|Withdrawal ready|Ready to chat|Balance frozen|New chats resume/;
+    // The dialog's banner tells the same balance the device sentence and never
+    // that it can still be withdrawn.
+    const banner = renderVersionBanner(state, { surface: 'dialog', now: page.shapes.generatedAtMs });
+    assert.match(banner, /data-zkapi-version-notice="device"/);
+    assert.doesNotMatch(banner, /data-zkapi-version-notice="frozen"/);
+    assert.doesNotMatch(banner, /can still withdraw/i);
+    for (const proposal of ['quiet', 'guided', 'activity', 'receipt', 'relay', 'ambient', 'capsule']) {
+        page.setProposal(proposal);
+        const experience = getZkapiExperience(app);
+        for (const key of ['primary', 'composerPrimary', 'balancePrimary', 'panelPrimary']) {
+            assert.equal(experience[key].title, label, `${proposal} ${key}`);
+            assert.equal(experience[key].detail, detail, `${proposal} ${key}`);
+            assert.equal(experience[key].blocksSend, true, `${proposal} ${key}`);
+        }
+        const panel = renderZkapiPanelExperience(experience);
+        assert.ok(panel, `${proposal}: the panel says something`);
+        assert.match(panel, new RegExp(label));
+        assert.doesNotMatch(panel, WITHDRAWABLE, proposal);
+        // The composer says why a chat cannot start, where it is typed.
+        const element = composerElement();
+        renderZkapiComposerStatus(element, app);
+        assert.notEqual(element.className, 'hidden', proposal);
+        assert.match(element.innerHTML, new RegExp(label));
+        assert.doesNotMatch(element.innerHTML, WITHDRAWABLE, proposal);
+        assert.equal(element.dataset.tone, 'waiting');
+        const button = { dataset: {}, attributes: new Map(), title: '',
+            querySelector: () => ({ textContent: '' }),
+            setAttribute(name, value) { this.attributes.set(name, value); } };
+        updateZkapiBalanceControl(button, app);
+        assert.equal(button.dataset.status, 'waiting', proposal);
+        assert.equal(button.dataset.phase, 'withdrawal');
+        assert.equal(button.title, `${label}. ${detail} · Version 2`);
+        assert.doesNotMatch(button.title, WITHDRAWABLE);
+    }
+    // The panel's header keeps its amber waiting badge, not the green ready one.
+    page.setProposal('quiet');
+    const header = Object.create(RightPanel.prototype);
+    header.app = { integration: { getTransition: () => null }, showToast() {} };
+    header.escapeHtml = value => String(value ?? '');
+    const html = header.billingSectionHTML();
+    assert.match(html, new RegExp(`>${label}<`));
+    assert.doesNotMatch(html, />ready</);
+    assert.doesNotMatch(html, /data-private-balance-readiness/);
+});
+
+test('a page without the version helpers says what it always said about the same balance', async t => {
+    const { getZkapiExperience } = await import('../../chat/zkapi/components/ZkapiStateExperience.js');
+    const page = await frozenPage(t, { versioned: false });
+    page.setProposal('quiet');
+    const app = { integration: { getTransition: () => null } };
+    const experience = getZkapiExperience(app);
+    assert.equal(experience.primary.phase, 'ready');
+    assert.equal(experience.primary.title, 'Ready to chat');
+    assert.equal(experience.primary.frozen, undefined);
+    const element = composerElement();
+    renderZkapiComposerStatus(element, app);
+    assert.equal(element.className, 'hidden');
+    // A facade that is not versioning-active answers null: the same page.
+    zkapiClient.oaVersioning = { state: () => null };
+    assert.equal(getZkapiExperience(app).primary.title, 'Ready to chat');
+    // And one that throws leaves the page working.
+    zkapiClient.oaVersioning = { state: () => { throw new Error('not now'); } };
+    assert.equal(getZkapiExperience(app).primary.title, 'Ready to chat');
+});
+
+test('a prepared plan on a frozen balance keeps the plan’s words on every surface', async t => {
+    const { getZkapiExperience } = await import('../../chat/zkapi/components/ZkapiStateExperience.js');
+    const page = await frozenPage(t, { scenario: 'escape_lock_released_proof' });
+    page.setProposal('quiet');
+    assert.notEqual(page.facade.state().exit.frozen, null);
+    const experience = getZkapiExperience({ integration: { getTransition: () => null } });
+    for (const key of ['primary', 'composerPrimary', 'balancePrimary', 'panelPrimary']) {
+        assert.equal(experience[key].title, 'Withdrawal paused', key);
+        assert.equal(experience[key].frozen, undefined);
+    }
+});

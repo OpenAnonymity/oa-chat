@@ -9,6 +9,42 @@ import { motionDuration } from '../../ui/uiMotion.js';
 import { getWalletMethod, setWalletMethod, prepareWalletMethod, walletMethodActionBusy } from '../services/walletMethod.mjs';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
 
+// -- Protocol versions --------------------------------------------------------
+// The facade boot attaches to the SDK client answers whether a deposit may
+// start here. Without it (single-version builds, tests) nothing restricts a
+// deposit; a facade that is present but cannot answer fails closed. This file
+// gains no imports for it: it is evaluated by tests with its import lines
+// removed.
+
+function depositGate() {
+    let facade = null;
+    try { facade = zkapiClient.oaVersioning || null; } catch { facade = null; }
+    if (!facade || typeof facade.depositGate !== 'function') return null;
+    try {
+        const gate = facade.depositGate();
+        return gate && typeof gate === 'object' ? gate : { canStart: false, canResume: false, code: null };
+    } catch { return { canStart: false, canResume: false, code: null }; }
+}
+
+// May a deposit start here, or (with a saved one) be finished? A closed
+// version creates no draft, quote or flow, whatever the person types.
+function depositAllowed(hasSaved = false) {
+    const gate = depositGate();
+    return gate === null || gate.canStart === true || (gate.canResume === true && hasSaved === true);
+}
+
+// The ETH left at the funding address of a previous version, from local facts
+// first. Offered only on a build with more than one version, and only when the
+// page has the helpers for it (`ui.rescue`, the funding-address module).
+function retiredRescue() {
+    try {
+        const facade = zkapiClient.oaVersioning;
+        if (!facade || facade.multiVersion !== true) return null;
+        const rescue = facade.ui?.rescue;
+        return rescue && typeof rescue.listRetiredScopes === 'function' ? rescue : null;
+    } catch { return null; }
+}
+
 export function refreshWalletView(owner, { immediate = false } = {}) {
     if (!owner.isOpen || owner.fundingBusy || globalThis.document?.activeElement?.type === 'password') return;
     // Background address/quote updates share the modal's disclosure queue.
@@ -63,6 +99,9 @@ export function stopFundingFlow(owner, { preserveAmount = false } = {}) {
     owner.fundingFeeUpAt = 0;
     owner.disposeFundingHelp?.();
     owner.disposeFundingHelp = null;
+    // A balance read at a previous version's address is a moment's answer.
+    owner.retiredScopes = undefined;
+    owner.retiredChecks = null;
 }
 
 function stopFundingStatus(owner) {
@@ -106,7 +145,8 @@ function canFund(owner) {
     const quotableSaved = !owner.resumeSavedDeposit && canQuotePendingAddressDeposit();
     return getWalletMethod() === 'address' && owner.isOpen && !owner.depositBalanceRefreshPending && !zkapiClient.note
         && (!pending || quotableSaved) && !['withdraw', 'withdrawals'].includes(owner.view)
-        && owner.step !== 'success' && owner.walletMethodReady !== false;
+        && owner.step !== 'success' && owner.walletMethodReady !== false
+        && depositAllowed(Boolean(pending));
 }
 
 export function isFundingViewHydrating(owner) {
@@ -117,7 +157,8 @@ export function isFundingViewHydrating(owner) {
 
 function canSelectAmount(owner) {
     return !zkapiClient.note && !owner.depositBalanceRefreshPending
-        && !['withdraw', 'withdrawals'].includes(owner.view) && !['success', 'redeeming'].includes(owner.step);
+        && !['withdraw', 'withdrawals'].includes(owner.view) && !['success', 'redeeming'].includes(owner.step)
+        && depositAllowed(Boolean(zkapiClient.config?.pending_deposit));
 }
 
 function suggestedAmount(owner) {
@@ -143,6 +184,12 @@ function ensureDepositAmount(owner) {
 // Resolve and validate the selected principal before any wallet authorization.
 // A display-only currency/method switch must never reprice an existing intent.
 export async function prepareDepositAmount(owner) {
+    // Before any quote: a quote saves a draft that pins this version.
+    if (!depositAllowed(Boolean(zkapiClient.config?.pending_deposit))) {
+        throw new Error(depositGate()?.code === 'reload_required'
+            ? 'This page is out of date. Reload to continue.'
+            : 'This version no longer accepts new deposits.');
+    }
     ensureDepositAmount(owner);
     const flow = amountFlow(owner);
     if (!flow) throw new Error('The deposit amount is still loading. Try again shortly.');
@@ -175,7 +222,18 @@ function ensureFundingFlow(owner) {
         return;
     }
     stopFundingStatus(owner);
-    if (owner.fundingFlow) return;
+    if (owner.fundingFlow) {
+        // A flow the deposit gate closed is final only until the gate allows
+        // a deposit again: the flow re-reads the gate itself and restarts
+        // with the amount it last asked for, so a state change that reopens
+        // deposits does not wait for the person to reopen this view. Called on
+        // every pass; it changes nothing while the gate still refuses.
+        const closed = owner.fundingFlow;
+        if (closed.closed && typeof closed.reopenIfAllowed === 'function') {
+            Promise.resolve(closed.reopenIfAllowed()).catch(() => {});
+        }
+        return;
+    }
     const flow = new AddressDepositFlow({
         wallet: addressFundingWallet, client: zkapiClient,
         store: {
@@ -555,6 +613,8 @@ export function renderMetaMaskTransfer(owner) {
 
 export function renderFundingAccount(owner, { destination = true, rows = true, pending = true, receipt: receiptOnly = false } = {}) {
     const native = true;
+    // The funding asset's symbol, read only by the branches of a token flow.
+    const token = 'ETH';
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
     const wallet = addressFundingWallet;
@@ -613,10 +673,17 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     // promising an update that already failed. The poll retries a quote it
     // was asked for; a saved amount that could not be restored waits for input.
     const failed = Boolean(flow?.error);
-    const retrying = failed && Boolean(flow.intent || flow.requestedAmount);
-    const fundingLoading = failed ? 'Estimate unavailable' : flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…';
-    const fundingLoadingNote = failed ? (retrying ? 'Retrying automatically. Changing the amount or its currency also starts a new estimate.' : 'Change the amount or its currency to try again.')
+    // A flow a version closed is final: it does not retry and nothing here may
+    // promise that it will.
+    const closedFlow = Boolean(flow?.closed);
+    const retrying = failed && !closedFlow && Boolean(flow.intent || flow.requestedAmount);
+    const fundingLoading = closedFlow ? 'Deposits are closed' : failed ? 'Estimate unavailable' : flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…';
+    const fundingLoadingNote = closedFlow ? 'Nothing was sent.' : failed ? (retrying ? 'Retrying automatically. Changing the amount or its currency also starts a new estimate.' : 'Change the amount or its currency to try again.')
         : 'The amount to send appears when the estimate is ready.';
+    // With deposits closed and no balance, the address is not a place to send
+    // funds to. Only a withdrawal (or upgrade) needs it, for its fee.
+    const addressHidden = !depositAllowed(Boolean(zkapiClient.config?.pending_deposit)) && !zkapiClient.note
+        && !['withdraw', 'upgrade'].includes(owner.view);
     const showFlowError = failed && !ownerEchoesFlowError(owner, flow);
     const sendUsd = fundingUsdValue(remaining);
     const sendUsdReference = `<span class="zkapi-funding-send-usd">${sendUsd ? `≈ ${escape(sendUsd)} USD` : 'USD estimate unavailable'}</span>`;
@@ -690,7 +757,8 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     // One place at the bottom: a quiet line while waiting, which becomes the
     // Deposit button once enough ETH has arrived. Never a dead, unexplained button.
     const waitLine = text => `<p class="zkapi-funding-wait${reveal.cls}"${reveal.style} role="status">${SPINNER}<span>${text}</span></p>`;
-    const footer = wallet.hasPendingTransaction || failed ? ''
+    const footer = closedFlow ? `<p class="zkapi-helper" role="status">${escape(fundingLoading)}. ${escape(fundingLoadingNote)}</p>`
+        : wallet.hasPendingTransaction || failed ? ''
         : !quoted ? waitLine(escape(fundingLoading))
             : ready ? `<button data-funding-next class="zkapi-primary-button w-full" type="button" ${disabled ? 'disabled' : ''}>Deposit</button>`
                 : displayedRequiredCovered ? `<button class="zkapi-primary-button w-full zkapi-funding-next-pending" type="button" disabled>${SPINNER}<span>Updating network fee…</span></button>`
@@ -702,7 +770,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         ${transfer}
         ${savedFunding && quoted ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. Its fee estimate refreshes before you continue.</p>' : ''}
         ${!quoted && (failed || received) ? balanceLine : ''}
-        ${failed ? `<p class="zkapi-helper">${escape(fundingLoadingNote)}</p>` : ''}
+        ${failed && !closedFlow ? `<p class="zkapi-helper">${escape(fundingLoadingNote)}</p>` : ''}
         ${footer}
         ${showFlowError ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`;
     const addressBalance = owner.fundingFlow ? null : owner.fundingStatus?.ethBalance;
@@ -710,8 +778,9 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     // summary uses the same settled balance as the receipt.
     const knownBalance = funding ? (availableKnown ? available : null) : addressBalance;
     const leftover = /^\d+$/.test(String(knownBalance)) && BigInt(knownBalance) > 0n ? `${escape(sendEthText(knownBalance))} ETH` : '';
-    const receipt = funding ? '' : fundingHelp(owner, 'receipt', 'ETH for network fees',
-        `${renderFundingReceipt(owner)}${address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
+    const receipt = funding ? '' : fundingHelp(owner, 'receipt', addressHidden ? 'ETH left at your funding address' : 'ETH for network fees',
+        `${renderFundingReceipt(owner)}${owner.view === 'upgrade' && ['review', 'withdrawing'].includes(owner.upgradeStage)
+            ? '<p class="zkapi-note">If more ETH is needed for the withdrawal fee, send it to this address from your own wallet first.</p>' : ''}${addressHidden ? '' : address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
         /^\d+$/.test(String(addressBalance)) ? `${escape(sendEthText(addressBalance))} ETH` : '');
     // The withdraw form's "To": one field, like a wallet's send screen.
     const withdrawalDestination = owner.view === 'withdraw' && destination ? `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span>
@@ -743,7 +812,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
                 <div class="zkapi-actions"><button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ${escape(token)}</button><button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ETH</button></div>`}`,
                 '')}
         </div>` : ''}
-
+        ${renderRetiredScopes(owner)}
     </section>`;
 }
 
@@ -822,6 +891,63 @@ function selectAddress(node) {
         selection.removeAllRanges();
         selection.addRange(range);
     } catch { /* The address is still focused and fully visible. */ }
+}
+
+// Leftover ETH at the funding address a previous version used in this browser.
+// The list is local facts; a balance is read only when the person asks, with
+// the privacy sentence in front of the button; a return is signed only after
+// they confirm. Without the helpers (single version, none yet) it is empty.
+function renderRetiredScopes(owner) {
+    const entries = Array.isArray(owner.retiredScopes) ? owner.retiredScopes : [];
+    if (!entries.length || !retiredRescue()) return '';
+    const escape = value => owner.escapeHtml(value);
+    const table = Array.isArray(zkapiClient.oaVersioning?.table) ? zkapiClient.oaVersioning.table : [];
+    const disabled = owner.busy || owner.fundingBusy || addressFundingWallet.hasPendingTransaction ? 'disabled' : '';
+    const compact = value => (/^0x[0-9a-fA-F]{40}$/.test(value || '') ? `${value.slice(0, 6)}…${value.slice(-4)}` : '');
+    return `<details data-funding-details="retired" data-funding-retired><summary>Leftover ETH from a previous version</summary>
+        <p class="zkapi-note">Each version has its own funding address in this browser. ETH left at an older one is still yours. Checking a balance asks the network provider about that older address, which links it to this one there.</p>
+        ${entries.map(entry => {
+        const id = escape(entry.versionId);
+        const row = table.find(version => version?.id === entry.versionId);
+        const name = escape(row?.label || entry.versionId);
+        const check = owner.retiredChecks?.[entry.versionId];
+        const known = check && /^\d+$/.test(String(check.balanceWei));
+        let body;
+        if (entry.unreadable) body = '<p class="zkapi-helper">This saved address could not be read here.</p>';
+        else if (entry.pending) body = `<p class="zkapi-helper">A return from this address is waiting to be confirmed.</p><button data-funding-retired-recover="${id}" class="zkapi-secondary-button" type="button" ${disabled}>Check saved transaction</button>`;
+        else if (known && BigInt(check.balanceWei) > 0n) body = `<p class="zkapi-helper" role="status">ETH at this address: ${renderFundingWei(owner, check.balanceWei)}</p><button data-funding-retired-move="${id}" class="zkapi-secondary-button" type="button" ${disabled}>Move to this address</button>`;
+        else if (known) body = '<p class="zkapi-helper" role="status">Nothing is left at this address.</p>';
+        else body = `<button data-funding-retired-check="${id}" class="zkapi-secondary-button" type="button" ${disabled}>Check balance</button>`;
+        const last = entry.lastReturn?.status === 'confirmed' ? '<p class="zkapi-note">Its last return was confirmed.</p>' : '';
+        return `<section class="zkapi-stack" data-funding-retired-row="${id}">
+            <p class="zkapi-helper">${name} funding address${compact(entry.address) ? ` · ${escape(compact(entry.address))}` : ''}</p>${last}${body}</section>`;
+    }).join('')}
+    </details>`;
+}
+
+// A transaction another version started from this address was settled for
+// good by the network, so the marker that held the ETH back is gone. Said
+// plainly, by how it ended; it was not sent from here.
+function releasedScopeNotice(finalState) {
+    const tail = ' This address can now return its ETH.';
+    if (finalState === 'confirmed') return `The saved transaction from the other version finished.${tail}`;
+    if (finalState === 'reverted') {
+        return `The saved transaction from the other version was reverted by the network. No funds were transferred; the network fee may still have been charged.${tail}`;
+    }
+    if (finalState === 'replaced') return `The saved transaction from the other version was replaced and will not be sent.${tail}`;
+    return `The saved transaction from the other version is settled.${tail}`;
+}
+
+// One read of local facts per open of the funding view; never a balance.
+function loadRetiredScopes(owner) {
+    const rescue = retiredRescue();
+    if (!rescue || getWalletMethod() !== 'address' || !owner.isOpen || owner.retiredScopes !== undefined) return;
+    owner.retiredScopes = null;
+    const table = zkapiClient.oaVersioning.table;
+    Promise.resolve().then(() => rescue.listRetiredScopes({ table })).then(list => {
+        owner.retiredScopes = Array.isArray(list) ? list : [];
+        if (owner.isOpen && owner.retiredScopes.length && !owner.busy && !owner.fundingBusy) refreshWalletView(owner);
+    }, () => { owner.retiredScopes = []; });
 }
 
 export function attachWalletMethodControls(owner) {
@@ -1089,8 +1215,62 @@ export function attachWalletMethodControls(owner) {
         if (partial) setTimeout(() => input('return-eth-amount')?.focus?.({ preventScroll: true }), 120);
     });
     on('return-eth', transferEth);
+    // Leftover ETH at a previous version's funding address. Each button is one
+    // explicit gesture: a balance read, a confirmed return, a saved return's check.
+    const retiredEntry = id => (owner.retiredScopes || []).find(entry => entry.versionId === id);
+    const retiredTable = () => zkapiClient.oaVersioning?.table;
+    root.querySelectorAll('[data-funding-retired-check]').forEach(button => button.addEventListener('click', () => {
+        const rescue = retiredRescue();
+        const entry = retiredEntry(button.dataset.fundingRetiredCheck);
+        if (!rescue || !entry) return undefined;
+        return perform(async () => {
+            const result = await rescue.checkRetiredScopeBalance({ scope: entry.scope, table: retiredTable() });
+            (owner.retiredChecks ||= {})[entry.versionId] = { balanceWei: String(result.balanceWei) };
+        });
+    }));
+    root.querySelectorAll('[data-funding-retired-move]').forEach(button => button.addEventListener('click', () => {
+        const rescue = retiredRescue();
+        const entry = retiredEntry(button.dataset.fundingRetiredMove);
+        const destination = addressFundingWallet.address;
+        if (!rescue || !entry || !destination) return undefined;
+        return perform(async () => {
+            const known = owner.retiredChecks?.[entry.versionId]?.balanceWei;
+            const amount = /^\d+$/.test(String(known)) ? `${formatFundingAmount(known, 18)} ETH` : 'the ETH';
+            if (!globalThis.confirm(`Move ${amount} from this older funding address to this browser’s current funding address? The network fee comes out of that amount.`)) return;
+            const release = await prepareWalletMethod();
+            try {
+                const result = await rescue.sweepRetiredScope({ scope: entry.scope, table: retiredTable(), destination });
+                owner.fundingNotice = `Transfer submitted: ${result.transactionHash}. Check the saved transaction before another transfer.`;
+                // The balance read before the return is no longer true.
+                owner.retiredScopes = undefined;
+                owner.retiredChecks = null;
+            } finally { release?.(); }
+        });
+    }));
+    root.querySelectorAll('[data-funding-retired-recover]').forEach(button => button.addEventListener('click', () => {
+        const rescue = retiredRescue();
+        const entry = retiredEntry(button.dataset.fundingRetiredRecover);
+        if (!rescue || !entry) return undefined;
+        return perform(async () => {
+            const release = await prepareWalletMethod();
+            try {
+                const result = await rescue.recoverRetiredScope({ scope: entry.scope, table: retiredTable() });
+                owner.fundingNotice = result?.status === 'confirmed' ? 'Return confirmed.'
+                    : result?.status === 'reverted'
+                        ? 'Return reverted. No funds were transferred; the network fee may still have been charged. Review the balance before trying again.'
+                        : result?.status === 'released' ? releasedScopeNotice(result.finalState)
+                            : result ? 'Waiting for final network confirmation. Your transaction stays saved; check again later.'
+                                : 'Saved transaction checked.';
+                owner.retiredScopes = undefined;
+                owner.retiredChecks = null;
+            } finally { release?.(); }
+        });
+    }));
     // Defer hydration until the current render has attached every control.
-    queueMicrotask(() => { if (owner.isOpen) ensureDepositAmount(owner); });
+    queueMicrotask(() => {
+        if (owner.isOpen) ensureDepositAmount(owner);
+        loadRetiredScopes(owner);
+    });
 }
 
 /** Keep amount quotes and address polling in step with the view when a

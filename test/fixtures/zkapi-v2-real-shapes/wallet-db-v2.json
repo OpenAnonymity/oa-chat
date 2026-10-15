@@ -1,0 +1,1031 @@
+{
+  "generatedAtMs": 1794744000000,
+  "source": {
+    "sdkVersion": "0.2.0",
+    "circuitId": "zkapi-v2-concession-v1",
+    "setupId": "dev",
+    "sourceRevision": "e9951bacd62c6ae927d06196ad78b45db4f9c492",
+    "files": {
+      "services/browserWalletRuntime.js": "3f4cf69e25017c36f4780083788d36e025a85949469fcca928f5afba419566e9",
+      "services/browserWalletStore.js": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
+      "services/zkapiClient.js": "7f4f5e5041e26f3db34415124edf26812f1270b69b25bad47c21132fd32eebd9",
+      "services/zkapiExitPolicy.mjs": "e32758e461fe7dc3ed27ac91e617be2705de1980d1a30724945113cb7fb93d29",
+      "services/zkapiRequestArchive.mjs": "9006b8bc590e2fe4fbf17e109be6451d4be5bc33031830543ce122fbcc90db2f",
+      "services/zkapiExpiryHistory.mjs": "e544fe00977a0d4f8c9af38c0b5ad59cd09a1cf11879b5cf1c0cb864e3bb79fd",
+      "services/zkapiNativeEth.mjs": "4d2f84b1004b7e0003a2b2af45ac0a1764bbea4d8a814819e7d74f8ad67ad1c5",
+      "services/zkapiRequestCompat.mjs": "53d4c2ceaddc4b1db1145a72cd46e5fa51ca8c06729b871833a699ddb97ed161",
+      "services/zkapiExitKit.mjs": "fc62ab8fe10a1df375bfaa79b91dbd62b4795a00a6e202c7b2c9a2897a45fd48"
+    }
+  },
+  "databaseName": "zkapi-browser-wallet-v1",
+  "deployments": {
+    "current": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+    "previous": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+    "retired": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture"
+  },
+  "vaults": {
+    "current": "0x2222222222222222222222222222222222222222",
+    "previous": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+    "retired": "0x6666666666666666666666666666666666666666"
+  },
+  "notes": [
+    {
+      "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+      "noteId": 5,
+      "story": "deposit, close returned, record sanitized"
+    },
+    {
+      "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+      "noteId": 6,
+      "story": "deposit, close set aside (parked), still open"
+    },
+    {
+      "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+      "noteId": 7,
+      "story": "deposit, expired, claimed by the treasury, archived"
+    },
+    {
+      "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+      "noteId": 8,
+      "story": "deposit, expired, no claim and no close"
+    }
+  ],
+  "dump": {
+    "version": 3,
+    "stores": {
+      "runtime": {
+        "keyPath": null,
+        "autoIncrement": false,
+        "records": {
+          "active": {
+            "version": 1,
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x2222222222222222222222222222222222222222",
+              "note_id": 9,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 2000000,
+              "expiry_ts": 1796472000,
+              "current_balance": 1800000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "journal": null,
+            "pendingDeposit": null,
+            "depositQuote": null,
+            "preparedWithdrawal": null,
+            "exitLock": null,
+            "lease": null,
+            "lateWithdrawalAttempts": [],
+            "lateDepositAttempts": [],
+            "updatedAt": 1794744000000,
+            "billingAsset": "native_eth",
+            "stateSeq": 3
+          }
+        }
+      },
+      "archives": {
+        "keyPath": "archiveId",
+        "autoIncrement": false,
+        "records": {
+          "request-evidence:zkapi-native-eth-mainnet-concession-v1-fixture-v2c:9:0x0000000000000000000000000000000000000000000000000000000000008888": {
+            "archiveId": "request-evidence:zkapi-native-eth-mainnet-concession-v1-fixture-v2c:9:0x0000000000000000000000000000000000000000000000000000000000008888",
+            "type": "request_evidence",
+            "schema": 1,
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "noteId": 9,
+            "anchor": "0x0000000000000000000000000000000000000000000000000000000000007777",
+            "nullifier": "0x0000000000000000000000000000000000000000000000000000000000008888",
+            "sources": ["escape_challenged"],
+            "evidence": {
+              "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "blockNumber": 99,
+              "observedAt": 1794744000000
+            },
+            "disposition": "evidence",
+            "serverObservations": [],
+            "createdAt": 1794744000000,
+            "updatedAt": 1794744000000
+          },
+          "request-journal:zkapi-native-eth-mainnet-concession-v1-fixture-v2c:9:req-history": {
+            "archiveId": "request-journal:zkapi-native-eth-mainnet-concession-v1-fixture-v2c:9:req-history",
+            "type": "request_journal",
+            "schema": 1,
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "noteId": 9,
+            "anchor": "0x0000000000000000000000000000000000000000000000000000000000007777",
+            "nullifier": "0x0000000000000000000000000000000000000000000000000000000000005234",
+            "clientRequestId": "req-history",
+            "source": "prepared",
+            "journal": {
+              "nullifier": "0x5234",
+              "client_request_id": "req-history",
+              "created_at_ms": 1794740400000,
+              "prepared_request": {
+                "client_request_id": "req-history",
+                "public_inputs": {
+                  "request_time": 1794740400
+                },
+                "proof": "SECRET-request-proof"
+              },
+              "user_rerandomization": "SECRET-rerandomization"
+            },
+            "disposition": "pending",
+            "serverObservations": [
+              {
+                "status": "reserved",
+                "context": "recovery",
+                "at": 1794740405000,
+                "seq": 1
+              }
+            ],
+            "createdAt": 1794740400000,
+            "updatedAt": 1794744000000
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:7:1794744000000": {
+            "archiveId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:7:1794744000000",
+            "reason": "expiry-claimed",
+            "archivedAt": 1794744000000,
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+              "note_id": 7,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 2000000,
+              "expiry_ts": 1792152000,
+              "current_balance": 500000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "journal": null,
+            "lease": null,
+            "preparedWithdrawal": null,
+            "pendingDeposit": null
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:8:1794744000000": {
+            "archiveId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:8:1794744000000",
+            "reason": "closed",
+            "archivedAt": 1794744000000,
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+              "note_id": 8,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 2000000,
+              "expiry_ts": 1793880000,
+              "current_balance": 400000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            }
+          }
+        }
+      },
+      "withdrawals": {
+        "keyPath": "recordId",
+        "autoIncrement": false,
+        "records": {
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:2": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:2",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "chainId": 1,
+            "contractAddress": "0x2222222222222222222222222222222222222222",
+            "mode": "escape",
+            "phase": "closed",
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 3000000,
+            "createdAt": 1794484800000,
+            "revision": 2,
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x2222222222222222222222222222222222222222",
+              "note_id": 2,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 5000000,
+              "expiry_ts": 1795608000,
+              "current_balance": 4200000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "withdrawalNullifier": "SECRET-withdrawal-nullifier",
+            "noteId": 2,
+            "payoutVerified": true,
+            "payoutAlert": "concession_exceeded_bound",
+            "stateBalance": "5000000",
+            "concededAtInit": "0",
+            "boundAtState": "1000000",
+            "concededFinal": "2000000",
+            "closeBlockNumber": 90,
+            "chainStatus": "closed",
+            "transactionHash": "0x7777777777777777777777777777777777777777777777777777777777777777",
+            "updatedAt": 1794744000000
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "chainId": 1,
+            "contractAddress": "0x2222222222222222222222222222222222222222",
+            "mode": "escape",
+            "phase": "closed_unconfirmed",
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 800000,
+            "createdAt": 1794484800000,
+            "revision": 2,
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x2222222222222222222222222222222222222222",
+              "note_id": 3,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 5000000,
+              "expiry_ts": 1795608000,
+              "current_balance": 4200000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "withdrawalNullifier": "SECRET-withdrawal-nullifier",
+            "noteId": 3,
+            "payoutCredited": true,
+            "payoutVerified": false,
+            "creditedAmount": 800000,
+            "payoutCreditEvidence": "receipt",
+            "stateBalance": "1000000",
+            "concededAtInit": "200000",
+            "boundAtState": "300000",
+            "concededCurrent": "200000",
+            "concededFinal": "200000",
+            "closeBlockNumber": 100,
+            "lastObservedBlock": 101,
+            "chainStatus": "closed",
+            "startBlockNumber": 90,
+            "finalizedBlockNumber": 95,
+            "transactionHash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+            "updatedAt": 1794744000000
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:4": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:4",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "chainId": 1,
+            "contractAddress": "0x2222222222222222222222222222222222222222",
+            "mode": "escape",
+            "phase": "closed",
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 100000,
+            "createdAt": 1794484800000,
+            "revision": 2,
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x2222222222222222222222222222222222222222",
+              "note_id": 4,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 5000000,
+              "expiry_ts": 1795608000,
+              "current_balance": 4200000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "withdrawalNullifier": "SECRET-withdrawal-nullifier",
+            "noteId": 4,
+            "payoutCredited": true,
+            "payoutVerified": true,
+            "payoutClaimed": true,
+            "payoutClaimEvidence": "claim_receipt",
+            "payoutClaimTransactionHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "payoutClaimBlockNumber": 120,
+            "payoutClaimedAmount": 100000,
+            "creditedAmount": 100000,
+            "closeBlockNumber": 105,
+            "chainStatus": "closed",
+            "transactionHash": "0x6666666666666666666666666666666666666666666666666666666666666666",
+            "updatedAt": 1794744000000
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:6": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:6",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "chainId": 1,
+            "contractAddress": "0x2222222222222222222222222222222222222222",
+            "mode": "escape",
+            "phase": "restored",
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 4000000,
+            "createdAt": 1794484800000,
+            "revision": 2,
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x2222222222222222222222222222222222222222",
+              "note_id": 6,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 5000000,
+              "expiry_ts": 1795608000,
+              "current_balance": 4200000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "withdrawalNullifier": "SECRET-withdrawal-nullifier",
+            "noteId": 6,
+            "chainStatus": "active",
+            "deviceNotNewest": true,
+            "challengeEvidence": {
+              "transactionHash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "blockNumber": 99
+            },
+            "updatedAt": 1794744000000
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:5": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:5",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "chainId": 1,
+            "contractAddress": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+            "mode": "mutual",
+            "noteId": 5,
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 1900000,
+            "transactionHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "closeBlockNumber": 120,
+            "payoutVerified": true,
+            "createdAt": 1789646400000,
+            "closedAt": 1789819200000,
+            "phase": "closed",
+            "clearanceReserved": true,
+            "revision": 2,
+            "updatedAt": 1794744000000,
+            "chainStatus": "closed",
+            "finalizedBlockNumber": 150,
+            "lastObservedBlock": 151,
+            "resolvedStartTransactionHistory": [
+              {
+                "resolution": "closed_finalized",
+                "finalizedBlock": 150,
+                "transactionHashes": ["0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],
+                "transactionAttempts": [],
+                "preparedTransactionAttempts": [],
+                "resolvedClaims": []
+              }
+            ],
+            "startRecoveryPending": false
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:6": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:6",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "chainId": 1,
+            "contractAddress": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+            "mode": "mutual",
+            "phase": "parked",
+            "noteId": 6,
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 3000000,
+            "createdAt": 1793102400000,
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+              "note_id": 6,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 2000000,
+              "expiry_ts": 1795262400,
+              "current_balance": 3000000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "preparedWithdrawal": {
+              "mode": "mutual",
+              "phase": "prepared",
+              "noteId": 6,
+              "destination": "0x3434343434343434343434343434343434343434",
+              "clearanceReserved": true,
+              "operationId": "op-6",
+              "withdrawalNullifier": "0x2a",
+              "proof": "SECRET-proof",
+              "clearance": {
+                "signature": "SECRET-clearance-signature",
+                "withdrawal_nullifier": "0x2a"
+              }
+            },
+            "exitLock": null,
+            "clearanceReserved": true,
+            "withdrawalNullifier": "0x2a",
+            "revision": 1,
+            "updatedAt": 1794744000000
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture:1:0x6666666666666666666666666666666666666666:1": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture:1:0x6666666666666666666666666666666666666666:1",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture",
+            "chainId": 1,
+            "contractAddress": "0x6666666666666666666666666666666666666666",
+            "mode": "mutual",
+            "phase": "closed",
+            "destination": "0x3434343434343434343434343434343434343434",
+            "finalBalance": 77000,
+            "createdAt": 1794484800000,
+            "revision": 2,
+            "state": {
+              "protocol_version": 2,
+              "chain_id": 1,
+              "contract_address": "0x6666666666666666666666666666666666666666",
+              "note_id": 1,
+              "secret_s": "SECRET-secret_s",
+              "deposit_amount": 5000000,
+              "expiry_ts": 1795608000,
+              "current_balance": 4200000,
+              "balance_blinding": "SECRET-balance_blinding",
+              "current_commitment_x": "0x1",
+              "current_commitment_y": "0x2",
+              "current_anchor": "0x1234",
+              "is_genesis": false,
+              "state_signature": {
+                "r": "0x1",
+                "s": "0x2"
+              },
+              "prev_anchor": "0x1233",
+              "bound_at_state": 0,
+              "deposit_path": {
+                "active_root": "0x51",
+                "siblings": ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6", "0x7", "0x8", "0x9", "0x10", "0x11", "0x12", "0x13", "0x14", "0x15", "0x16", "0x17", "0x18", "0x19", "0x20", "0x21", "0x22", "0x23", "0x24", "0x25", "0x26", "0x27", "0x28", "0x29", "0x30", "0x31", "0x32"]
+              }
+            },
+            "withdrawalNullifier": "SECRET-withdrawal-nullifier",
+            "noteId": 1,
+            "payoutVerified": true,
+            "chainStatus": "closed",
+            "transactionHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "updatedAt": 1794744000000
+          }
+        }
+      },
+      "deposits": {
+        "keyPath": "recordId",
+        "autoIncrement": false,
+        "records": {
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:2": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:2",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "operationId": null,
+            "noteId": 2,
+            "amount": 5000000,
+            "expiryTs": 1795608000,
+            "status": "confirmed",
+            "createdAt": null,
+            "confirmedAt": null,
+            "transactionHash": null
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:3": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:3",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "operationId": null,
+            "noteId": 3,
+            "amount": 5000000,
+            "expiryTs": 1795608000,
+            "status": "confirmed",
+            "createdAt": null,
+            "confirmedAt": null,
+            "transactionHash": null
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:4": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:4",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "operationId": null,
+            "noteId": 4,
+            "amount": 5000000,
+            "expiryTs": 1795608000,
+            "status": "confirmed",
+            "createdAt": null,
+            "confirmedAt": null,
+            "transactionHash": null
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:6": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:6",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "operationId": null,
+            "noteId": 6,
+            "amount": 5000000,
+            "expiryTs": 1795608000,
+            "status": "confirmed",
+            "createdAt": null,
+            "confirmedAt": null,
+            "transactionHash": null
+          },
+          "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:9": {
+            "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:9",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+            "operationId": "deposit-op-9",
+            "noteId": 9,
+            "amount": 2000000,
+            "expiryTs": 1796472000,
+            "status": "confirmed",
+            "createdAt": 1794571200000,
+            "confirmedAt": 1794571290000,
+            "transactionHash": "0x8888888888888888888888888888888888888888888888888888888888888888",
+            "feeWei": "2100000000000",
+            "gasUsed": "100000",
+            "effectiveGasPrice": "21000000",
+            "fundingAddress": "0x1111111111111111111111111111111111111111",
+            "receiptBlockNumber": 1000109,
+            "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:5": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:5",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "operationId": "deposit-op-5",
+            "noteId": 5,
+            "amount": 2000000,
+            "expiryTs": 1793016000,
+            "status": "confirmed",
+            "createdAt": 1789560000000,
+            "confirmedAt": 1789560090000,
+            "transactionHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "feeWei": "2100000000000",
+            "gasUsed": "100000",
+            "effectiveGasPrice": "21000000",
+            "fundingAddress": "0x1111111111111111111111111111111111111111",
+            "receiptBlockNumber": 1000105,
+            "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:6": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:6",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "operationId": "deposit-op-6",
+            "noteId": 6,
+            "amount": 2000000,
+            "expiryTs": 1795262400,
+            "status": "confirmed",
+            "createdAt": 1793016000000,
+            "confirmedAt": 1793016090000,
+            "transactionHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "feeWei": "2100000000000",
+            "gasUsed": "100000",
+            "effectiveGasPrice": "21000000",
+            "fundingAddress": "0x1111111111111111111111111111111111111111",
+            "receiptBlockNumber": 1000106,
+            "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:7": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:7",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "operationId": "deposit-op-7",
+            "noteId": 7,
+            "amount": 2000000,
+            "expiryTs": 1792152000,
+            "status": "confirmed",
+            "createdAt": 1788696000000,
+            "confirmedAt": 1788696090000,
+            "transactionHash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+            "feeWei": "2100000000000",
+            "gasUsed": "100000",
+            "effectiveGasPrice": "21000000",
+            "fundingAddress": "0x1111111111111111111111111111111111111111",
+            "receiptBlockNumber": 1000107,
+            "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "expiryClaim": {
+              "transactionHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "blockHash": "0x9999999999999999999999999999999999999999999999999999999999999999",
+              "blockNumber": 777,
+              "claimedAt": 1792238400000,
+              "amount": 2000000
+            }
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:8": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:8",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+            "operationId": "deposit-op-8",
+            "noteId": 8,
+            "amount": 2000000,
+            "expiryTs": 1793880000,
+            "status": "confirmed",
+            "createdAt": 1790424000000,
+            "confirmedAt": 1790424090000,
+            "transactionHash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+            "feeWei": "2100000000000",
+            "gasUsed": "100000",
+            "effectiveGasPrice": "21000000",
+            "fundingAddress": "0x1111111111111111111111111111111111111111",
+            "receiptBlockNumber": 1000108,
+            "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture:deposit:1": {
+            "recordId": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture:deposit:1",
+            "type": "deposit",
+            "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture",
+            "operationId": null,
+            "noteId": 1,
+            "amount": 5000000,
+            "expiryTs": 1795608000,
+            "status": "confirmed",
+            "createdAt": null,
+            "confirmedAt": null,
+            "transactionHash": null
+          }
+        }
+      }
+    }
+  },
+  "sdkViews": {
+    "zkapi-native-eth-mainnet-concession-v1-fixture-v2c": {
+      "deposits": [
+        {
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:9",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "operationId": "deposit-op-9",
+          "noteId": 9,
+          "amount": 2000000,
+          "expiryTs": 1796472000,
+          "status": "confirmed",
+          "createdAt": 1794571200000,
+          "confirmedAt": 1794571290000,
+          "transactionHash": "0x8888888888888888888888888888888888888888888888888888888888888888",
+          "feeWei": "2100000000000",
+          "gasUsed": "100000",
+          "effectiveGasPrice": "21000000",
+          "fundingAddress": "0x1111111111111111111111111111111111111111",
+          "receiptBlockNumber": 1000109,
+          "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:2",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "operationId": null,
+          "noteId": 2,
+          "amount": 5000000,
+          "expiryTs": 1795608000,
+          "status": "confirmed",
+          "createdAt": null,
+          "confirmedAt": null,
+          "transactionHash": null
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:3",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "operationId": null,
+          "noteId": 3,
+          "amount": 5000000,
+          "expiryTs": 1795608000,
+          "status": "confirmed",
+          "createdAt": null,
+          "confirmedAt": null,
+          "transactionHash": null
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:4",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "operationId": null,
+          "noteId": 4,
+          "amount": 5000000,
+          "expiryTs": 1795608000,
+          "status": "confirmed",
+          "createdAt": null,
+          "confirmedAt": null,
+          "transactionHash": null
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:deposit:6",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "operationId": null,
+          "noteId": 6,
+          "amount": 5000000,
+          "expiryTs": 1795608000,
+          "status": "confirmed",
+          "createdAt": null,
+          "confirmedAt": null,
+          "transactionHash": null
+        }
+      ],
+      "expiryRecords": [],
+      "otherDeploymentWithdrawals": [
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:6",
+          "noteId": 6,
+          "mode": "mutual",
+          "phase": "parked"
+        }
+      ],
+      "otherDeploymentCredits": [],
+      "withdrawalIds": ["zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:2", "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3", "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:4", "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:6"]
+    },
+    "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930": {
+      "deposits": [
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:6",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "operationId": "deposit-op-6",
+          "noteId": 6,
+          "amount": 2000000,
+          "expiryTs": 1795262400,
+          "status": "confirmed",
+          "createdAt": 1793016000000,
+          "confirmedAt": 1793016090000,
+          "transactionHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "feeWei": "2100000000000",
+          "gasUsed": "100000",
+          "effectiveGasPrice": "21000000",
+          "fundingAddress": "0x1111111111111111111111111111111111111111",
+          "receiptBlockNumber": 1000106,
+          "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:8",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "operationId": "deposit-op-8",
+          "noteId": 8,
+          "amount": 2000000,
+          "expiryTs": 1793880000,
+          "status": "confirmed",
+          "createdAt": 1790424000000,
+          "confirmedAt": 1790424090000,
+          "transactionHash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+          "feeWei": "2100000000000",
+          "gasUsed": "100000",
+          "effectiveGasPrice": "21000000",
+          "fundingAddress": "0x1111111111111111111111111111111111111111",
+          "receiptBlockNumber": 1000108,
+          "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:5",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "operationId": "deposit-op-5",
+          "noteId": 5,
+          "amount": 2000000,
+          "expiryTs": 1793016000,
+          "status": "confirmed",
+          "createdAt": 1789560000000,
+          "confirmedAt": 1789560090000,
+          "transactionHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "feeWei": "2100000000000",
+          "gasUsed": "100000",
+          "effectiveGasPrice": "21000000",
+          "fundingAddress": "0x1111111111111111111111111111111111111111",
+          "receiptBlockNumber": 1000105,
+          "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:7",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "operationId": "deposit-op-7",
+          "noteId": 7,
+          "amount": 2000000,
+          "expiryTs": 1792152000,
+          "status": "confirmed",
+          "createdAt": 1788696000000,
+          "confirmedAt": 1788696090000,
+          "transactionHash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+          "expiryClaim": {
+            "transactionHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "blockHash": "0x9999999999999999999999999999999999999999999999999999999999999999",
+            "blockNumber": 777,
+            "claimedAt": 1792238400000,
+            "amount": 2000000
+          },
+          "feeWei": "2100000000000",
+          "gasUsed": "100000",
+          "effectiveGasPrice": "21000000",
+          "fundingAddress": "0x1111111111111111111111111111111111111111",
+          "receiptBlockNumber": 1000107,
+          "receiptBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "expiryRecords": [
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:8:expiry",
+          "type": "expiry",
+          "status": "expired",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "noteId": 8,
+          "expiryTs": 1793880000,
+          "createdAt": 1793880000000,
+          "amount": null,
+          "claimedAt": null,
+          "transactionHash": null,
+          "blockHash": null,
+          "blockNumber": null,
+          "detail": "No automatic refund. Expiry alone does not transfer funds."
+        },
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:deposit:7:expiry",
+          "type": "expiry",
+          "status": "claimed",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "noteId": 7,
+          "expiryTs": 1792152000,
+          "createdAt": 1792238400000,
+          "amount": 2000000,
+          "claimedAt": 1792238400000,
+          "transactionHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "blockHash": "0x9999999999999999999999999999999999999999999999999999999999999999",
+          "blockNumber": 777,
+          "detail": "Claimed by the service treasury. This was not a refund."
+        }
+      ],
+      "otherDeploymentWithdrawals": [
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3",
+          "noteId": 3,
+          "mode": "escape",
+          "phase": "closed_unconfirmed"
+        },
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:6",
+          "noteId": 6,
+          "mode": "escape",
+          "phase": "restored"
+        }
+      ],
+      "otherDeploymentCredits": [
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3",
+          "noteId": 3,
+          "chainId": 1,
+          "contractAddress": "0x2222222222222222222222222222222222222222",
+          "destination": "0x3434343434343434343434343434343434343434",
+          "creditedAmount": 800000
+        }
+      ],
+      "withdrawalIds": ["zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:5", "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:6"]
+    },
+    "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture": {
+      "deposits": [
+        {
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture:deposit:1",
+          "type": "deposit",
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-retired-fixture",
+          "operationId": null,
+          "noteId": 1,
+          "amount": 5000000,
+          "expiryTs": 1795608000,
+          "status": "confirmed",
+          "createdAt": null,
+          "confirmedAt": null,
+          "transactionHash": null
+        }
+      ],
+      "expiryRecords": [],
+      "otherDeploymentWithdrawals": [
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3",
+          "noteId": 3,
+          "mode": "escape",
+          "phase": "closed_unconfirmed"
+        },
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:6",
+          "noteId": 6,
+          "mode": "escape",
+          "phase": "restored"
+        },
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+          "recordId": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930:1:0x4386fdbda35d995beb3bf8625118ec5982ec81fe:6",
+          "noteId": 6,
+          "mode": "mutual",
+          "phase": "parked"
+        }
+      ],
+      "otherDeploymentCredits": [
+        {
+          "deploymentId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c",
+          "recordId": "zkapi-native-eth-mainnet-concession-v1-fixture-v2c:1:0x2222222222222222222222222222222222222222:3",
+          "noteId": 3,
+          "chainId": 1,
+          "contractAddress": "0x2222222222222222222222222222222222222222",
+          "destination": "0x3434343434343434343434343434343434343434",
+          "creditedAmount": 800000
+        }
+      ],
+      "withdrawalIds": ["zkapi-native-eth-mainnet-note-bound-v1-retired-fixture:1:0x6666666666666666666666666666666666666666:1"]
+    }
+  }
+}

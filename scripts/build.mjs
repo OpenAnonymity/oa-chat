@@ -6,7 +6,16 @@ import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
-import { buildZkapiAssets, readZkapiBuildConfig, resolveZkapiNetwork, zkapiBuildPlugins, zkapiBuildProvenance } from './zkapiBuild.mjs';
+import {
+    assertZkapiBundleEmission,
+    buildZkapiAssets,
+    planFromRegistry,
+    resolveZkapiNetwork,
+    runtimeVersionTable,
+    verifyPlanOnDisk,
+    zkapiBuildPlugins,
+    zkapiBuildProvenance
+} from './zkapiBuild.mjs';
 import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
 import { injectSentry, resolveSentryConfig } from './sentryBuild.mjs';
 import {
@@ -42,8 +51,19 @@ const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
 const sentryConfig = resolveSentryConfig();
 const zkapiNetwork = resolveZkapiNetwork();
-const zkapiVerifierOrigin = zkapiNetwork
-    ? readZkapiBuildConfig({ network: zkapiNetwork }).trusted_deployment.verifier_url : '';
+const zkapiDeployment = process.env.OA_ZKAPI_DEPLOYMENT || '';
+// The registry is validated before anything is built or cleaned. Null for a
+// ticket-only build, which carries no zkAPI at all.
+const zkapiPlan = zkapiNetwork ? planFromRegistry({ network: zkapiNetwork, deployment: zkapiDeployment }) : null;
+// The OA verifier origin the browser pins at runtime: the one every live
+// version's reviewed profile names (an exact HTTPS origin). Versions of one
+// network sharing an anonymity set must agree, or the build stops here.
+const zkapiVerifierOrigins = new Set(zkapiPlan
+    ? zkapiPlan.versions.map(version => version.config?.trusted_deployment?.verifier_url).filter(Boolean) : []);
+if (zkapiVerifierOrigins.size > 1) {
+    throw new Error('[build] live zkAPI versions pin different verifier origins');
+}
+const zkapiVerifierOrigin = [...zkapiVerifierOrigins][0] || '';
 if (zkapiVerifierOrigin) {
     const origin = new URL(zkapiVerifierOrigin);
     if (origin.protocol !== 'https:' || origin.origin !== zkapiVerifierOrigin || origin.username || origin.password) {
@@ -166,6 +186,11 @@ const collectJsFiles = async (dir) => {
 };
 
 const build = async () => {
+    // Every live SDK must be installed and match its registry pin before
+    // dist/ is wiped, so a broken install never costs the last good output.
+    // The receipt lets buildZkapiAssets skip repeating the same reads below.
+    const zkapiVerification = zkapiPlan ? await verifyPlanOnDisk(zkapiPlan, { repoRoot }) : null;
+
     if (!(await pathExists(path.join(nanomemDir, 'src')))) {
         try {
             execSync('git submodule update --init nanomem', { cwd: repoRoot, stdio: 'pipe' });
@@ -229,7 +254,7 @@ const build = async () => {
 
     const result = await esbuild.build({
         entryPoints,
-        plugins: zkapiBuildPlugins(zkapiNetwork),
+        plugins: zkapiBuildPlugins(zkapiNetwork, zkapiDeployment, { plan: zkapiPlan }),
         bundle: true,
         splitting: true,
         format: 'esm',
@@ -253,6 +278,10 @@ const build = async () => {
         define: {
             '__DEV__': 'false',
             '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
+            // Registry projection. Empty in ticket-only and SDK-default builds
+            // (chat/zkapi/boot.js treats an empty table as the legacy path).
+            '__OA_ZKAPI_VERSIONS__': JSON.stringify(zkapiPlan ? runtimeVersionTable(zkapiPlan) : []),
+            '__OA_ZKAPI_WALLET_DB__': JSON.stringify(zkapiPlan ? zkapiPlan.walletDatabase : ''),
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
             '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
                 sameOriginOrg
@@ -270,6 +299,10 @@ const build = async () => {
         metafile: true,
         logLevel: 'silent'
     });
+
+    // No emitted module may open the SDK default wallet database; every live
+    // store carries the lineage name. Reads what esbuild just wrote.
+    await assertZkapiBundleEmission({ plan: zkapiPlan, metafile: result.metafile, packageRoot: repoRoot });
 
     const outputs = result.metafile.outputs;
     const appEntry = path.resolve(entryPoints.app);
@@ -312,7 +345,10 @@ const build = async () => {
     if (appCssPath) {
         html = html.replace('</head>', `    <link rel="stylesheet" href="${appCssPath}">\n</head>`);
     }
-    const sdkAssets = await buildZkapiAssets({ network: zkapiNetwork, outDir, repoRoot, build: esbuild.build });
+    const sdkAssets = await buildZkapiAssets({
+        network: zkapiNetwork, outDir, repoRoot, build: esbuild.build, deployment: zkapiDeployment, plan: zkapiPlan,
+        verified: zkapiVerification
+    });
     if (zkapiNetwork) {
         // Same fixed path each build, so version it by content: a stale cached
         // sheet otherwise survives a release and the new markup wears old styles.
@@ -380,7 +416,7 @@ const build = async () => {
 
     // Extract content hash from esbuild output filename for update checking
     if (appHash) {
-        const zkapi = await zkapiBuildProvenance({ network: zkapiNetwork, repoRoot, outDir, sdkAssets });
+        const zkapi = await zkapiBuildProvenance({ network: zkapiNetwork, repoRoot, outDir, sdkAssets, plan: zkapiPlan });
         await fs.writeFile(
             path.join(outDir, 'build.json'),
             JSON.stringify({
@@ -397,6 +433,10 @@ const build = async () => {
         );
     }
 
+    if (zkapiPlan?.versions.length) {
+        console.log(`Built zkAPI versions: ${zkapiPlan.versions.map(version => `${version.id} (${version.status})`).join(', ')}; `
+            + `deposits ${zkapiPlan.depositTarget ? `go to ${zkapiPlan.depositTarget}` : 'are unavailable'}`);
+    }
     console.log(`Built app bundle: ${appScriptPath}`);
     if (appCssPath) console.log(`Built app styles: ${appCssPath}`);
     console.log(`Built prelude bundle: ${preludeScriptPath}`);

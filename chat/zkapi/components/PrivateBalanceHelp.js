@@ -1,5 +1,6 @@
 import { fundingDisclosure } from './FundingDisclosures.js';
 import { setDisclosure } from '../../ui/uiMotion.js';
+import { copyTokens, versionCopy } from '../versioning/copy.mjs';
 const HELP = {
     billing: {
         label: 'How private billing works',
@@ -8,8 +9,33 @@ const HELP = {
     expiry: {
         label: 'What happens when my private balance expires?',
         text: 'Withdraw your unused balance before it expires. Funds are not returned automatically. After expiry, the service can claim the full original deposit.'
+    },
+    // Only offered where a build carries more than one protocol version. The
+    // text here is what is true of every such build; the one that names the
+    // person's own version comes from versionHelpDetail (below).
+    version: {
+        label: 'About versions',
+        title: 'About versions',
+        text: 'Your balance stays on the version it was deposited into. New deposits go to the latest version, and a balance can’t move between versions.'
     }
 };
+
+/**
+ * The state-aware text of the `version` help: the version the balance is on,
+ * and, when a newer one takes deposits, what upgrading means. `body` is HTML
+ * made safe by the copy table. Without a state it is the build-wide text.
+ *
+ * @param {object|null} state VersionState
+ * @param {{table?: object[]}} [options]
+ * @returns {{title: string, body: string}}
+ */
+export function versionHelpDetail(state, options = {}) {
+    const title = versionCopy('help.title') || HELP.version.title;
+    if (!state || typeof state !== 'object' || !state.current) return { title, body: HELP.version.text };
+    const newer = state.target && state.target.id !== state.current.id;
+    const body = versionCopy(newer ? 'help.previous' : 'help.current', copyTokens(state, options));
+    return { title, body: body || HELP.version.text };
+}
 
 export function privateBalanceExpiryLabel(client, expiry) {
     const remaining = client.formatExpiry(expiry);
@@ -35,11 +61,16 @@ export function privateBalanceHelpButton(scope, kind, open = false) {
         aria-label="${help.label}" title="${help.label}" aria-expanded="${open ? 'true' : 'false'}" aria-controls="zkapi-${scope}-${kind}-help">?</button>`;
 }
 
-export function privateBalanceHelpContent(scope, kind, open = false) {
+// `detail` ({title, body}) replaces the static text of a kind whose words
+// depend on state (`version`). Both parts are trusted HTML, already escaped by
+// the copy table; a caller never passes operator text here.
+export function privateBalanceHelpContent(scope, kind, open = false, detail = null) {
     const help = HELP[kind];
+    const title = typeof detail?.title === 'string' && detail.title ? detail.title : help.title;
+    const text = typeof detail?.body === 'string' && detail.body ? detail.body : help.text;
     return `<div id="zkapi-${scope}-${kind}-help" data-zkapi-help-content="${kind}" ${open ? '' : 'hidden'}>
         <div class="oa-panel-help mt-2">
-            <p>${help.text}</p>
+            ${title ? `<p class="font-medium text-foreground">${title}</p>` : ''}<p>${text}</p>
         </div>
     </div>`;
 }
@@ -86,7 +117,7 @@ export function attachPrivateBalanceHelp(root, owner) {
             // The System Panel shares OA's controller, including its outside
             // click and Escape handling for key/proxy explanations.
             if (owner.togglePanelHelp) {
-                owner.togglePanelHelp(kind === 'billing' ? 'zkapiBillingHelp' : 'zkapiExpiryHelp');
+                owner.togglePanelHelp({ billing: 'zkapiBillingHelp', expiry: 'zkapiExpiryHelp', version: 'zkapiVersionHelp' }[kind]);
                 return;
             }
             const content = root.querySelector(`[data-zkapi-help-content="${kind}"]`);

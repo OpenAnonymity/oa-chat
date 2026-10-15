@@ -1,7 +1,7 @@
 import { statusIcon } from './StatusIcon.js';
 import { setDisclosure } from '../../ui/uiMotion.js';
 import SharedRightPanel from '../../components/RightPanel.js';
-import { isIndexerLag, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
+import { isIndexerLag, versionRefusalMessage, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { attachZkapiSettlementActions, getZkapiExperience, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
 import { formatModelBudgetUsd, getModelBudget } from '../services/zkapiModelBudget.mjs';
@@ -13,6 +13,19 @@ import {
     privateBalanceExpired, privateBalanceHelpButton, privateBalanceHelpContent,
     restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState
 } from './PrivateBalanceHelp.js';
+import { attachVersionNotices } from './VersionNotices.js';
+import { copyTokens, upgradeBannerKey, versionCopyText } from '../versioning/copy.mjs';
+import { isUnclaimedPayoutCredit } from '../versioning/walletHoldings.mjs';
+
+// The facade's own timer announces every boundary (tier, window, close-by,
+// expiry), so the clock channel only needs to catch what a missed timer
+// would: reading the state at most this often keeps a 1 Hz tick cheap. A
+// patch that asks for a remount gets one per window, so a state that can not
+// settle never turns into a render per tick.
+const VERSION_PATCH_INTERVAL_MS = 5000;
+const VERSION_REMOUNT_INTERVAL_MS = 30000;
+// A one-time reminder toast stays up long enough to read and act on.
+const VERSION_REMINDER_TOAST_MS = 12000;
 
 /**
  * OA's System Panel with its ticket purchase/redemption section replaced by
@@ -25,9 +38,14 @@ export default class RightPanel extends SharedRightPanel {
         this.zkapiUnsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
             this.handleZkapiChange(detail);
         });
-        this.zkapiClockUnsubscribe = zkapiClient.subscribeClock(() => {
-            this.handleZkapiClock();
+        this.zkapiClockUnsubscribe = zkapiClient.subscribeClock(tick => {
+            this.handleZkapiClock(tick?.now);
         });
+        // Protocol versions: the facade speaks only when what a person would
+        // see changed (snapshot, tier boundary, watcher event, late UI).
+        this.versionUnsubscribe = zkapiClient.oaVersioning?.subscribe?.(() => {
+            this.handleVersionChange();
+        }) || null;
         this.usageEstimateUpdateTimer = null;
         this.modelBudgetUnsubscribe = onModelTiersUpdate(() => this.updateUsageEstimate());
     }
@@ -46,11 +64,14 @@ export default class RightPanel extends SharedRightPanel {
     set zkapiBillingHelp(value) { (this.privateBalanceHelpOpen ||= {}).billing = value; }
     get zkapiExpiryHelp() { return Boolean(this.privateBalanceHelpOpen?.expiry); }
     set zkapiExpiryHelp(value) { (this.privateBalanceHelpOpen ||= {}).expiry = value; }
+    get zkapiVersionHelp() { return Boolean(this.privateBalanceHelpOpen?.version); }
+    set zkapiVersionHelp(value) { (this.privateBalanceHelpOpen ||= {}).version = value; }
 
     getHelpDisclosures() {
         return [...super.getHelpDisclosures(),
             ['zkapiBillingHelp', 'zkapi-panel-billing-help', 'zkapi-panel-billing-help-toggle'],
-            ['zkapiExpiryHelp', 'zkapi-panel-expiry-help', 'zkapi-panel-expiry-help-toggle']];
+            ['zkapiExpiryHelp', 'zkapi-panel-expiry-help', 'zkapi-panel-expiry-help-toggle'],
+            ['zkapiVersionHelp', 'zkapi-panel-version-help', 'zkapi-panel-version-help-toggle']];
     }
 
     updateHelpDisclosure(panel, button, open) {
@@ -58,12 +79,153 @@ export default class RightPanel extends SharedRightPanel {
         if (panel?.dataset.zkapiHelpContent) setDisclosure(panel, open);
     }
 
-    handleZkapiClock() {
+    handleZkapiClock(now = Date.now()) {
         const expiry = document.querySelector('#right-panel [data-zkapi-note-expiry]');
         if (expiry && zkapiClient.note) {
             expiry.textContent = privateBalanceExpiryLabel(zkapiClient, zkapiClient.note.expiry_ts);
         }
         updatePrivateBalanceExpiryState(document.querySelector('#right-panel'), zkapiClient.note);
+        this.patchVersionNotices(now);
+    }
+
+    // -- Protocol versions ----------------------------------------------------
+    // Everything below fails open: with no facade (single-version and
+    // SDK-default builds, tests) every answer is "nothing to show" and the
+    // panel renders exactly as it did before versions existed.
+
+    /** The facade of a build that has versions to tell apart, or null. */
+    versionFacade() {
+        const facade = zkapiClient.oaVersioning;
+        return facade && typeof facade.state === 'function' && facade.multiVersion !== false ? facade : null;
+    }
+
+    /**
+     * Whether the facade says this browser holds a balance of the loaded
+     * version that the page can not read (the version's SDK did not start, so
+     * the snapshot has no note: state.held). It is not an empty balance, so
+     * the panel says it is saved instead of "$0.00" and "Add funds". False
+     * without a facade, which keeps every other render as it was.
+     */
+    heldUnreachable(now = Date.now()) {
+        const facade = this.versionFacade();
+        if (!facade) return false;
+        try {
+            const state = facade.state(now);
+            return Boolean(state) && state.held?.unreachable === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /** Which banner surface this panel is showing ('ticket' in OA mode). */
+    versionSurface() {
+        return 'panel';
+    }
+
+    /** {facade, state, ui} when there is something the UI helpers can render. */
+    versionView(now = Date.now()) {
+        const facade = this.versionFacade();
+        if (!facade) return null;
+        try {
+            const state = facade.state(now);
+            const ui = facade.ui;
+            return state && ui ? { facade, state, ui } : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** The pill, its help disclosure and the banner for the System Panel. */
+    versionPieces(now = Date.now()) {
+        const none = { badge: '', help: '', banner: '' };
+        const view = this.versionView(now);
+        if (!view) return none;
+        const { state, ui } = view;
+        const helpOpen = Boolean(this.privateBalanceHelpOpen?.version);
+        try {
+            const badge = ui.badge?.(state, { surface: 'panel', helpOpen }) || '';
+            return {
+                badge,
+                help: badge
+                    ? privateBalanceHelpContent('panel', 'version', helpOpen, ui.help?.('version', state))
+                    : '',
+                banner: ui.banner?.(state, { surface: 'panel', now }) || ''
+            };
+        } catch {
+            // Presentation only: the balance renders without version notices.
+            return none;
+        }
+    }
+
+    versionActionContext() {
+        return {
+            facade: () => zkapiClient.oaVersioning,
+            notify: text => this.app?.showToast?.(text, 'info', 9000),
+            refresh: () => this.refreshVersionNotices()
+        };
+    }
+
+    /** Mount the facade's changes into the visible panel (zkAPI mode). */
+    refreshVersionNotices() {
+        this.renderTopSectionOnly();
+    }
+
+    handleVersionChange() {
+        const pieces = this.versionPieces();
+        const signature = `${pieces.badge}${pieces.help}${pieces.banner}`;
+        if (signature !== (this.renderedVersionSignature || '')) this.refreshVersionNotices();
+        this.remindVersionDeadline();
+    }
+
+    /**
+     * Text-only patch on a clock tick (the pill's tone, wording after a
+     * refresh). A change in structure asks for one remount, rate-limited.
+     */
+    patchVersionNotices(now = Date.now()) {
+        if (!this.versionFacade()) return;
+        if (now - (this.versionPatchedAt || 0) < VERSION_PATCH_INTERVAL_MS) return;
+        const root = document.querySelector('#right-panel');
+        if (!root) return;
+        this.versionPatchedAt = now;
+        const view = this.versionView(now);
+        if (!view || typeof view.ui.patch !== 'function') return;
+        let result;
+        try {
+            result = view.ui.patch(root, view.state, { now, surface: this.versionSurface() });
+        } catch {
+            return;
+        }
+        if (!result?.needsRender) return;
+        if (now - (this.versionRemountedAt || 0) < VERSION_REMOUNT_INTERVAL_MS) return;
+        this.versionRemountedAt = now;
+        this.refreshVersionNotices();
+    }
+
+    /**
+     * One toast per reminder tier, in zkAPI mode only (ticket mode suppresses
+     * zkAPI toasts; the banner is there either way). The tier last shown is
+     * a per-viewer convenience kept by the facade; this panel also remembers
+     * it for its own lifetime, so storage that refuses writes (quota,
+     * restricted mode) cannot turn every state change into another toast.
+     * A lower tier is more urgent, so "already shown" is the lowest of both.
+     */
+    remindVersionDeadline() {
+        const facade = this.versionFacade();
+        if (!facade || this.app?.integration?.getMode?.() === 'tickets') return;
+        try {
+            const state = facade.state();
+            if (!state || !['upgrade-soon', 'upgrade-overdue'].includes(state.phase)) return;
+            const tier = state.reminderTier;
+            if (!Number.isFinite(tier) || tier < 0) return;
+            const shown = [facade.lastReminderTier?.(), this.versionReminderTier].filter(Number.isFinite);
+            if (shown.length && tier >= Math.min(...shown)) return;
+            const key = upgradeBannerKey(state);
+            const text = key ? versionCopyText(key, copyTokens(state, { table: facade.table })) : '';
+            if (!text || typeof this.app?.showToast !== 'function') return;
+            this.versionReminderTier = tier;
+            facade.acknowledgeReminder?.(tier);
+            this.app.showToast(text, 'info', VERSION_REMINDER_TOAST_MS);
+        } catch { /* a reminder is a convenience */ }
     }
 
     onRuntimePresentationChange() {
@@ -198,7 +360,11 @@ export default class RightPanel extends SharedRightPanel {
         const claimed = Boolean(note && zkapiClient.noteExpiryClaim);
         const expired = privateBalanceExpired(note);
         const pendingDeposit = zkapiClient.config?.pending_deposit;
-        const balance = note && !claimed ? zkapiClient.formatMoney(note.current_balance) : '$0.00';
+        // A balance the wallet holds and this page can not read: not empty,
+        // not something to add funds to. Said in words, with no amount.
+        const held = !note && this.heldUnreachable();
+        const balance = held ? this.escapeHtml(versionCopyText('held.label'))
+            : note && !claimed ? zkapiClient.formatMoney(note.current_balance) : '$0.00';
         const used = note
             ? zkapiClient.formatMoney(Math.max(0, Number(note.deposit_amount || 0) - Number(note.current_balance || 0)))
             : '$0.00';
@@ -208,7 +374,16 @@ export default class RightPanel extends SharedRightPanel {
         const hasError = !!zkapiClient.lastError;
         const openWithdrawals = zkapiClient.openWithdrawals;
         const lateWithdrawals = zkapiClient.unresolvedLateWithdrawals;
-        const withdrawalRecoveryCount = openWithdrawals.length + lateWithdrawals.length;
+        // A closed escape whose payout the payment contract only holds is not
+        // a payout returned: it waits for a claim from Payment history. The
+        // SDK lists such a record among the open ones only while it has a
+        // finalization of its own, so they are counted on their own as well
+        // (a legacy record never has one of these, and the count is then
+        // exactly what it was).
+        const toClaim = (Array.isArray(zkapiClient.withdrawals) ? zkapiClient.withdrawals : [])
+            .filter(isUnclaimedPayoutCredit);
+        const withdrawalRecoveryCount = (toClaim.length
+            ? new Set([...openWithdrawals, ...toClaim]).size : openWithdrawals.length) + lateWithdrawals.length;
         const withdrawalStatusLabel = (() => {
             const lateAttention = lateWithdrawals.filter(attempt =>
                 attempt.error || attempt.status === 'receipt_mismatch').length;
@@ -229,6 +404,7 @@ export default class RightPanel extends SharedRightPanel {
                 && record.phase === 'pending'
                 && Number(record.challengeDeadline || 0) * 1000 <= Date.now()).length;
             if (ready) return `${ready} ready`;
+            if (toClaim.length) return `${toClaim.length} to claim`;
             const waiting = openWithdrawals.filter(record => record.phase !== 'closed_unconfirmed');
             if (waiting.length) return `${waiting.length} waiting`;
             return `${openWithdrawals.length} returned`;
@@ -265,6 +441,11 @@ export default class RightPanel extends SharedRightPanel {
         const actionableStatus = !claimed && !hasError && experience.primary.tone !== 'error' && actionableState;
         const quietProgress = badgeBusy || walletWaiting || depositStatus || actionableStatus;
         const statusSpinning = badgeBusy || walletWaiting || (depositStatus && pendingDeposit?.phase === 'submitted');
+        // Version pill, its help and the upgrade banner: all '' unless the
+        // build has versions to tell apart (then they are keyed fragments the
+        // clock channel patches as text).
+        const version = this.versionPieces();
+        this.renderedVersionSignature = `${version.badge}${version.help}${version.banner}`;
 
         return `
             <div class="p-3">
@@ -272,27 +453,27 @@ export default class RightPanel extends SharedRightPanel {
                     <div class="flex items-center gap-1.5">
                         <svg class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m3-9.5C15 7.12 13.66 6 12 6S9 7.12 9 8.5 10.34 11 12 11s3 1.12 3 2.5S13.66 16 12 16s-3-1.12-3-2.5M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>
                         <span class="text-xs font-medium">Private balance: <span class="font-semibold">${balance}</span></span>
-                        ${privateBalanceHelpButton('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
+                        ${privateBalanceHelpButton('panel', 'billing', this.privateBalanceHelpOpen?.billing)}${version.badge}
                     </div>
 
                 </div>
                 ${!hasError && experience.primary.tone === 'error' ? `<div class="zkapi-wallet-status" role="status">${statusIcon('attention')}<span>Needs attention</span></div>` : ''}
                 ${quietProgress ? `<div class="zkapi-wallet-status" role="status"><span class="${statusSpinning ? 'zkapi-pill-spinner' : 'zkapi-wallet-status-dot'}" aria-hidden="true"></span><span>${this.escapeHtml(statusBadge)}</span></div>` : ''}
-                ${privateBalanceHelpContent('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
+                ${privateBalanceHelpContent('panel', 'billing', this.privateBalanceHelpOpen?.billing)}${version.help}
                 <div class="mt-3 h-1 overflow-hidden rounded-full bg-muted"><div class="zkapi-panel-bar-fill h-full rounded-full transition-all" style="width:${percent}%"></div></div>
-                <div class="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>${claimed ? 'Claimed after expiry' : `${used} used`}</span><span class="inline-flex items-center gap-1"><span ${note ? 'data-zkapi-note-expiry' : ''}>${note ? privateBalanceExpiryLabel(zkapiClient, note.expiry_ts) : pendingDeposit ? 'Deposit in progress' : 'Add funds to chat'}</span>${note ? privateBalanceHelpButton('panel', 'expiry', this.privateBalanceHelpOpen?.expiry) : ''}</span></div>
+                ${held ? '' : `<div class="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>${claimed ? 'Claimed after expiry' : `${used} used`}</span><span class="inline-flex items-center gap-1"><span ${note ? 'data-zkapi-note-expiry' : ''}>${note ? privateBalanceExpiryLabel(zkapiClient, note.expiry_ts) : pendingDeposit ? 'Deposit in progress' : 'Add funds to chat'}</span>${note ? privateBalanceHelpButton('panel', 'expiry', this.privateBalanceHelpOpen?.expiry) : ''}</span></div>`}
                 ${note ? privateBalanceHelpContent('panel', 'expiry', this.privateBalanceHelpOpen?.expiry) : ''}
                 <div data-chat-usage-estimate class="mt-2 rounded-md bg-muted/50 px-2 py-1.5 ${usage.visible ? '' : 'hidden'}" title="Running model-usage estimate. OpenRouter's reported cost is used when available; zkAPI settlement is final.">
                     <div class="flex items-center justify-between gap-2 text-[10px]"><span class="text-muted-foreground">Estimated this chat</span><strong data-chat-usage-cost class="font-medium text-foreground">${this.escapeHtml(usage.costLabel)}</strong></div>
                     <div class="mt-1 flex items-center justify-between gap-2 text-[9px] text-muted-foreground"><span data-chat-usage-tokens>${this.escapeHtml(usage.tokenLabel)}</span></div>
                 </div>
-                ${experienceHtml}
+                ${version.banner}${experienceHtml}
                 ${withdrawalRecoveryCount ? `<button id="zkapi-panel-withdrawals" class="btn-ghost-hover mt-2 flex w-full items-center justify-between rounded-md bg-muted/40 px-2.5 py-2 text-[10px] text-muted-foreground transition-colors" type="button"><span>Payment history</span><strong class="font-medium text-foreground">${withdrawalStatusLabel}</strong></button>` : ''}
                 <div class="mt-3 grid ${note && !claimed ? 'grid-cols-2' : 'grid-cols-1'} gap-1.5">
-                    <button id="zkapi-panel-fund" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">${note ? 'Balance details' : pendingDeposit ? 'Deposit status' : 'Add funds'}</button>
+                    <button id="zkapi-panel-fund" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">${note || held ? 'Balance details' : pendingDeposit ? 'Deposit status' : 'Add funds'}</button>
                     ${note && !claimed ? '<button id="zkapi-panel-withdraw" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">Withdraw</button>' : ''}
                 </div>
-                ${hasError ? `<p class="zkapi-balance-error" role="status">${statusIcon()}<span>${this.escapeHtml(zkapiClient.lastError.message)}</span></p>` : ''}
+                ${hasError && !held ? `<p class="zkapi-balance-error" role="status">${statusIcon()}<span>${this.escapeHtml(versionRefusalMessage(zkapiClient.lastError) ?? zkapiClient.lastError.message)}</span></p>` : ''}
             </div>
         `;
     }
@@ -329,9 +510,12 @@ export default class RightPanel extends SharedRightPanel {
         super.attachTopSectionEventListeners();
         attachZkapiSettlementActions(document.querySelector('#right-panel'), this.app);
         attachPrivateBalanceHelp(document.querySelector('#right-panel'), this);
+        if (this.versionFacade()) {
+            attachVersionNotices(document.querySelector('#right-panel'), this.versionActionContext());
+        }
         document.getElementById('zkapi-panel-fund')?.addEventListener('click', () => {
             window.dispatchEvent(new CustomEvent('zkapi-payment-required', {
-                detail: { view: zkapiClient.note ? 'balance' : 'fund' }
+                detail: { view: zkapiClient.note || this.heldUnreachable() ? 'balance' : 'fund' }
             }));
         });
         document.getElementById('zkapi-panel-withdraw')?.addEventListener('click', () => {
@@ -378,6 +562,8 @@ export default class RightPanel extends SharedRightPanel {
         this.zkapiUnsubscribe = null;
         this.zkapiClockUnsubscribe?.();
         this.zkapiClockUnsubscribe = null;
+        this.versionUnsubscribe?.();
+        this.versionUnsubscribe = null;
         this.modelBudgetUnsubscribe?.();
         this.modelBudgetUnsubscribe = null;
         super.destroy();

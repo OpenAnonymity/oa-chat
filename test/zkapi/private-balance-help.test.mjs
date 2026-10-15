@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
     privateBalanceExpired, privateBalanceGuide, privateBalanceHelpButton, privateBalanceHelpContent,
-    restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState
+    restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState, versionHelpDetail
 } from '../../chat/zkapi/components/PrivateBalanceHelp.js';
 
 function helpRoot(scope = 'panel') {
@@ -169,4 +169,58 @@ test('private panel help uses OA exclusivity across billing, expiry, key and pro
     assert.equal(panel.showProxyInfo, true);
     panel.setOpenHelp();
     assert.equal(panel.showProxyInfo, false);
+});
+
+// The version help is a third kind. Its ids follow the same pattern, and the
+// billing and expiry kinds above are untouched by it.
+test('the version help kind has its own accessible control and state-aware words', () => {
+    for (const scope of ['panel', 'modal']) {
+        const button = privateBalanceHelpButton(scope, 'version', false);
+        assert.match(button, new RegExp(`id="zkapi-${scope}-version-help-toggle"`));
+        assert.match(button, /data-zkapi-help="version"/);
+        assert.match(button, /type="button"/);
+        assert.match(button, /aria-expanded="false"/);
+        assert.match(button, new RegExp(`aria-controls="zkapi-${scope}-version-help"`));
+        assert.match(button, /aria-label="About versions"/);
+        assert.match(button, /focus-visible:ring-2/);
+        assert.match(privateBalanceHelpContent(scope, 'version'), /data-zkapi-help-content="version" hidden>/);
+        assert.match(privateBalanceHelpButton(scope, 'version', true), /aria-expanded="true"/);
+    }
+    // Without a state: what is true of every build with more than one version.
+    const generic = privateBalanceHelpContent('panel', 'version', true);
+    assert.match(generic, /About versions/);
+    assert.match(generic, /can’t move between versions/);
+    assert.doesNotMatch(generic, / hidden>/);
+    // With a state: the version the balance is on.
+    const previous = versionHelpDetail({ current: { id: 'v1', label: 'Version 1' }, target: { id: 'v2', label: 'Version 2' } });
+    assert.equal(previous.title, 'About versions');
+    assert.match(previous.body, /Your balance is on version 1\. It keeps working, but new deposits go to version 2/);
+    const latest = versionHelpDetail({ current: { id: 'v2', label: 'Version 2' }, target: { id: 'v2', label: 'Version 2' } });
+    assert.match(latest.body, /Your balance is on version 2, the latest version\./);
+    assert.match(privateBalanceHelpContent('modal', 'version', true, previous), /new deposits go to version 2/);
+    // A label is escaped, never markup.
+    const hostile = versionHelpDetail({ current: { id: 'v1', label: 'Version <img src=x>' }, target: null });
+    assert.doesNotMatch(hostile.body, /<img/);
+    // The existing kinds are not changed by the third.
+    assert.match(privateBalanceHelpContent('panel', 'billing'), /private prepaid balance/);
+});
+
+test('the version help toggles like the others, independently', () => {
+    const root = helpRoot();
+    const listeners = new Map();
+    const extra = { id: 'zkapi-panel-version-help-toggle', dataset: { zkapiHelp: 'version' }, attributes: new Map(),
+        addEventListener: (type, listener) => listeners.set(type, listener), setAttribute(name, value) { this.attributes.set(name, value); } };
+    const panel = (() => { const classes = new Set(['hidden']); return { hidden: true, inert: true, classList: {
+        toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: name => classes.has(name) } }; })();
+    const owner = {};
+    attachPrivateBalanceHelp({
+        querySelectorAll: () => [...root.buttons, extra],
+        querySelector: selector => (selector.includes('"version"') ? panel : root.querySelector(selector))
+    }, owner);
+    listeners.get('click')();
+    assert.equal(owner.privateBalanceHelpOpen.version, true);
+    assert.notEqual(owner.privateBalanceHelpOpen.billing, true);
+    assert.equal(panel.hidden, false);
+    assert.equal(extra.attributes.get('aria-expanded'), 'true');
+    assert.equal(root.content.billing.hidden, true, 'billing stays as it was');
 });

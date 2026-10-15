@@ -571,6 +571,7 @@ network layer, the following metadata vectors exist and should be mitigated:
 | CLI key reuse | The default 60-second fixed window shares one credential across eligible calls, including unrelated chats and local clients. The provider can link those calls, and they share the original aggregate cap. Set `key_reuse_window_seconds` to 0 for a fresh key per call; this does not hide IP addresses or prompt content. |
 | Browser User-Agent | Standard browser fingerprinting concern; use a common browser or randomize UA.                                                                                                                                       |
 | Account sync metadata | For Google and username accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. A username also exposes the chosen stable pseudonym during authentication. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
+| zkAPI version cohort | When more than one zkAPI protocol version is built, the host that serves the app can see which version's asset paths and proxy route a browser requests (`/zkapi/**` versus `/zkapi/v2c/**`, `/zkapi-deployment/` versus `/zkapi-deployment-v2c/`) together with IP and time. Provider-visible headers and request parameters are identical across versions. See [Multi-version zkAPI payments](#multi-version-zkapi-payments). |
 
 
 These vectors do not reveal prompt contents or break the blind-signature proof,
@@ -685,3 +686,200 @@ covered setting name and direction relative to its built-in default are reported
 the previous and next values stay in the browser. No preference census, user
 history, identity, model selection or content is sent. See
 [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for scope and exclusions.
+
+## Multi-version zkAPI payments
+
+Several zkAPI protocol versions can be built into one app (see
+[ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md) and
+[ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md#version-registry-and-lineage)). Today the
+registry has one live version per network and a dormant second version, so none
+of the version-specific behavior below runs; this section records what it does
+once a second version is live and what it does not hide. The host behaviors
+that second protocol needs (the service pause, the settling-chat disclosure,
+credited payouts, the exit kit, the other versions' history, giving up a
+balance) are implemented and are covered by the same rules. Sponsored
+withdrawals (the network fee paid from the withdrawal through the operator's
+relay) are implemented too and have their own subsection below.
+
+**Version selection is local.** A tab decides which SDK build to load from this
+browser's own wallet database (a read-only IndexedDB probe) and one validated
+one-shot hint in `sessionStorage`. No URL, hash, query parameter, `localStorage`
+preference or server response chooses it, and there is no version beacon: no
+request, query parameter, hash, header or body field carries a version
+identifier, and no `/version` request exists (the stylesheet's `?v=` is a
+content hash common to every build). The one signal is which paths the browser
+fetches: only the selected build's assets are requested, so the static host
+sees `/zkapi/v2c/**` for the newer build and `/zkapi/**` for the older one, and
+the proxy path `/zkapi-deployment-v2c/` or `/zkapi-deployment/`, with IP and
+time (see the table below). The probe's results (note ids, modes, phases) are
+memory-only; they are never logged, put in a URL or sent anywhere. The switch
+hint, the loop-guard
+log (`oa-zkapi-version-switch*`) and the upgrade intent (`oa-zkapi-upgrade-v1`,
+version ids and a stage only) are browser-local, are not in the account-sync
+allowlist and are never written into chats, exports or shares. A test pins the
+switch-protocol keys out of `chat/services`.
+
+**What the split reveals**
+
+| Party | Can distinguish versions? |
+| --- | --- |
+| Inference provider | No. Provider-visible request headers are rebuilt from an allowlist (`authorization`, `content-type`, `http-referer` set to the page origin, and a constant `x-title: oa-chat`) because the SDK generations send different sets (`x-title` is `oa-chat` in one and `zkAPI` in another). The registry also requires the inference base and request charge cap to be equal across live versions. A local-daemon access, whose request goes to the daemon rather than the provider, is left untouched. |
+| zkAPI service operator | Each version has its own vault, service base URL (its own hostname, or the same hostname under a path prefix) and proxy path, so an operator sees the users of its own deployment, as before. The anonymity set is split per vault: early users of a new version share a smaller set than the whole population. The app shows no set sizes and does not claim otherwise. |
+| Chain observers | Deposits and withdrawals are public per vault, as before. |
+| Static host or reverse proxy serving the app | Yes, by cohort. It sees whether a browser fetches `/zkapi/**` or `/zkapi/v2c/**` assets and which proxy route it uses, with IP and time. The SDK worker fetches proving keys with `credentials: 'same-origin'` and `cache: 'force-cache'` and loads its WASM through the default same-origin fetch, so cookies set on the app's own origin may accompany those requests; protocol, manifest and configuration requests use `credentials: 'omit'`. This change does not alter the SDK workers' credential mode (a patch was considered and declined because it would change the emitted assets of the live deployment). |
+
+Versioned builds add requests only to the app's own host: a no-store,
+credentials-omitted fetch of the served `browser-config.json` at boot (compared
+with the embedded hash) and a `/build.json` poll, the endpoint the app's update
+check already uses, every five minutes while the tab is visible and when it
+becomes visible. Neither carries wallet data. A build whose registry has one
+`active` version and nothing else (today's state) makes neither of these two
+requests; the app's own update check, which polls `/build.json` in every build,
+is unchanged.
+
+**Upgrading is publicly linkable.** Moving a balance to a newer version is a
+public withdrawal from the old vault followed by a public deposit into the new
+one. Both are ordinary Ethereum transactions that anyone can link by address,
+amount and time, and the upgrade review says so before it starts. Practical
+consequences:
+
+- The saved upgrade intent holds only version ids and a stage, so no amount is
+  carried into the deposit step, which is the ordinary funding flow. The exact
+  leftover balance is the easiest value to match between the two transactions;
+  the app does not suggest it.
+- A Send Ethereum user can choose a new browser-held funding address as the
+  withdrawal destination, only by an explicit click and with a warning that
+  this browser alone holds its key. That keeps the ETH reachable, but the same
+  address then appears on both sides of the upgrade. Depositing from a different
+  address, with a different amount and after a delay, makes the link less
+  obvious; it does not remove it.
+- Typed destinations may not be the current vault, a registry vault or this
+  browser's own funding address (funds sent there would be reachable only
+  through a scope the next version no longer shows).
+
+**Leftover ETH at a previous version's funding address.** Funding addresses are
+scoped per vault, so after an upgrade the older address can still hold ETH. The
+app lists those addresses from local data only. Reading a balance is an RPC
+request that ties that address to the RPC provider's view of the user's IP and
+time, so it happens only on an explicit **Check balance**, **Move to this
+address** or **Check saved transaction** action, once per click, with no timers
+or caching. The "Leftover ETH from a previous version" disclosure says, before
+the button, that checking links the older address to the current one at the
+provider. Returning the ETH reuses the same transport and signing rules as any
+other return.
+
+**Exit kit, other versions' history and giving up a balance.** These touch only
+local state, except where stated.
+
+- An exit kit is a user-initiated encrypted file that can move the whole
+  balance to any address. It is created in the browser with a generated 100-bit
+  passphrase (no person-chosen one), shown once and retyped; the key derivation
+  is local, so creating one makes no request. The passphrase and the file text
+  are never stored, logged, synced, placed in an activity record or written to
+  a clipboard (there is no Copy button: clipboards are read by managers and
+  synced between devices), and the file is saved by the person's own click.
+  This app cannot open a kit; that is the companion tool's job. The SDK can use
+  an exit RPC address of the person's own that it keeps in its own
+  `localStorage` key `zkapi-exit-rpc-url`; the app offers no way to set one and
+  never reads, writes or logs it, and because the SDK itself calls that
+  address, those reads do not go through the app's network proxy and that RPC
+  provider sees the user's IP and the time.
+- The payment history of the other versions is read from the shared wallet
+  database by a read-only, version-less IndexedDB transaction over the deposits
+  and withdrawals stores. It never loads the slot (note secrets, plans,
+  journals) or the archives, reads each store with a cursor and projects an
+  allowlist of public fields from every record as it arrives (so no more than
+  one raw record is held), keeps the rows in memory and makes no request.
+  Another version's note ids, destinations and hashes are public chain data,
+  but they tie this browser to them, so they are never logged, put in a URL or
+  sent anywhere.
+- Giving up a zero or dust balance retires the note through the SDK's own
+  archive transaction under the wallet lock. Nothing is sent, nothing is
+  deleted, and the secret stays in the SDK's `archives` store. It is an explicit
+  confirmed action, never automatic.
+- Claiming a credited payout is one ordinary public Ethereum transaction that
+  any account may send; it publicly ties the sending account to the credited
+  destination. The app offers it as an explicit action on the held payout's
+  row in Payment history and never claims on its own.
+
+**Limits.** The version a user holds is inherent in using that version's vault
+and is visible to its operator and on chain. A tab still running pre-rollout
+JavaScript is outside these controls. Operator-supplied notices and service
+messages are escaped and truncated, never rendered as links or instructions.
+
+### Sponsored withdrawals: the network fee paid from the withdrawal
+
+A withdrawal can pay its network fee out of its own payout, so the person
+needs no ETH to leave. This is implemented and **dormant**: the form offers it
+only when a reviewed profile pins a paymaster and a relay for the loaded
+version, and no shipped profile does yet. Details and the signer's rules:
+[ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal).
+
+What it adds, and to whom:
+
+| Party | What it can see when a person chooses this way of paying |
+| --- | --- |
+| The operator's relay (a bundler) | The signed operation before the network does: the note's proof, the holding address the payout goes to, the signing account (its owner), the receiving address, the fee fields and the time. It is the operator's own service, reached through the app, and it learns the person's IP only as the app's host forwards it (whatever the host forwards for the operator's proxy path). The withdrawal's amount and receiving address are public on chain anyway; what the relay adds is the earlier sight and the timing. |
+| The app's host or reverse proxy | That this browser used the relay route (`<proxyPath>_bundler`), with IP and time, as it sees the operator's proxy path. The app's own code keeps no copy of the operation (the SDK journals its own in the local wallet database). |
+| Chain observers | A holding account (CREATE2, owned by the signing account, paying the receiving address) and the paymaster's fee. The signing account is tied to the receiving address publicly, exactly as the sender of an ordinary exit transaction is. |
+| The inference provider | Nothing. |
+
+Rules the app keeps:
+
+- The page never contacts the relay directly. It uses the app's own route,
+  which the generated hosting configuration forwards to the one URL the
+  reviewed profile pins. There is no person-chosen relay (that would route a
+  request around the app's proxy).
+- The relay is contacted only after the person chose "Paid from this
+  withdrawal": asking for a quote and starting the withdrawal are the two
+  contacts, and opening the form sends nothing. The form says, before
+  anything is sent, that the withdrawal goes through this app to the service's
+  relay and that the relay sees it and the receiving address.
+- Paying from the wallet stays the default and is always offered beside it; an
+  unavailable quote says why and keeps the wallet.
+- The Send Ethereum key signs a hash without a prompt, so the host judges each
+  operation where it would leave the browser (payee, note, mode, concession,
+  fee cap and cost against what the person confirmed, the pinned contracts
+  and the signing address) and refuses anything else with nothing sent. The
+  MetaMask method shows the wallet's own signature request for an opaque hash
+  and the host cannot verify the operation before it is signed in that method;
+  that gap is stated, and a proposed upstream hook would close it.
+- A record of such a withdrawal is read from the local wallet database like any
+  other: the allowlist gained six fields, the signed operation bodies are not
+  read, and the rows stay in memory.
+
+**Limits.** The relay is a service of the operator, so it can refuse, delay or
+log; a refused or delayed withdrawal can always be started again from the
+wallet. If the receiving address is a contract that rejects a plain ETH
+payment, the payout is held at the paymaster for that address to claim by one
+ordinary public transaction, which ties the sending account to it.
+
+### Proof setup trust: single-party development setup
+
+The payment protocol's proofs are Groth16 proofs, which are sound only if nobody
+knows the toxic waste of the setup the proving and verifying keys came from. A
+multi-party ceremony (`mpc-1`) needs one honest participant in each phase. The
+single-party development setup (`dev`) rests on the one party that generated it.
+Whoever holds the toxic waste of a vault's keys can forge proofs the vault's
+verifier and the operator's server accept: mint balance (service no deposit paid
+for), defeat an honest user's exit, and take deposits out of the vault. In
+upstream's terms the user's funds-safety guarantee and the operator's payment
+guarantee both fail. This is a soundness assumption on the vault's setup. It is
+separate from what a request reveals to the provider, the operator and the
+static host, which the rest of this section describes.
+
+The host accepts `mpc-1` and `dev` identically on Sepolia and on mainnet, by
+owner decision. It reports `dev` where an operator looks (a warning per live
+version in the build, `proofSetup` in `build.json`, a warning from the registry
+check) and does not block it. The app does not tell the person using it: a
+version on `dev` looks the same as one on `mpc-1`. Upstream, outside this
+repository, a single-party vault is an explicit opt-in at each step (the vault
+deployment script, the operator images and the exit-kit companion build take
+`ALLOW_DEV_SETUP=1`, the SDK package's build no longer refuses `dev` for
+mainnet since `4b955d9`, and default and release builds still accept only the
+pinned `mpc-1` keys); the guide lists each with its source. A vault deployed on
+`dev` keys cannot be switched to `mpc-1`:
+moving later is a new vault and a user migration, which is a public withdrawal
+and deposit and is linkable as described under upgrading. Version 1's repaired
+setup is also single-party (see [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md)).
+Details: [ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md#single-party-development-proof-setup-known-limitation).

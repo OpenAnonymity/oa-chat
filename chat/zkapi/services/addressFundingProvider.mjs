@@ -1,9 +1,14 @@
-import { Wallet, Transaction, getAddress, keccak256, formatEther } from 'ethers';
+import { Wallet, Transaction, getAddress, getBytes, keccak256, formatEther } from 'ethers';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import browserWalletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { browserSdkTransport } from '@openanonymity/zkapi-browser-sdk/configure';
 import { bufferedGasLimit, MAX_TRANSACTION_GAS_LIMIT as MAX_GAS } from '@openanonymity/zkapi-browser-sdk/gas';
+import { getActiveAdapter, getActiveVersion, getVersionTable } from '../versioning/activeVersion.mjs';
+import { noteBoundV1 } from '../versioning/adapters/noteBoundV1.mjs';
 import { createAddressFundingStore, isBrowserCustodyKey } from './addressFundingStore.mjs';
 import { withWalletProviderRead } from './walletProviderAccess.mjs';
+import { SPONSORED_NOT_CONFIRMED_REFUSAL } from '../versioning/sponsored.mjs';
+import { SPONSORED_REFUSAL_MESSAGE, SponsoredOperationError, judgeSponsoredOperation, readSponsoredPins } from './sponsoredOperation.mjs';
 
 const UINT256_MAX = (1n << 256n) - 1n;
 const MAX_NONCE = BigInt(Number.MAX_SAFE_INTEGER);
@@ -22,6 +27,16 @@ const READ_METHODS = new Set([
     'eth_getTransactionReceipt', 'eth_getCode', 'eth_getLogs', 'eth_gasPrice',
     'eth_maxPriorityFeePerGas', 'eth_feeHistory'
 ]);
+// The bundler methods the sponsored transport forwards. Anything else is
+// refused: it is a route to an operator's service, not a generic RPC.
+const BUNDLER_METHODS = new Set(['eth_chainId', 'eth_supportedEntryPoints', 'eth_estimateUserOperationGas',
+    'eth_sendUserOperation', 'eth_getUserOperationByHash', 'eth_getUserOperationReceipt',
+    'rundler_maxPriorityFeePerGas', 'pimlico_getUserOperationGasPrice']);
+// Signatures one sponsored action may ask for: the first, then a raise of both
+// fee fields (12.5% each, within the paymaster's ceilings), then a proof that
+// had to be made again. A bound, not a promise: the SDK stops long before it.
+const MAX_SPONSORED_SIGNATURES = 12;
+const BUNDLER_TIMEOUT_MS = 20_000;
 const RECOVERY_FIELDS = new Set(['version', 'kind', 'deploymentId', 'chainId', 'contractAddress',
     'recordId', 'operationId', 'submissionId', 'generation', 'noteId', 'mode', 'destination',
     'finalBalance', 'clearanceReserved', 'withdrawalNullifier', 'amount', 'commitment']);
@@ -86,6 +101,56 @@ function aad(envelope) {
     return encoder.encode(JSON.stringify([envelope.format, envelope.version, envelope.scope,
         envelope.address, envelope.backedUp, envelope.pendingHash, envelope.salt, envelope.iterations]));
 }
+
+// Whether `conceded` (the escape's concession word, gwei) is within what the
+// person confirmed. The authorization carries either or both of:
+//   conceded     the exact amount (a plan that already exists, or a forced
+//                escape the person chose to concede)
+//   concededMax  a cap: the largest amount a settling chat could still cost,
+//                disclosed before the click, for an escape the SDK may
+//                convert or force and whose amount is only known at proof time
+// With both, both must hold. With neither the escape concedes nothing. A
+// malformed value throws instead of passing.
+function concessionConfirmed(conceded, authorization) {
+    const exact = authorization.conceded == null ? null : uint(authorization.conceded, 'conceded amount');
+    const cap = authorization.concededMax == null ? null : uint(authorization.concededMax, 'conceded cap');
+    if (exact === null && cap === null) return conceded === 0n;
+    return (exact === null || conceded === exact) && (cap === null || conceded <= cap);
+}
+
+// Said when the SDK has prepared an emergency exit that gives up more than the
+// person was shown and confirmed, or anything at all when no figure was shown.
+// The signer never reads the SDK's saved plan to decide what was agreed to (it
+// records what the SDK proved, not what anyone confirmed), so a plan that is
+// continued after a reload, once the figure on screen has fallen away, or that
+// was proved again at a larger figure than the one shown, is stopped here,
+// before anything is signed or sent. The way on is one the dialog has: start
+// the withdrawal again, which shows what it gives up before it goes ahead.
+// The words do not name a button: the SDK takes a refusal coded 4100 for a
+// send that never reached the network and clears an escape plan that reserved
+// no clearance itself, before these words are restored, so by the time they
+// are read there is usually no unfinished withdrawal left to cancel. Plain
+// words; code 4100 as for every refusal of the signer, so the SDK still counts
+// it as sent to no one.
+export const CONCESSION_UNCONFIRMED_MESSAGE = 'This emergency exit would give up more of your balance than you were shown, '
+    + 'so nothing was sent. Start the withdrawal again from the beginning to see what it gives up.';
+
+// The concession a call to the vault carries, read from its calldata the same
+// way validateCall reads it: the word the profile's escape exit names, as a
+// bigint. Null for any call that is not an exit of a profile that concedes.
+function calldataConcession(profile, data) {
+    if (typeof data !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(data)) return null;
+    const normalized = data.toLowerCase();
+    const exit = profile.exits.find(entry => entry.selector === normalized.slice(2, 10));
+    if (!exit || exit.concededWord === null || normalized.length !== 10 + exit.words * 64) return null;
+    const words = normalized.slice(10).match(/.{1,64}/g) || [];
+    try { return uint(`0x${words[exit.concededWord] || ''}`, 'conceded amount'); } catch { return null; }
+}
+
+const sameNote = (left, right) => left != null && right != null && String(left) === String(right);
+// How many accepted escapes a provider remembers for the page session.
+const MAX_ACCEPTED_CONCESSIONS = 16;
+
 function publicPending(entry) {
     if (!entry) return null;
     return { hash: entry.hash, transaction: copy(entry.transaction), context: copy(entry.context), kind: entry.kind };
@@ -103,9 +168,72 @@ function lastReturn(record) {
     return null;
 }
 
+// ---------------------------------------------------------------------------
+// Installed protocol version
+// ---------------------------------------------------------------------------
+//
+// Which vault calls the signer accepts follows the protocol family of the
+// version the page loaded (its adapter's call profile). Boot installs that
+// version once (versioning/activeVersion.mjs, SDK-free). A page that never
+// installs one (the SDK-default build, a build without versioning, any test)
+// reads null and runs with the note-bound-v1 profile, which is exactly the
+// profile this signer always had.
+
+const NO_VERSION = Object.freeze({ version: null, adapter: null, table: Object.freeze([]) });
+
+/** The installed version, its protocol adapter and the version table. All empty without versioning. */
+export function installedVersionContext() {
+    const version = getActiveVersion();
+    if (!version) return NO_VERSION;
+    // getActiveAdapter throws unknown_adapter for a row this build cannot
+    // judge. That propagates: a protocol whose calls are unknown is not signed.
+    return { version, adapter: getActiveAdapter(), table: getVersionTable() };
+}
+
+// The default signer follows the page's version and its deposit gate. The gate
+// is the facade boot attaches to the SDK client (zkapiClient.oaVersioning);
+// reading it through the client keeps this module free of the facade's imports.
+const installedProtocol = () => {
+    const { version, adapter } = installedVersionContext();
+    return { adapter, deploymentId: version?.deploymentId ?? null, version };
+};
+const installedDepositGate = () => zkapiClient.oaVersioning?.depositGate?.() ?? null;
+
+// The gasless contracts the loaded profile pins, read by this host (null when
+// it pins none or the page has no profile). A profile this host cannot read is
+// "none": nothing is signed for it.
+function installedSponsoredPins() {
+    try { return readSponsoredPins(browserWalletRuntime.browserConfig?.trusted_deployment); } catch { return null; }
+}
+// The same-origin route of the loaded version's bundler (the facade computes
+// it from the version table). null: sponsored withdrawals are not offered here.
+const installedBundlerUrl = () => {
+    try { return zkapiClient.oaVersioning?.sponsored?.bundlerUrl?.() ?? null; } catch { return null; }
+};
+
+function depositsClosedError(gate, version) {
+    const error = fail(gate?.code === 'reload_required'
+        ? 'This page is out of date. Reload to continue. Nothing was sent.'
+        : 'This version no longer accepts new deposits. Nothing was sent.', 'deposits_closed');
+    error.status = 409;
+    error.data = { gateCode: gate?.code ?? null, versionId: version?.id ?? null,
+        successorId: gate?.successor?.id ?? null, closedSince: version?.depositsClosedSince ?? null };
+    return error;
+}
+
 /** Browser-owned EIP-1193 signer. Only ensureAddress creates custody; no RPC,
  * initialization or status read signs transactions. Web Locks serialize custody
- * and nonce changes across tabs. The SDK owns private-note state/finality. */
+ * and nonce changes across tabs. The SDK owns private-note state/finality.
+ *
+ * Options beyond the transports and stores:
+ *   protocol     () => {adapter, deploymentId, version}: whose call profile and
+ *                deployment id this scope signs for. Default: the page's version.
+ *   depositGate  () => DepositGate|null: whether a deposit may start or resume.
+ *                Default: the facade boot attaches to the SDK client.
+ *   sweepOnly    a provider for a scope other than the loaded version's: it can
+ *                return ETH and replay its own sweeps, and release another
+ *                build's saved transaction once the network has settled it for
+ *                good (never resume or rebroadcast it), nothing else. */
 export class AddressFundingProvider {
     constructor({
         getConfig = () => zkapiClient.config?.funding,
@@ -117,12 +245,21 @@ export class AddressFundingProvider {
         prepareDepositQuote = null,
         resumeTransaction = record => zkapiClient.resumeExternalTransaction(record),
         createChannel = () => globalThis.window?.BroadcastChannel
-            ? new globalThis.window.BroadcastChannel('oa-zkapi-address-funding') : null
+            ? new globalThis.window.BroadcastChannel('oa-zkapi-address-funding') : null,
+        protocol = installedProtocol,
+        depositGate = installedDepositGate,
+        sweepOnly = false,
+        sponsoredPins = installedSponsoredPins,
+        bundlerUrl = installedBundlerUrl
     } = {}) {
-        Object.assign(this, { getConfig, transport, store, locks, crypto, createWallet, prepareDepositQuote, resumeTransaction, createChannel });
+        Object.assign(this, { getConfig, transport, store, locks, crypto, createWallet, prepareDepositQuote, resumeTransaction, createChannel,
+            protocol, depositGate, sweepOnly, sponsoredPins, bundlerUrl });
         this.prepareDepositQuote = prepareDepositQuote || ((ethAmount, options, { isCurrent } = {}) =>
             withWalletProviderRead(zkapiClient, this, () => zkapiClient.prepareDepositQuote(ethAmount, options), { isCurrent }));
         this.state = { exists: false, unlocked: false, backedUp: false, address: null, pending: null, migrationRequired: false };
+        // operationId -> { noteId, conceded }: escapes this page session has
+        // accepted for signing (see continuedAuthorization). Memory only.
+        this.acceptedConcessions = new Map();
         this.listeners = new Set();
         this.session = null;
         this.action = null;
@@ -193,6 +330,35 @@ export class AddressFundingProvider {
                 if (action && !lock) throw fail('Another tab is using this payment address. Wait for that action to finish.', 'address_busy');
                 return callback();
             });
+    }
+
+    // The call profile and deployment id this scope signs for. Without an
+    // installed version that is the legacy profile and no deployment pin.
+    signerProtocol() {
+        const { adapter, deploymentId, version } = this.protocol();
+        return { profile: adapter?.callProfile ?? noteBoundV1.callProfile, deploymentId: deploymentId ?? null, version: version ?? null };
+    }
+
+    // Throws unless a deposit may start (or an already started one may resume)
+    // on this version. Only an explicit allow from an installed gate passes: a
+    // gate that fails, or answers false, 0, '' or anything that is not an object
+    // carrying canStart/canResume === true, refuses. Only no gate at all (null
+    // or undefined: no versioning) is no restriction. Applies to new signatures
+    // only: a deposit already in the journal stays valid whatever the gate says
+    // today.
+    assertDepositMayStart() {
+        let gate = null;
+        let allowed = false;
+        try {
+            gate = this.depositGate?.() ?? null;
+            allowed = gate === null
+                || (typeof gate === 'object' && (gate.canStart === true || gate.canResume === true));
+        } catch {
+            gate = { canStart: false, canResume: false, code: null };
+            allowed = false;
+        }
+        if (allowed) return;
+        throw depositsClosedError(gate, this.signerProtocol().version);
     }
 
     validateEnvelope(envelope, ctx) {
@@ -269,7 +435,10 @@ export class AddressFundingProvider {
                     || (entry.authorization?.kind === 'deposit' && entry.authorization.feeLimitWei != null
                         && totalFee > uint(entry.authorization.feeLimitWei, 'authorized fee'))
                     || BigInt(transaction.nonce) >= BigInt(record.highestNonce)) throw new Error();
-                this.validateCall(ctx, record.address, entry.transaction, entry.context, entry.authorization);
+                // A saved entry was signed under an earlier policy: only its
+                // structure is judged. Present-policy checks (deposit gate,
+                // deployment pin) are for a call about to be signed.
+                this.validateCall(ctx, record.address, entry.transaction, entry.context, entry.authorization, { signing: false });
                 if (entry.outcome != null) {
                     if (entry.kind !== 'sweep' || entry.acknowledged !== true || record.pending === entry.hash
                         || !['confirmed', 'reverted'].includes(entry.outcome.status)
@@ -555,6 +724,16 @@ export class AddressFundingProvider {
             expectedFeePerGas: baseFee + maxPriorityFeePerGas };
     }
 
+    // The refusal of an escape whose concession was not confirmed. As with the
+    // payment failures below, the SDK finishes its own bookkeeping for a refused
+    // send before its generic wallet copy could replace the words, so they are
+    // restored over it when the action ends (the error's identity is kept).
+    concessionRefusal() {
+        const error = fail(CONCESSION_UNCONFIRMED_MESSAGE, 4100);
+        if (this.action) this.action.failure = { error, message: CONCESSION_UNCONFIRMED_MESSAGE };
+        return error;
+    }
+
     paymentFailure(code, requirement = null) {
         let message;
         if (code === 'address_insufficient_eth') {
@@ -602,6 +781,10 @@ export class AddressFundingProvider {
 
     async getDepositFeeQuote(intent, { isCurrent = () => true } = {}) {
         const ctx = await this.context();
+        // Quoting asks the SDK for a prepared plan, and a prepared plan is saved
+        // in the browser wallet. A version that no longer accepts deposits must
+        // not leave one behind, so it is refused before the SDK is reached.
+        this.assertDepositMayStart();
         await this.reload();
         const own = this.address;
         if (!own || !this.unlocked) throw fail('Create or restore a payment address first.', 'address_missing');
@@ -622,9 +805,10 @@ export class AddressFundingProvider {
         // Validation is pure: this synthetic read-only context grants no signer
         // permission and cannot enter the durable transaction journal.
         const transaction = this.validateCall(ctx, own, prepared.transaction, {
-            version: 1, kind: 'deposit', deploymentId: 'fee-quote', chainId: Number(ctx.chainId), contractAddress: ctx.vault,
+            version: 1, kind: 'deposit', deploymentId: this.signerProtocol().deploymentId ?? 'fee-quote',
+            chainId: Number(ctx.chainId), contractAddress: ctx.vault,
             operationId: prepared.operationId, submissionId: 'fee-quote', amount: amount.toString(), commitment: prepared.commitment
-        }, { kind: 'deposit', amount: amount.toString() });
+        }, { kind: 'deposit', amount: amount.toString() }, { signing: true });
         const input = { from: own, to: transaction.to, data: transaction.data, value: hex(transaction.value) };
         // A new funding address has no ETH yet. Override only its simulated
         // balance; contract code/storage, sender identity and payable value all
@@ -653,7 +837,18 @@ export class AddressFundingProvider {
             quotedAt, expiresAt: quotedAt + FEE_QUOTE_LIFETIME_MS };
     }
 
-    validateCall(ctx, own, input, recovery, authorization) {
+    /** The only gate between a requested vault call and a signature. Whether the
+     * call is accepted follows the call profile of this scope's protocol family
+     * (CallProfile, versioning/adapters): selectors, calldata length, the words
+     * that bind chain, vault, note, amount and destination, and the rules that
+     * differ per family. `signing` is true for a call that may be signed and
+     * false when an already signed journal entry is re-validated: policy that is
+     * about the present (a version that stopped accepting deposits, the
+     * deployment pin) applies to the former only, so closing a version can never
+     * make a saved journal unreadable. It defaults to true, so a caller that
+     * forgets the flag gets the strict, signing-boundary policy; the one caller
+     * that re-reads saved entries (validateRecord) passes false explicitly. */
+    validateCall(ctx, own, input, recovery, authorization, { signing = true } = {}) {
         if (!input || typeof input !== 'object' || Object.keys(input).some(key => !['from', 'to', 'data', 'value', 'nonce', 'gas', 'chainId'].includes(key))) {
             throw fail('Unsupported payment transaction fields.', 4200);
         }
@@ -681,15 +876,23 @@ export class AddressFundingProvider {
             } else deny();
             return { to, value, data: normalized };
         }
-        const nativeDeposit = sameAddress(to, ctx.vault) && selector === 'c588341c';
+        const { profile, deploymentId } = this.signerProtocol();
+        if (signing && authorization.kind === 'deposit') this.assertDepositMayStart();
+        const nativeDeposit = sameAddress(to, ctx.vault) && selector === profile.deposit.selector;
+        // A call to be signed must carry the recovery context of the deployment
+        // this scope belongs to. A saved entry keeps the structural check only:
+        // the SDK compares its deployment again when it resumes the entry, and a
+        // journal this signer wrote itself must never become unreadable over it.
         if ((!nativeDeposit && value !== 0n) || !recovery || recovery.version !== 1
             || typeof recovery.deploymentId !== 'string' || !recovery.deploymentId
+            || (signing && deploymentId !== null && recovery.deploymentId !== deploymentId)
             || uint(recovery.chainId, 'recovery network') !== ctx.chainId
             || !sameAddress(recovery.contractAddress, ctx.vault)
             || Object.keys(recovery).some(key => !RECOVERY_FIELDS.has(key))) deny();
         if (sameAddress(to, ctx.vault)) {
-            if (selector === 'c588341c') {
-                if (authorization.kind !== 'deposit' || recovery.kind !== 'deposit' || !exactWords(34)
+            const exit = profile.exits.find(entry => entry.selector === selector);
+            if (selector === profile.deposit.selector) {
+                if (authorization.kind !== 'deposit' || recovery.kind !== 'deposit' || !exactWords(profile.deposit.words)
                     || !recovery.operationId || !recovery.submissionId
                     || wordUint(1) !== uint(authorization.amount, 'deposit amount')
                     || wordUint(1) !== uint(recovery.amount, 'recovery amount')
@@ -702,38 +905,182 @@ export class AddressFundingProvider {
                         || uint(authorization.depositCommitment, 'authorized commitment') !== wordUint(0)
                         || !uint(authorization.feeLimitWei, 'authorized fee')) deny();
                 }
-            } else if (['7fca9c82', '9073639b'].includes(selector)) {
+            } else if (exit) {
+                const { fields } = profile;
                 if (authorization.kind !== 'withdrawal' || !['withdrawal', 'background-withdrawal', 'background-replacement'].includes(recovery.kind)
-                    || !exactWords(56) || !recovery.operationId || !recovery.submissionId
-                    || wordUint(1) !== ctx.chainId || wordAddress(2) !== ctx.vault
-                    || wordUint(8) !== uint(recovery.noteId, 'note') || wordUint(9) !== uint(recovery.finalBalance, 'withdrawal amount')
-                    || wordAddress(10) !== address(authorization.destination) || wordAddress(10) !== address(recovery.destination)
-                    || wordUint(12) !== (selector === '7fca9c82' ? 1n : 0n)
-                    || wordUint(14) !== 1504n || wordUint(47) !== 256n
-                    || recovery.mode !== (selector === '7fca9c82' ? 'mutual' : 'escape')
-                    || (authorization.mode && authorization.mode !== recovery.mode)
-                    || (authorization.noteId != null && uint(authorization.noteId, 'note') !== wordUint(8))) deny();
-            } else if (selector === 'ff8f5585') {
-                if (authorization.kind !== 'finalization' || recovery.kind !== 'finalization' || !exactWords(1)
+                    || !exactWords(exit.words) || !recovery.operationId || !recovery.submissionId
+                    || wordUint(fields.chainId) !== ctx.chainId || wordAddress(fields.vault) !== ctx.vault
+                    || wordUint(fields.noteId) !== uint(recovery.noteId, 'note')
+                    || wordUint(fields.finalBalance) !== uint(recovery.finalBalance, 'withdrawal amount')
+                    || wordAddress(fields.destination) !== address(authorization.destination)
+                    || wordAddress(fields.destination) !== address(recovery.destination)
+                    || wordUint(exit.kind.word) !== exit.kind.value
+                    || wordUint(exit.bytesOffset.word) !== exit.bytesOffset.value
+                    || wordUint(exit.proofLength.word) !== exit.proofLength.value
+                    || recovery.mode !== exit.mode
+                    // The mode the person chose is the mode signed, with one
+                    // exception that only a protocol with a concession field
+                    // has: the SDK turns a requested mutual close into an
+                    // escape when the service cannot or will not clear it
+                    // (a protocol that concedes nothing converts nothing).
+                    // The other direction never happens and is refused.
+                    || (authorization.mode && authorization.mode !== recovery.mode
+                        && !(exit.concededWord !== null && authorization.mode === 'mutual' && recovery.mode === 'escape'))
+                    || (authorization.noteId != null && uint(authorization.noteId, 'note') !== wordUint(fields.noteId))
+                    // The operation the person looked at is the operation
+                    // signed (set only where a prepared withdrawal's
+                    // identity is known).
+                    || (authorization.operationId != null && authorization.operationId !== recovery.operationId)
+                    // Family rules. A mutual close publishes no successor and
+                    // concedes nothing; an escape names a successor nullifier
+                    // that differs from the note's own (and concedes no more
+                    // than the person confirmed, judged below).
+                    || exit.zeroWords.some(index => wordUint(index) !== 0n)
+                    || exit.nonZeroWords.some(index => wordUint(index) === 0n || wordUint(index) === wordUint(fields.nullifier))) deny();
+                // The concession is judged last, once every other rule holds:
+                // a call that is wrong in any other way gets the generic words,
+                // and only a call that is right in all of them but the amount is
+                // told what the amount is and what to do.
+                if (exit.concededWord !== null && !concessionConfirmed(wordUint(exit.concededWord), authorization)) {
+                    throw this.concessionRefusal();
+                }
+            } else if (selector === profile.finalize.selector) {
+                if (authorization.kind !== 'finalization' || recovery.kind !== 'finalization' || !exactWords(profile.finalize.words)
                     || !recovery.operationId || !recovery.submissionId
-                    || wordUint(0) !== uint(authorization.noteId, 'note') || wordUint(0) !== uint(recovery.noteId, 'note')) deny();
+                    || wordUint(profile.finalize.noteIdWord) !== uint(authorization.noteId, 'note')
+                    || wordUint(profile.finalize.noteIdWord) !== uint(recovery.noteId, 'note')) deny();
+            } else if (profile.claim && selector === profile.claim.selector) {
+                // Delivers a payout the vault credited because its destination
+                // refused ETH. It moves nothing private: the vault pays the
+                // credited address, so the destination is bound to both the
+                // user's authorization and the SDK's saved record.
+                const { claim } = profile;
+                if (authorization.kind !== claim.authorizationKind || recovery.kind !== claim.recoveryKind
+                    || !exactWords(claim.words)
+                    || typeof recovery.recordId !== 'string' || !recovery.recordId
+                    || wordAddress(claim.destinationWord) !== address(authorization.destination)
+                    || wordAddress(claim.destinationWord) !== address(recovery.destination)
+                    || (authorization.recordId != null && authorization.recordId !== recovery.recordId)
+                    || (authorization.noteId != null && (recovery.noteId == null
+                        || uint(authorization.noteId, 'note') !== uint(recovery.noteId, 'note')))) deny();
             } else deny();
         } else deny();
         return { to, value, data: normalized };
     }
 
+    // Continuing an escape that concedes.
+    //
+    // An escape's concession is fixed when the SDK proves it, so a person who
+    // chose to give up an amount is shown it once, before the first attempt, and
+    // the signer holds the call to that confirmation. An attempt may still stop
+    // before anything is signed (a fee shortfall, a lost connection) and be
+    // repeated. A repeat that names no concession of its own is therefore held
+    // to the concession of the attempt the signer already accepted for the same
+    // operation and note, and to nothing else. Two places remember it:
+    //
+    //   - the journal: the amount of a transaction this signer already signed
+    //     for the operation (survives a reload and another tab), and
+    //   - this page session: the amount of a call it accepted for signing
+    //     before it stopped.
+    //
+    // An attempt that was refused leaves neither, so repeating a refused action
+    // without its bound is refused again and the person has to confirm what is
+    // being given up. The SDK's saved plan is never consulted: it records what
+    // the SDK proved, not what anyone confirmed.
+    //
+    // The amount found is a CAP, not an exact value. A plan that another tab or
+    // a later attempt proved again at a smaller concession gives up less than
+    // the person confirmed, and a repeat of the same operation is not refused
+    // for that; one that concedes more is. Where both sources know an amount
+    // the cap is the smaller one: neither the journal (the latest signed, of
+    // any tab) nor this page's memory (the latest accepted) can say which is
+    // the person's most recent confirmation, and the smaller can only refuse
+    // more, never let more through.
+    continuedAuthorization(authorization, transactionData, recovery, record) {
+        if (authorization?.kind !== 'withdrawal' || authorization.conceded != null || authorization.concededMax != null) {
+            return authorization;
+        }
+        const operationId = recovery?.operationId;
+        const { profile } = this.signerProtocol();
+        if (typeof operationId !== 'string' || !operationId || calldataConcession(profile, transactionData) === null) {
+            return authorization;
+        }
+        const known = [];
+        const entries = Array.isArray(record?.transactions) ? record.transactions : [];
+        for (let index = entries.length - 1; index >= 0; index--) {
+            const entry = entries[index];
+            if (entry?.kind !== 'withdrawal' || entry.authorization?.kind !== 'withdrawal'
+                || entry.context?.operationId !== operationId || !sameNote(entry.context.noteId, recovery.noteId)) continue;
+            const signed = calldataConcession(profile, entry.transaction?.data);
+            // The latest entry of the operation that carries a readable amount.
+            if (signed !== null) { known.push(signed); break; }
+        }
+        const accepted = this.acceptedConcessions.get(operationId);
+        if (accepted && sameNote(accepted.noteId, recovery.noteId)) known.push(accepted.conceded);
+        if (!known.length) return authorization;
+        const cap = known.reduce((least, amount) => amount < least ? amount : least);
+        return { ...authorization, concededMax: cap.toString() };
+    }
+
+    // Called once validateCall has accepted a withdrawal: its concession is now
+    // one the signer will hold a repeat of the same operation to.
+    rememberAcceptedConcession(authorization, transactionData, recovery) {
+        if (authorization?.kind !== 'withdrawal' || typeof recovery?.operationId !== 'string' || !recovery.operationId) return;
+        const conceded = calldataConcession(this.signerProtocol().profile, transactionData);
+        if (conceded === null) return;
+        this.acceptedConcessions.delete(recovery.operationId);
+        this.acceptedConcessions.set(recovery.operationId, { noteId: recovery.noteId, conceded });
+        while (this.acceptedConcessions.size > MAX_ACCEPTED_CONCESSIONS) {
+            this.acceptedConcessions.delete(this.acceptedConcessions.keys().next().value);
+        }
+    }
+
+    // The authorization as the journal keeps it. For an exit of a protocol that
+    // concedes it records what was signed and not only what was asked: the mode
+    // actually signed (the request, when the SDK turned a mutual close into an
+    // escape, is kept as `requestedMode`) and the exact amount conceded. A
+    // build that does not know the conversion and cap rules (an older tab, a
+    // rolled-back page) re-reads every saved entry with the one rule it has,
+    // "the mode authorized is the mode signed and the concession is the amount
+    // authorized", and judges a damaged journal fatal for the whole address. An
+    // entry written in that shape is read the same by every build. Anything
+    // that is not such an exit is saved exactly as given.
+    journaledAuthorization(authorization, transactionData, recovery) {
+        const saved = copy(authorization);
+        if (authorization?.kind !== 'withdrawal') return saved;
+        const conceded = calldataConcession(this.signerProtocol().profile, transactionData);
+        if (conceded === null) return saved;
+        if (saved.mode && recovery?.mode && saved.mode !== recovery.mode) {
+            saved.requestedMode = saved.mode;
+            saved.mode = recovery.mode;
+        }
+        saved.conceded = conceded.toString();
+        return saved;
+    }
+
     async withAuthorizedAction(authorization, callback) {
         const ctx = await this.context();
         if (this.action) throw fail('A payment-address action is already running.', 'address_busy');
-        if (!['deposit', 'withdrawal', 'finalization', 'recovery', 'sweep'].includes(authorization?.kind)
-            || typeof callback !== 'function') throw fail('Choose a wallet action first.', 4100);
+        const { profile } = this.signerProtocol();
+        const kinds = ['deposit', 'withdrawal', 'finalization', 'recovery', 'sweep'];
+        // Only a protocol with credited payouts has a claim to authorize.
+        if (profile.claim) kinds.push(profile.claim.authorizationKind);
+        // Only a protocol with sponsored withdrawals has a collection (a
+        // forward of the balance a transit account holds).
+        if (profile.sponsored) kinds.push('collection');
+        if (!kinds.includes(authorization?.kind) || typeof callback !== 'function') throw fail('Choose a wallet action first.', 4100);
+        // A funding address of another version only returns its ETH. It never
+        // deposits, exits or claims for a vault this page did not load.
+        if (this.sweepOnly && !['sweep', 'recovery'].includes(authorization.kind)) {
+            throw fail('This funding address belongs to another version of the app. It can only return its ETH here.', 'address_scope_retired');
+        }
         return this.locked(ctx, async () => {
             await this.locked(ctx, async () => {
                 const record = await this.read(ctx, true);
                 if (!record.backedUp) throw fail('Save your encrypted address backup before funding or spending.', 'address_backup_required');
                 if (record.pending && authorization.kind !== 'recovery') throw fail('Recover the saved transaction before starting another wallet action.', 'address_transaction_pending');
             });
-            this.action = { authorization: copy(authorization), scope: ctx.scope, sends: 0 };
+            this.action = { authorization: copy(authorization), scope: ctx.scope, sends: 0, sponsoredSignatures: 0 };
             this.notify();
             try { return await callback(); }
             catch (error) {
@@ -769,7 +1116,9 @@ export class AddressFundingProvider {
             let authorization = maxEthReturn ? { ...this.action.authorization, amount: '0' } : this.action.authorization;
             if (record.pending) throw fail('Recover the saved transaction before starting another.', 'address_transaction_pending');
             if (authorization.kind === 'recovery') throw fail('Recovery can only replay the exact transaction already saved.', 4100);
-            const transaction = this.validateCall(ctx, record.address, input, recovery, authorization);
+            authorization = this.continuedAuthorization(authorization, input.data, recovery, record);
+            const transaction = this.validateCall(ctx, record.address, input, recovery, authorization, { signing: true });
+            this.rememberAcceptedConcession(authorization, transaction.data, recovery);
             if (maxEthReturn && await this.rpc(ctx, 'eth_getCode', [transaction.to, 'pending']) !== '0x') {
                 throw fail('Choose an exact ETH amount when returning funds to a contract account.', 'address_sweep_contract');
             }
@@ -827,7 +1176,8 @@ export class AddressFundingProvider {
             const raw = await new Wallet(record.privateKey).signTransaction({ ...transaction,
                 chainId: ctx.chainId, nonce: Number(nonce), gasLimit, ...fees });
             const hash = keccak256(raw).toLowerCase();
-            const entry = { hash, raw, kind: authorization.kind, authorization: copy(authorization), context: copy(recovery),
+            const entry = { hash, raw, kind: authorization.kind,
+                authorization: this.journaledAuthorization(authorization, transaction.data, recovery), context: copy(recovery),
                 transaction: { from: record.address, to: transaction.to, data: transaction.data,
                     value: hex(transaction.value), nonce: hex(nonce), gas: hex(gasLimit), chainId: hex(ctx.chainId) } };
             record.transactions.push(entry);
@@ -860,6 +1210,12 @@ export class AddressFundingProvider {
                 return copy(record.transactions.find(item => item.hash === record.pending));
             });
             if (!entry) return null;
+            // Resuming a deposit, exit or claim belongs to the SDK build that
+            // started it. Replaying its bytes from another version's page would
+            // leave that build's records unaware, so nothing is sent from here.
+            // Its saved marker may still be released once the network has
+            // settled the transaction for good (releaseForeignPending).
+            if (this.sweepOnly && entry.kind !== 'sweep') return this.releaseForeignPending(ctx, entry);
             await this.assertChain(ctx);
             await this.broadcast(ctx, entry);
             if (entry.kind === 'sweep') return this.checkSweep(ctx, entry);
@@ -867,6 +1223,61 @@ export class AddressFundingProvider {
             // before calling acknowledgeTransaction. A failed callback retains it.
             return this.resumeTransaction({ transaction: copy(entry.transaction), hash: entry.hash, context: copy(entry.context) });
         });
+    }
+
+    // A sweep-only scope whose journal holds a deposit, exit or claim of another
+    // SDK build that nobody acknowledged. Only that build may resume it, and
+    // nothing here rebroadcasts it or calls an SDK. Its saved marker blocks every
+    // later action of the scope though, including returning the ETH, and a build
+    // that can no longer be opened would strand the funds behind it. So the
+    // marker is released once the network has settled the transaction for good:
+    //   - its receipt sits in a finalized block (confirmed or reverted), or
+    //   - it has no receipt but the sender's finalized transaction count has
+    //     passed its nonce: another transaction took that nonce, so this one
+    //     can never be mined (replaced or dropped).
+    // Anything less is left saved. Releasing clears `pending` and marks the entry
+    // acknowledged, as the SDK's own acknowledgement would: that build's later
+    // acknowledgeTransaction is a no-op (the hash is no longer pending) and its
+    // receipt reads are unaffected, the entry stays in the journal.
+    // Resolves to {transactionHash, status: 'released', kind, finalState} with
+    // finalState 'confirmed'|'reverted'|'replaced', or {transactionHash,
+    // status: 'pending'} while its receipt is not final yet. A transaction the
+    // network has not seen and that no nonce has displaced is only that build's
+    // to finish: address_scope_retired, as before.
+    async releaseForeignPending(ctx, entry) {
+        await this.assertChain(ctx);
+        const receipt = await this.rpc(ctx, 'eth_getTransactionReceipt', [entry.hash]);
+        let finalState;
+        if (receipt) {
+            if (receipt.transactionHash?.toLowerCase() !== entry.hash || !HASH.test(receipt.blockHash || '')
+                || !['0x0', '0x1'].includes(receipt.status)) throw fail('The network returned an invalid receipt.');
+            const receiptBlock = uint(receipt.blockNumber, 'receipt block', MAX_NONCE);
+            const block = await this.rpc(ctx, 'eth_getBlockByNumber', [hex(receiptBlock), false]);
+            const finalized = await this.rpc(ctx, 'eth_getBlockByNumber', ['finalized', false]);
+            if (block?.hash?.toLowerCase() !== receipt.blockHash.toLowerCase()
+                || !finalized || uint(finalized.number, 'finalized block') < receiptBlock) {
+                return { transactionHash: entry.hash, status: 'pending' };
+            }
+            finalState = receipt.status === '0x1' ? 'confirmed' : 'reverted';
+        } else {
+            const used = uint(await this.rpc(ctx, 'eth_getTransactionCount', [entry.transaction.from, 'finalized']),
+                'finalized transaction count', MAX_NONCE + 1n);
+            if (used <= uint(entry.transaction.nonce, 'saved nonce', MAX_NONCE)) {
+                throw fail('This transaction was started in another version of the app. Finish it there.', 'address_scope_retired');
+            }
+            finalState = 'replaced';
+        }
+        await this.assertChain(ctx);
+        await this.locked(ctx, async () => {
+            const record = await this.read(ctx, true);
+            // A tab that acknowledged it meanwhile has already released it.
+            if (record.pending === entry.hash) {
+                record.pending = null;
+                record.transactions.find(item => item.hash === entry.hash).acknowledged = true;
+                await this.save(ctx, record);
+            }
+        });
+        return { transactionHash: entry.hash, status: 'released', kind: entry.kind, finalState };
     }
 
     async checkSweep(ctx, entry) {
@@ -921,6 +1332,154 @@ export class AddressFundingProvider {
         return { ...snapshot, tokenBalance: (eth / ctx.weiPerUnit).toString(), ethBalance: eth.toString() };
     }
 
+
+    // -----------------------------------------------------------------------
+    // Sponsored withdrawals (ERC-4337)
+    // -----------------------------------------------------------------------
+    //
+    // The SDK asks this provider for two things on that path and nothing else:
+    //   personal_sign   the 32-byte hash of an operation, to be signed by this
+    //                   address (the owner of the transit account), and
+    //   zkapiBundler    the bundler it talks to, when the provider has one.
+    // Both exist only for a protocol whose call profile has `sponsored`, a
+    // profile that pins the gasless contracts, and a same-origin route to the
+    // bundler. Neither does anything outside a running, authorized action that
+    // carries `sponsored`: a signature is only ever made for the person's
+    // confirmed withdrawal, and an operation only ever leaves the browser when
+    // judgeSponsoredOperation (sponsoredOperation.mjs) accepts it against that
+    // confirmation. The hash itself cannot be judged when it is signed; the
+    // signature is inert until the operation it signs is sent, and the send is
+    // the gate.
+
+    sponsoredContext() {
+        const { profile } = this.signerProtocol();
+        if (!profile.sponsored) return null;
+        let pins = null;
+        try { pins = this.sponsoredPins(); } catch { pins = null; }
+        const url = this.bundlerUrl();
+        if (!pins || typeof url !== 'string' || !url) return null;
+        return { profile, pins, url };
+    }
+
+    get zkapiBundler() {
+        // Read by the SDK for every sponsored call; undefined is "no host
+        // transport", and then this provider signs nothing for it either.
+        return this.sponsoredContext() ? this.sponsoredTransport : undefined;
+    }
+
+    get sponsoredTransport() {
+        if (!this.sponsoredTransportObject) {
+            this.sponsoredTransportObject = Object.freeze({
+                // The SDK uses `request` (a JSON-RPC style client) when it is
+                // present; sendUserOperation is what marks the object a
+                // bundler transport.
+                request: ({ method, params = [] } = {}) => this.bundlerRequest(method, params),
+                sendUserOperation: (operation, entryPoint) => this.bundlerRequest('eth_sendUserOperation', [operation, entryPoint])
+            });
+        }
+        return this.sponsoredTransportObject;
+    }
+
+    sponsoredRefusal(message = SPONSORED_REFUSAL_MESSAGE, code = 4100) {
+        return fail(message, code);
+    }
+
+    async signSponsored(params) {
+        const ctx = await this.context();
+        const action = this.action;
+        const sponsored = this.sponsoredContext();
+        if (!sponsored || !action || action.scope !== ctx.scope || !action.authorization?.sponsored) {
+            throw this.sponsoredRefusal('Choose and confirm a sponsored withdrawal before signing.');
+        }
+        if (!Array.isArray(params) || params.length !== 2 || typeof params[0] !== 'string' || !HASH.test(params[0])
+            || typeof params[1] !== 'string') {
+            throw this.sponsoredRefusal('Only the hash of a sponsored operation can be signed here.');
+        }
+        if (action.sponsoredSignatures >= MAX_SPONSORED_SIGNATURES) {
+            throw this.sponsoredRefusal('This action has reached its signature limit. Check its saved status.');
+        }
+        return this.locked(ctx, async () => {
+            const record = await this.read(ctx, true);
+            if (!sameAddress(params[1], record.address)) throw this.sponsoredRefusal('The signature was asked of a different payment address.');
+            // personal_sign of the 32 raw bytes: the EIP-191 digest the transit
+            // account verifies. Nothing else is ever signed through this path.
+            const signature = await new Wallet(record.privateKey).signMessage(getBytes(params[0]));
+            action.sponsoredSignatures = (action.sponsoredSignatures || 0) + 1;
+            return signature.toLowerCase();
+        });
+    }
+
+    async bundlerRequest(method, params) {
+        const sponsored = this.sponsoredContext();
+        if (!sponsored) throw Object.assign(fail('Sponsored withdrawals are not available here.', 'bundler_unavailable'));
+        if (typeof method !== 'string' || !BUNDLER_METHODS.has(method) || !Array.isArray(params)) {
+            throw this.sponsoredRefusal('This relay request is not available.', 'bundler_method');
+        }
+        if (method === 'eth_sendUserOperation') await this.assertSponsoredSend(params, sponsored);
+        return this.bundlerCall(sponsored.url, method, params);
+    }
+
+    // The gate: judge the operation about to be sent against the running
+    // action. A send with no action is refused too: the SDK re-sends a
+    // journaled operation from its background checks, and that is not an
+    // action the person confirmed. Starting the same withdrawal again from the
+    // dialog is, and is judged then.
+    async assertSponsoredSend(params, sponsored) {
+        const ctx = await this.context();
+        const action = this.action;
+        if (!action || action.scope !== ctx.scope || !action.authorization?.sponsored) {
+            throw this.sponsoredRefusal(SPONSORED_NOT_CONFIRMED_REFUSAL);
+        }
+        if (params.length !== 2 || typeof params[1] !== 'string') throw this.sponsoredRefusal();
+        const record = await this.locked(ctx, () => this.read(ctx, true));
+        try {
+            judgeSponsoredOperation(params[0], action.authorization, {
+                pins: sponsored.pins, vault: ctx.vault, chainId: ctx.chainId, owner: record.address,
+                profile: sponsored.profile, entryPoint: params[1]
+            });
+        } catch (error) {
+            if (error instanceof SponsoredOperationError) {
+                // The words are the SDK-visible reason, with no operation bytes.
+                throw this.sponsoredRefusal(error.message, 4100);
+            }
+            throw this.sponsoredRefusal();
+        }
+    }
+
+    async bundlerCall(url, method, params) {
+        const id = ++this.rpcId;
+        const controller = new AbortController();
+        let timer;
+        let payload;
+        try {
+            payload = await Promise.race([(async () => {
+                const response = await this.transport(url, {
+                    method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), signal: controller.signal
+                });
+                if (!response.ok) throw new Error('http');
+                return response.json();
+            })(), new Promise((_, reject) => {
+                timer = setTimeout(() => { controller.abort(); reject(new Error('timeout')); }, BUNDLER_TIMEOUT_MS);
+            })]);
+        } catch {
+            throw Object.assign(fail('The relay service could not be reached. Nothing was sent.', 'bundler_unavailable'), { name: 'TimeoutError' });
+        } finally { clearTimeout(timer); }
+        if (!payload || payload.jsonrpc !== '2.0' || payload.id !== id) {
+            throw Object.assign(fail('The relay service answered with an unexpected response.', 'bundler_unavailable'));
+        }
+        if (payload.error && typeof payload.error === 'object') {
+            // The bundler's refusal is data the SDK reads (the AA code, ERC-7769's
+            // codes): pass its numbers and text on, never an object it controls.
+            const error = new Error(String(payload.error.message ?? 'The bundler refused the request.').slice(0, 500));
+            error.rpcCode = Number.isSafeInteger(payload.error.code) ? payload.error.code : null;
+            if (payload.error.data !== undefined) error.data = payload.error.data;
+            throw error;
+        }
+        return payload.result;
+    }
+
     async request({ method, params = [], zkapiRecovery } = {}) {
         const ctx = await this.context();
         if (method === 'eth_accounts' || method === 'eth_requestAccounts') {
@@ -937,6 +1496,7 @@ export class AddressFundingProvider {
             return null;
         }
         if (method === 'wallet_watchAsset') return false;
+        if (method === 'personal_sign') return this.signSponsored(params);
         if (method === 'eth_sendTransaction') {
             if (!Array.isArray(params) || params.length !== 1) throw fail('Exactly one transaction is required.', 4200);
             try {

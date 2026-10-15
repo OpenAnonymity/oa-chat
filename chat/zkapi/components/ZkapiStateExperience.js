@@ -3,6 +3,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
 import { zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import { walletMethodText } from '../services/walletMethod.mjs';
+import { versionCopyText } from '../versioning/copy.mjs';
 
 function escapeFallback(value) {
     return String(value ?? '')
@@ -13,11 +14,24 @@ function escapeFallback(value) {
         .replaceAll("'", '&#039;');
 }
 
+// The version facade's state, or null: a build with more than one live version
+// has it, every other build (and any read that fails) does not, and says what
+// it always said. It adds one fact to the derivation: a frozen balance.
+function versionState() {
+    try {
+        const state = zkapiClient.oaVersioning?.state?.();
+        return state && typeof state === 'object' ? state : null;
+    } catch {
+        return null;
+    }
+}
+
 export function getZkapiExperience(app, sessionId = app?.state?.currentSessionId) {
     const state = deriveZkapiUxState({
         snapshot: zkapiClient.snapshot(),
         transition: app?.integration?.getTransition?.() || app?.newChatSettlementState || null,
-        sessionId
+        sessionId,
+        version: versionState()
     });
     // Keep status on the System Panel consistent with the selected wallet UI.
     for (const key of ['primary', 'composerPrimary', 'balancePrimary', 'panelPrimary', 'closingPrimary']) {
@@ -374,6 +388,20 @@ export function renderZkapiComposerStatus(element, app, stateOverride = null) {
     attachZkapiSettlementActions(element, app);
 }
 
+// The loaded protocol version for the chip's accessible name, or ''. Only a
+// build with more than one live version names it (VersionState.show); a
+// single-version build, the SDK-default build and every test without a facade
+// keep the chip's name exactly as it was.
+function versionLabel() {
+    try {
+        const state = versionState();
+        if (!state || state.show !== true) return '';
+        return versionCopyText('pill', { F: state.current?.label || state.current?.id });
+    } catch {
+        return '';
+    }
+}
+
 export function updateZkapiBalanceControl(button, app) {
     if (!button) return;
     const state = getZkapiExperience(app);
@@ -392,7 +420,8 @@ export function updateZkapiBalanceControl(button, app) {
     button.dataset.status = status;
     button.dataset.phase = primary.phase;
     button.dataset.zkapiUxProposal = state.proposal;
-    button.title = `${primary.title}. ${primary.detail}`;
+    const version = versionLabel();
+    button.title = `${primary.title}. ${primary.detail}${version ? ` · ${version}` : ''}`;
     button.setAttribute('aria-label', button.title);
     button.setAttribute('aria-busy', primary.busy ? 'true' : 'false');
     if (label) label.textContent = text;

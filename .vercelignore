@@ -15,12 +15,16 @@
 !/patches
 /patches/*
 !/patches/zkapi-browser-sdk-wallet-recovery.mjs
+!/patches/zkapi-browser-sdk-v2c-recovery.mjs
+!/patches/zkapi-browser-sdk-proof-cache.mjs
+!/patches/zkapi-browser-sdk-provider-verification.mjs
 !/deployments
 /deployments/*
 !/deployments/zkapi
 /deployments/zkapi/*
 !/deployments/zkapi/mainnet.json
 !/deployments/zkapi/sepolia.json
+!/deployments/zkapi/registry.json
 !/package.json
 !/package-lock.json
 !/vercel.json

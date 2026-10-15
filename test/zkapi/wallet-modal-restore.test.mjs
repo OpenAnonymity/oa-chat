@@ -4,6 +4,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
+import { getWalletMethod, setWalletMethod } from '../../chat/zkapi/services/walletMethod.mjs';
 
 function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, canOpen, savedModal, savedWelcome = false, blockedStorage = false, withdrawals = [], earlySnapshot = false } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals };
@@ -182,7 +183,7 @@ test('saved progress is shown even when initialization loaded state but refresh 
     assert.equal(f.modal.view, 'fund');
 });
 
-for (const view of ['fund', 'balance', 'withdraw', 'withdrawals']) {
+for (const view of ['fund', 'balance', 'withdraw', 'withdrawals', 'upgrade']) {
     test(`reload restores running ${view} before the SDK has a transaction`, async t => {
         const f = setup(t, { savedModal: { view, mode: 'escape' } });
         f.modal.restorePendingOperation();
@@ -495,4 +496,132 @@ test('closing and reopening during startup cannot revive an earlier queued actio
     await f.load();
     await running;
     assert.equal(calls, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Protocol versions: the saved view is stamped with the network and version it
+// was written under, and an entry of another version is not restored. An
+// unstamped entry (written before versions, or by a version switch) is valid.
+// ---------------------------------------------------------------------------
+
+// What the facade property was before this test touched it is recorded once per
+// test: a test that attaches twice must still leave the property as it found it.
+const facadeSaved = new WeakSet();
+function attachFacade(t, active = { id: 'v1', chainId: 1 }, multiVersion = true) {
+    if (!facadeSaved.has(t)) {
+        facadeSaved.add(t);
+        const had = Object.prototype.hasOwnProperty.call(zkapiClient, 'oaVersioning');
+        const original = zkapiClient.oaVersioning;
+        t.after(() => { if (had) zkapiClient.oaVersioning = original; else delete zkapiClient.oaVersioning; });
+    }
+    zkapiClient.oaVersioning = { active, multiVersion, state: () => null, ui: null,
+        registerBusy: () => () => {}, subscribe: () => () => {} };
+}
+
+test('new dialog intent carries the network and version it was written under', async t => {
+    attachFacade(t, { id: 'v1', chainId: 11155111 });
+    const f = setup(t, {});
+    await f.load();
+    f.modal.open('fund');
+    const saved = JSON.parse(f.storage.get('oa-zkapi-running-modal'));
+    assert.equal(saved.view, 'fund');
+    assert.equal(saved.versionId, 'v1');
+    assert.equal(saved.network, 'sepolia');
+});
+
+test('without versions the saved intent has no stamp at all', async t => {
+    const f = setup(t, {});
+    await f.load();
+    f.modal.open('fund');
+    const saved = JSON.parse(f.storage.get('oa-zkapi-running-modal'));
+    assert.equal('versionId' in saved, false);
+    assert.equal('network' in saved, false);
+});
+
+test('a dormant facade (one live version) knows its version and still writes no stamp', async t => {
+    // Today's single-version build writes the unstamped shape. A stamped entry
+    // written by it would be ignored by the build that activates versions.
+    attachFacade(t, { id: 'v2', chainId: 1 }, false);
+    const f = setup(t, {});
+    await f.load();
+    f.modal.open('fund');
+    const saved = JSON.parse(f.storage.get('oa-zkapi-running-modal'));
+    assert.equal(saved.view, 'fund');
+    assert.equal('versionId' in saved, false);
+    assert.equal('network' in saved, false);
+    // And an entry that carries a stamp is not compared with a version that
+    // is not one of several.
+    f.storage.set('oa-zkapi-running-modal', JSON.stringify({ view: 'fund', versionId: 'v1', network: 'mainnet' }));
+    assert.equal(f.modal.readRunningModal()?.view, 'fund');
+});
+
+test('a saved view of the same version is restored, including the upgrade view', async t => {
+    attachFacade(t, { id: 'v1', chainId: 1 });
+    const f = setup(t, { savedModal: { view: 'upgrade', versionId: 'v1', network: 'mainnet' } });
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.modal.view, 'upgrade');
+    f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+});
+
+test('a saved view of another version or network is stale and is not restored', async t => {
+    for (const stamp of [{ versionId: 'v2', network: 'mainnet' }, { versionId: 'v1', network: 'sepolia' }]) {
+        attachFacade(t, { id: 'v1', chainId: 1 });
+        const f = setup(t, { savedModal: { view: 'upgrade', ...stamp } });
+        await f.load();
+        assert.equal(f.modal.isOpen, false, JSON.stringify(stamp));
+        assert.equal(f.modal.readRunningModal(), null);
+    }
+});
+
+test('a view saved without a stamp stays valid on a versioned page', async t => {
+    attachFacade(t, { id: 'v2', chainId: 1 });
+    // What a version switch writes: the intended view and nothing else.
+    const f = setup(t, { savedModal: { view: 'fund' } });
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.modal.view, 'fund');
+});
+
+test('a Welcome view of another version does not keep the dialog from restoring saved work', async t => {
+    attachFacade(t, { id: 'v1', chainId: 1 });
+    // Owned by Welcome while the stamp matches (or is absent) ...
+    const owned = setup(t, { config: { pending_deposit: { phase: 'submitted' } } });
+    owned.storage.set('oa-zkapi-welcome-modal', JSON.stringify({ open: true, method: 'metamask', versionId: 'v1' }));
+    await owned.load();
+    assert.equal(owned.modal.isOpen, false);
+    // ... and not once it is another version's.
+    const stale = setup(t, { config: { pending_deposit: { phase: 'submitted' } } });
+    stale.storage.set('oa-zkapi-welcome-modal', JSON.stringify({ open: true, method: 'metamask', versionId: 'v2' }));
+    await stale.load();
+    assert.equal(stale.modal.isOpen, true);
+    assert.equal(stale.modal.view, 'fund');
+});
+
+test('a signed funding-address withdrawal opens Withdraw from the installed call profile', async t => {
+    // A saved funding-address transaction makes the module choose the "Send
+    // Ethereum" method for the whole process; the choice is put back afterwards
+    // so no other test sees it. It is restored after the saved state below
+    // (hooks run in the order they were added), because a method cannot be
+    // changed while a saved transaction is present.
+    const method = getWalletMethod();
+    const f = setup(t);
+    await f.load();
+    const state = addressFundingWallet.state;
+    t.after(() => { addressFundingWallet.state = state; });
+    t.after(() => { setWalletMethod(method); });
+    // The concession protocol's mutual close and payout claim selectors.
+    addressFundingWallet.signerProtocol = () => ({ profile: {
+        exits: [{ selector: '72cd2e44' }, { selector: 'a38d62aa' }], finalize: { selector: 'ff8f5585' }, claim: { selector: '88c10aee' }
+    } });
+    t.after(() => { delete addressFundingWallet.signerProtocol; });
+    for (const [selector, view] of [['0x72cd2e44', 'withdraw'], ['0x88c10aee', 'withdraw'], ['0xc588341c', 'fund'], ['0x7fca9c82', 'fund']]) {
+        addressFundingWallet.state = { ...state, pending: { kind: 'sweep', transaction: { data: `${selector}${'0'.repeat(8)}` } } };
+        const g = setup(t);
+        await g.load();
+        g.modal.isOpen = false;
+        g.modal.restorePendingOnInit = true;
+        g.modal.restorePendingOperation();
+        assert.equal(g.modal.view, view, selector);
+    }
 });

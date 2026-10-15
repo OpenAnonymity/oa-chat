@@ -1094,6 +1094,778 @@ restoring an old key into a replacement account. See ENCRYPTION_PASSKEYS.md.
   journal and fail-closed verification while diagnosing; public station health
   does not establish verification of a particular key.
 
+## 2026-10-15: Two versions can share one hostname (a path prefix on the newer one)
+
+A new version no longer needs a new hostname. The deployment's service URL
+(`protocol_server_url`, shared by the indexer) may be an origin **or an origin
+plus a plain path prefix**, so the older deployment stays at the root of its
+hostname and the newer one is served under a prefix of the same hostname named
+after its protocol version: `/v0.2`, then `/v0.3`, `/v1.0` for later upgrades. The guide's [section "One hostname for several deployments"](ZKAPI_VERSIONING.md#one-hostname-for-several-deployments)
+is the full record; this entry is the handoff.
+
+- **Why a path.** Both generations answer on the same route names (`/v2/...`,
+  `/v1/tree/snapshot`, `/config.json`) and the browser can vary nothing but the
+  path: the SDK's fetches carry no custom header and the Vercel rewrite cannot
+  add one. A per-version `Host` or header was not an option.
+- **What changed.** `versioning/serviceBase.mjs` (new, pure): `parseServiceBase`,
+  `pathPrefix`, `servicesOverlap`, `proxyRewrite`. `validateBaseProfile`
+  (`adapters/noteBoundV1.mjs`, shared by both families) accepts the prefix for the
+  protocol and indexer base and for `<base>/config.json`; `rpc_url` and
+  `verifier_url` stay origins. The registry's `identity_collision` is on the
+  base URL (same base, or one prefix inside another), not the origin. The route
+  generator scopes each rewrite to the service's subtree
+  (`/zkapi-deployment-v2c/v0.2/:path*` to `https://<host>/v0.2/:path*`); a root
+  deployment's rewrite is byte-for-byte what it was.
+- **Non-obvious.**
+  - The prefix lives **in the pin and in the manifest the service publishes**
+    (the SDK compares them). The alternative of keeping the pin at the bare
+    origin and letting the rewrite add the prefix was rejected: the pinned URL
+    would not be where the service is, and the exit kit and `zkapi-clientd`
+    (which use the profile URL directly) would hit the root deployment.
+  - The SDK carries the prefix through the proxy by itself: it forwards
+    `<proxyPath><pathname of the target URL>`, so the rewrite must carry the
+    prefix on both sides and must **not** be a broad `<proxyPath>:path*` (that
+    would let a version's proxy path reach the other deployment's routes).
+  - Reserved first segments: `v1`, `v2`, `config.json`, `_bundler`. A prefix
+    named like a protocol route would shadow the root deployment's API, which is
+    why the registry row ids themselves (`v1`, `v2`) cannot be the prefix while a
+    version number such as `v0.2` can: the dot makes it another segment.
+  - A trailing slash is refused for a prefixed pin: the SDK appends
+    `/v2/...` to the string it is given.
+  - The operator's ingress must route the prefix, and the service's own
+    manifest must say the prefixed URL; the host cannot check either.
+- **Evidence.** `test/zkapi/service-base.test.mjs` (the rules, the rewrite, and
+  the real `deploymentProxyUrl` of both the installed legacy SDK and a successor
+  SDK), additions to `zkapi-registry-model.test.mjs`,
+  `zkapi-snapshot-adapters.test.mjs` and `zkapiVersionedBuild.test.js`.
+- **Not done.** Nothing about a live operator stack was exercised, and the
+  registry's rows are unchanged (version 2 is still `pending` with null pins).
+
+## 2026-10-14: Sponsored (gasless) withdrawals built into the host (dormant)
+
+A person can now choose "Paid from this withdrawal" under "Network fee" in the
+withdrawal form, and the network fee comes out of the payout through the SDK's
+ERC-4337 path (`fees: 'payout'`). It exists in code, tests and docs; **no shipped
+build offers it**, because no reviewed profile pins a `gasless` object (the
+`0.2.0` profiles carry `gasless: null`) and version 2 is still `pending`.
+The guide's [11.7](ZKAPI_VERSIONING.md#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal)
+is the full record; the trust model is in
+[PRIVACY_MODEL.md](PRIVACY_MODEL.md#sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal);
+this entry is the handoff.
+
+- **What was built.**
+  - `chat/zkapi/versioning/sponsored.mjs` (route rules, profile check, the
+    signer's refusal words), `versioning/sponsoredFees.mjs` (offer test, quote,
+    plan, refusal copy; reached as `facade.sponsored`), `components/SponsoredFee.js`
+    (the choice, via `ui.sponsoredFee`), `services/sponsoredOperation.mjs` (the
+    independent verifier) and the signer changes in
+    `services/addressFundingProvider.mjs` / `addressFunding.js`.
+  - The route: `<proxyPath>_bundler` to the profile's pinned `bundler_url`, an
+    exact-path rewrite generated *before* the version's `:path*` rewrite. The
+    page never contacts the relay directly and not before the choice is made.
+  - Rows: "Payout waiting" (Collect payout, free; Collect with my wallet),
+    "Payout held" (Claim payout), fee lines; holdings treat a pending sponsored
+    payout as a credit; the other-versions reader reads the six new fields.
+  - No new `requiredWiring` name: the feature is optional, so `WIRED` is
+    unchanged and version 2's row demands nothing new.
+- **Non-obvious things to know.**
+  - **The key signs a hash blind.** `personal_sign` receives only 32 bytes, so
+    the Send Ethereum signer cannot judge the operation when it signs. It
+    judges at `eth_sendUserOperation`, the only exit, against the running
+    action's authorization. A signature that is never sent is inert. Do not
+    "improve" this by judging inside `personal_sign`: it cannot see the operation.
+  - **A send without a running action is refused on purpose.** The SDK re-sends
+    journaled operations from background checks; those are not something the
+    person confirmed. The wording is `SPONSORED_NOT_CONFIRMED_REFUSAL`.
+  - **MetaMask mode is not verified before signing.** The wallet shows an opaque
+    hash (as upstream does) and exposes no `zkapiBundler`, so the SDK uses its
+    own transport against the app's route. The host can only pass the shown fee
+    cap and `allowExpensiveGas: false`. An upstream hook (`zkapiOperation`
+    beside `personal_sign`) is the proposed fix; it is not implemented.
+  - **Address mode has no wallet-paid transit recovery.** Collect (the service
+    pays) is offered; "Collect with my wallet" and "Claim payout" are drawn for
+    the MetaMask method only, because the signer has no authorization kind for
+    them. A held credit of an address-mode withdrawal needs MetaMask to claim.
+  - **A quote is for one balance, mode and receiving address**
+    (`sponsoredKeyFor`). Changing the mode with the choice on asks again; a start
+    without a quote for exactly this form is refused and the quote is requested.
+  - **`maxCostWei` has 50% headroom** over the quoted reservation; fees move
+    between a quote and a send. The pinned policy bounds it too.
+  - **`callProfile.sponsored` is the switch.** Remove the key from the adapter
+    and the facade, signer and rows all fall back to the wallet-paid path.
+  - The dialog's `Object.create(AccountModal.prototype)` test fixtures have no
+    constructor state; `sponsoredSeq` is read as `(Number(this.sponsoredSeq)||0)+1`.
+- **Tests.** `sponsored-operation` (Foundry vectors in
+  `test/fixtures/zkapi-sponsored-vectors.json`), `address-funding-sponsored`,
+  `sponsored-fees`, `sponsored-withdrawal-real-sdk` (needs a successor SDK) and
+  additions to the error-copy, record-extras, holdings, other-version-history and
+  version-ui-render tests. Whole suite (after rebasing onto the Sepolia-token removal and adding the
+  shared-hostname work below): 2373 pass, 0 fail, 18 skipped without a
+  successor SDK; with one, 2440 of 2443 payment tests pass and the one failure is
+  the by-design SDK half of the recheck.
+- **A real build was rehearsed** with a synthetic deployed profile that pins a
+  `gasless` object: the registry check and both networks pass, the object reaches
+  `browser-config.json` unchanged, and the generated rewrites list
+  `/zkapi-deployment-v2c/_bundler` before `/zkapi-deployment-v2c/:path*`.
+- **Not proven:** a real paymaster, factory or relay (the tests use the SDK's own
+  scripted chain and bundler), the MetaMask path against a real wallet, and the
+  operator's profile.
+- **Open, unchanged:** a published revision, a deployed profile with a paymaster
+  per network, the SDK half of the recheck, the operator's manifest. Nothing
+  here is committed or pushed.
+
+## 2026-10-14: The version 2 reference moves to the `v0.2` branch (`4b955d9`)
+
+The successor SDK this work targets is no longer the `82c8504` archive: it is
+`v0.2` of the local zkapi repository at `4b955d9`, fourteen commits later and
+still unpublished. The guide's [11.6](ZKAPI_VERSIONING.md#116-the-reference-revision-82c8504-to-4b955d9)
+is the full record; this is the handoff.
+
+- **Nothing in the registry moved.** Version 2 is still `pending` with `null`
+  pins: the commit is not on GitHub, and a git dependency that cannot be
+  fetched fails `npm install` for everyone. The app a person gets is the app
+  they got before. What changed is the reference: fixtures, test expectations,
+  words and docs.
+- **What `4b955d9` changes for this host.**
+  - A `dev` bundle builds for mainnet (the SDK build's chain 1 clause is gone;
+    upstream's deploy script, operator images and companion build take
+    `ALLOW_DEV_SETUP=1`). The host's handling of the old refusal stays, for a
+    pin of an older revision, and a test variant re-inserts the clause
+    (`insertPreRelaxationMainnetRefusal`) so that path is still exercised.
+  - Gasless withdrawals over ERC-4337 exist in the SDK (`fees: 'payout'`, a
+    `gasless` profile object, `./gasless`). **This entry first left them
+    unused; the entry above it (same day) built them into the host**, dormant
+    until a deployed profile pins a paymaster. The SDK default is still
+    `fees: 'wallet'`, and the shipped profile pins none.
+  - The only non-gasless SDK change is an idempotent deposit confirmation
+    (`da9a642`): a deposit confirmed by the background reconcile no longer
+    fails the foreground `deposit()`. **It needed a host change:** it added two
+    deposit-named runtime methods, `confirmedDepositFor` and
+    `completeConfirmedDeposit`, which `confirmDeposit` calls. Unclassified,
+    deny by default wraps a `/deposit/i` method, so a closed (exit-only)
+    version would have refused them and a deposit that was already sent could
+    not have been completed there. They are in `recoveryEntryPoints.runtime` of
+    the concession adapter now, and `zkapi-deposit-guard-successor.test.mjs`
+    reads the real singletons so the next new name is found before activation.
+    The fixture alone could not find it: it only has the names someone copied
+    into it.
+  - Store: database name, version, object stores, lock and channel unchanged;
+    slot keys unchanged (the upstream store snapshot file is byte-identical);
+    `storeSha256` to pin is `f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce`.
+  - Snapshots and records only gained keys (`gasless`, `fee_payer`, `payout`,
+    `transit`, `user_op_hash`, `user_op_phase`).
+  - The SDK half of `withdrawal-operation-recheck` is still missing and the
+    same 9 of 25 hunks of `wallet-recovery-v1` match; the rehearsal's first
+    test still fails by design.
+- **What the repository now holds.**
+  - `test/fixtures/zkapi-sdk-v2-fixture/`: the fixture follows `4b955d9`
+    (its build has no chain 1 clause, profiles carry `gasless: null`, the
+    `./gasless` subpath and the new members exist, 26 name lists match the real
+    package). Its pins in the README and `real-sdk-exports.json` moved.
+  - `test/fixtures/zkapi-v2-real-shapes/`: regenerated from `4b955d9`.
+  - `zkapiVersionedBuild.test.js` covers mainnet on `dev` end to end with the
+    accepting SDK and the older refusal with the variant;
+    `zkapi-sdk-v2-fixture.test.mjs` pins the new behavior.
+- **A real build was rehearsed** in a scratch copy with a synthetic deployed
+  profile (details and limits in 11.6): the registry check passes with the two
+  `dev` warnings and no refusal line, and both networks build. It is evidence
+  about this host and the package's own build, not about a deployment.
+- **To read the reference without switching a checkout:**
+  `git -C <zkapi checkout> archive v0.2 | tar -x -C <empty dir>` and point
+  `ZKAPI_V2_SDK_DIR` at that directory.
+- **Open, unchanged:** a published revision, a deployed profile per network, the
+  SDK half of the recheck as a patch bound to the commit that is published, the
+  recovery review redone against it, the operator's manifest. Do not write the
+  patch against the moving branch.
+
+## 2026-10-13: Single-party `dev` proof setup accepted on both networks (limitation noted)
+
+The owner decided that the host accepts the single-party development proof setup
+`dev` for a `concession-v1` deployment on Sepolia and on mainnet, by the same
+rule as `mpc-1`. Earlier drafts of this work required `mpc-1` on every network;
+nothing in the repository does now. The limitation is noted, not blocked. The guide's
+[section on it](ZKAPI_VERSIONING.md#single-party-development-proof-setup-known-limitation)
+is the full description, including the upstream sources and line numbers; the
+trust model is in [PRIVACY_MODEL.md](PRIVACY_MODEL.md#proof-setup-trust-single-party-development-setup);
+this entry is the handoff.
+
+- **State.**
+  - The rule has no network in it. `trusted_deployment.setup_id` must be `mpc-1`
+    or `dev`; the bundle's manifest `setupId` must be one of them and equal the
+    profile's. The profile's `allow_dev_setup` is ignored (no SDK file reads
+    it, it is a deploy-time record) and an `allowDevSetup` key on a network
+    entry is an unknown field, so there is no second switch to find.
+  - It is reported where an operator looks: one `[build] WARNING:` per live
+    version on `dev` (exit-only included, once per build, before anything is
+    emitted), `setupId` and `proofSetup` on every `zkapi.versions[]` entry of
+    `build.json` (`null` for version 1), and the registry check's stderr
+    warnings, which do not change its exit code. The app itself says nothing.
+  - The `82c8504` snapshot's own SDK build refused a `dev` bundle for chain 1
+    (`development_setup_on_mainnet`); `4b955d9` (branch `v0.2`) dropped that
+    clause (see the [2026-10-14 entry](#2026-10-14-the-version-2-reference-moves-to-the-v02-branch-4b955d9)).
+    The host passes a pin that still has it on with its own words and the SDK's
+    error as `cause` and never bypasses it, so a mainnet build of a `dev` row
+    on such a pin stops in `verifyPlanOnDisk` before `dist/` is touched (a
+    package that exports no `assertDeployableProfile` is refused by its own
+    build at emission instead). The registry check probes the installed package
+    and warns about it (`--package-root` names where to look).
+  - The forward-only check now holds the proof setup and key pins of a live row
+    (`identity_changed`): a vault on `dev` keys is not re-pinned to `mpc-1` by
+    editing its profile. The way out is a further row.
+  - Still refused outside this repository: the SDK build above, the vault
+    deployment script (`demo/contracts/script/SetupPolicy.sol` requires
+    `chainId != 1` and, off local chains, `ALLOW_DEV_SETUP=1`, and calls the
+    result a drill vault), and every release build of the proof library, the
+    operator image and the exit-kit companion (the `dev-setup` feature, kept out
+    of production builds by `release_policy_check`). A vault on `dev` keys cannot
+    be switched to `mpc-1` (its adapter and key hashes are immutable), so moving
+    later is a new vault and a user migration.
+- **Verification.** `node scripts/run-unit-tests.mjs`. The files that pin it are
+  `test/zkapi/zkapi-registry-model.test.mjs` (the profile rule on both networks,
+  identity continuity of the proof pins), `test/zkapi/zkapi-snapshot-adapters.test.mjs`
+  (the adapter rule and `proofSetupKind`) and
+  `test/architecture/zkapiVersionedBuild.test.js` (the pairing with the bundle,
+  the warning, the provenance fields, the SDK refusal's words and the registry
+  check). The `dev` bundle in those tests is a temporary copy of the fixture SDK
+  rebuilt for `dev` (`makeDevelopmentBundle`); the committed fixture stays
+  `mpc-1`. There is no app-side behavior to check by hand: nothing in the UI
+  changes.
+
+**What is easy to get wrong**
+
+- **Accepted is not buildable on mainnet.** The host's rule says yes and the
+  SDK's build says no, so a registry with a `dev` row on mainnet passes
+  `validateRegistry` and the registry check and still fails to build. That is
+  deliberate (the SDK's rule is not the host's to override), and the check says
+  so only when the package is installed.
+- **One bundle is one setup.** The profile of each network must pin the setup
+  of the row's bundle, so a registry with `dev` on one network and `mpc-1` on
+  the other passes the profile rule and fails the pairing check against any one
+  bundle.
+- **The proof pins are identity.** Editing `setup_id` or a key hash of a live
+  profile, in the registry or in `mainnet.json` or `sepolia.json`, is
+  `identity_changed`; a correction needs `--allow-identity-change`, and a
+  different key set is a new version.
+- **Do not add a second switch** for the setup beside `setup_id`
+  (`allow_dev_setup`, a per-entry flag, a constant such as the old
+  `REQUIRED_SETUP_ID`). A scratch rehearsal of the `0.2.0` snapshot needs no
+  host change for the setup any more; what it still has to supply is a deployed
+  profile and a covering patch.
+- **The warning's words are pinned**, including that they say the choice is
+  accepted by owner decision and contain no refusal wording. Keep it a warning.
+
+**Not done / next**
+
+- **No in-app disclosure.** A person using a version on `dev` is not told. A
+  disclosure would be a product change with copy on every surface that names a
+  version.
+- **Upstream steps a mainnet `dev` vault needs** are listed in the guide's
+  table. Since `4b955d9` they are explicit opt-ins (`ALLOW_DEV_SETUP=1` for the
+  vault script, the operator images and the companion build) and not refusals;
+  none is made in this repository. The ceremony has not produced keys
+  (`CEREMONY_VK_KECCAK256` is `None`), so there is no `mpc-1` bundle to pin
+  either; both options wait on upstream for different things.
+
+## 2026-10-13: A balance the page holds and cannot read
+
+When a version's SDK does not start while this browser's wallet holds a note of
+that version, the page used to read the SDK's empty snapshot as an empty
+balance: "$0.00", "Add funds", "Deposits moved to version 2", and the SDK's own
+error (which names the operator's address) in the chat bar and toasts. The
+version state now names the fact instead. In practice it is a version 1 balance
+whose operator is down: the legacy SDK loads the operator's manifest before it
+opens the wallet and rejects its start when it cannot, while the successor SDK
+starts without its operator and reports a paused service. The guide's
+[section 5.10](ZKAPI_VERSIONING.md#510-a-balance-the-page-holds-and-cannot-read)
+is the full description; this entry is the handoff. A dormant build is
+unchanged: its facade is inert (no state, so no `held`), and it shows the SDK's
+words and an empty balance, as before.
+
+- **State.**
+  - `VersionState.held` is `{unreachable: true}` and the phase is
+    `balance-unreachable` (placed right after `reload-required`) only when the
+    host's own read says the slot holds a note of the loaded deployment (boot
+    selection or a fresher readable preview: `runtime_holds_note`, that owner,
+    slot kind `note`), the version's SDK client is not initialized and has
+    reported an error, and the snapshot has no note and no deadline.
+  - Nothing that needs the started SDK is offered: `upgrade.blockedBy` and
+    `abandon.blockedBy` are `service_unreachable`, the stage is `idle`,
+    `abandonPreview()` is null and `giveUpBalance` answers `unavailable`
+    without calling the service. On an exit-only version the gate keeps
+    `deposits_closed`; on the deposit target it closes with
+    `holdings_unreadable` (restrict-only, after `previous_withdrawal_open` and
+    before `reload_required`), whose copy and Reload offer already existed on
+    every surface, so no vm-evaluated source needed a change for it.
+  - Words: `held.label` ("Saved in this browser"), `held.unreachable` (the
+    whole explanation, with the sentence about using the newer version only
+    when there is one) and `held.summary` (one sentence for the chat bar, the
+    welcome's payment-service line, toasts and transition messages). One
+    action, Reload.
+  - Surfaces: the panel label, quiet "unavailable" pill, "Balance details" and
+    the `held` notice; one dialog view (`ui.heldBalance`) for the balance, the
+    closed-deposits view, the Withdraw view and the upgrade view; the welcome
+    view; the chat bar and balance control (`deriveZkapiUxState` keys on the
+    held fact, not only on `lastError`); the chat runtime's start
+    (`plainStartFailure`) and `explainZkapiError` for the SDK's start error.
+    The ticket surface carries nothing.
+- **Verification.** `node scripts/run-unit-tests.mjs`; the two files that pin
+  it are `test/zkapi/zkapi-held-balance.test.mjs` (state, words, facade over a
+  wallet written by the real legacy store and read by the real boot probe,
+  error words) and `test/zkapi/zkapi-held-balance-render.test.mjs` (the real
+  panel, dialog and welcome); the recorded client is
+  `test/fixtures/zkapi-legacy-start-failed/client.json`. There is no UI harness,
+  so by hand: seed a version 1 note, serve the build with the operator's route
+  (`/zkapi-deployment/*`) answering 503, and check the panel, the dialog's
+  three views, the welcome, a send and that Reload is the only button; then let
+  the operator answer and Reload, which must show the ordinary balance.
+
+**What is easy to get wrong**
+
+- **The error is not the memory.** The legacy client attempts its start once
+  and replays the rejection, and a later quiet refresh that the host answers
+  with its own page (the production host serves its page for unknown paths)
+  "succeeds", clears `lastError` and leaves the client not started. The facade's
+  failed-start fact is therefore latched (set when the client reports an error
+  while not initialized, held until it reports `initialized`, forgotten on
+  `attach`). Every error object the client held meanwhile is remembered
+  (`startErrors`, memory only) so the one that replaced the start error is told
+  in plain words too. Any surface that keys on `lastError` alone will fall
+  back to "Add funds" after such a refresh; `deriveZkapiUxState` and the panel
+  pill were fixed for exactly this.
+- **Do not promise a return, and do not name a cause.** Nothing on the page
+  retries the start, so the words say Reload and never "when the service is
+  back". The `service.paused.*` words are not reused: every one of them ends
+  "You can still withdraw your balance", which is false while the SDK is not
+  running, and the legacy SDK's only code for a failed start is
+  `incompatible_proof_circuit`, which carries no status or exits and which
+  `readServiceRefusal` does not read. "Not available" is true for no answer, an
+  untrusted answer and another protocol alike. A copy test pins it.
+- **The reword is scoped.** `plainStartFailure` in the chat runtime core
+  rewords in place only an error `isStartFailure` says is the client's, so an
+  unrelated error from the same start keeps the SDK's text (running the whole
+  `explainZkapiError` over every start error would also reword indexer-lag
+  errors and version refusals that a start never reworded before).
+  `attach()` keeps its direct `initializeClient()`: its result is swallowed and
+  an extra microtask tick broke a timing test.
+- **A slow start is not a failure.** A client that has reported no error is a
+  start in progress, so a hung request reads as one (the same words a healthy
+  exit-only load shows at that moment). A timer would call a slow start a
+  failure; a "checking your balance" reading needs a new `held` variant and
+  its words on every surface. Left for a product decision.
+- **The `held` of the state and the held refusals of the facade are different
+  things.** The refusals (`noteRefusal`, the service latch) are what an attempt
+  was refused for; `held` is a balance the page cannot read.
+- **`service_unreachable` is the state's own word.** The give-up service's
+  reasons are the service's; the facade answers `unavailable` for it.
+
+**Not done / next**
+
+- **Retirement precondition: a browser that holds a note of a retired version,
+  or of one whose operator does not come back, has no way out in the app.**
+  The legacy SDK needs its operator's manifest to initialize, so such a note
+  cannot be withdrawn, given up or archived, expiry does not release the slot
+  (only a started SDK clears it, through "Start a new balance" after a
+  verified expiry payment or a confirmed give-up), and the successor's SDK
+  refuses the wallet. The person is stuck until the note has expired and an
+  in-app archive action exists that works without the service. It does not
+  exist (it would be the host's third write to the wallet slot and needs its
+  own recovery review). Until it does, do not retire a version while such
+  holders may exist; the registry check and the build cannot see it. It is in
+  the guide's [Retire a version](ZKAPI_VERSIONING.md#retire-a-version) and
+  [Roll back](ZKAPI_VERSIONING.md#roll-back) runbooks.
+- A lone live exit-only version has no host probe (decision-table row 1 opens
+  no database), so its failed start still reads as an empty balance with the
+  SDK's own words. Covering it means probing when the lone live row is not the
+  deposit target, which changes row 1 and `selectZkapiVersion`'s "not even
+  opened" and the reason (`no_runtime_note` or `runtime_holds_note` instead of
+  `single_version`).
+- No deadline is shown for a held balance (the page cannot read the expiry),
+  so there are no withdraw-by reminders for it.
+
+## 2026-10-13: Version 2 protocol wiring, history and give-up (still dormant)
+
+The ten host behaviors of the `concession-v1` family are implemented, the other
+versions' payment history is shown, and a zero or dust balance on an exit-only
+version can be given up. Version 2 is **still a `pending` row** and a build with
+one `active` version is still today's app in behavior (same emitted SDK assets
+except `zkapi.css`, same request path: a dormant withdrawal makes its settle and
+withdraw calls and nothing else; the JavaScript is not the same bytes and there
+is more of it, see the payment JavaScript bullet below). The guide
+([ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md), sections 5.4, 5.5, 5.9, 7.5 to 7.9
+and 11) says what each behavior is; this entry is the handoff.
+
+- **State.**
+  - `WIRED` lists all ten names. [zkapi-wiring.test.mjs](../test/zkapi/zkapi-wiring.test.mjs)
+    is the evidence table: every name needs a runnable `wiring:<name>` test in
+    a file that imports a named production symbol (read with a parser), and an
+    SDK-half behavior is bound to its real-SDK test.
+  - `withdrawal-operation-recheck` is complete only with an SDK patch for the
+    revision: `PATCH_COVERAGE` names it, and the registry CLI check and
+    `planFromRegistry` (so the build and the Vercel generator) refuse a live row
+    without it (`recovery_patch_coverage`). A `not_required` verdict is not
+    coverage.
+  - One proof-setup rule on both networks: `mpc-1` and the single-party `dev`
+    are accepted alike (an owner decision; see the
+    [2026-10-13 entry on the `dev` setup](#2026-10-13-single-party-dev-proof-setup-accepted-on-both-networks-limitation-noted)),
+    `allowDevSetup` is an unknown field, and the bundle's manifest `setupId` is
+    checked and must equal the profile's. The `0.2.0` snapshot ships `dev` and
+    placeholder profiles, so v2 still needs a revision with a deployed profile.
+  - The other versions' history reader and the give-up service live behind
+    boot seams that a dormant build never imports or calls. The exit-kit and
+    give-up dialogs and the notice builder are not: they are statically in the
+    payment graph (the weight is measured below) and nothing renders them in a
+    dormant build.
+- **Verification.** `node scripts/run-unit-tests.mjs`; the registry check
+  `node scripts/zkapi-registry-cli.mjs check --base origin/main` (it also
+  applies the coverage rule). A dormant build of each network against the
+  parent commit's build: every file under `dist/zkapi/` is byte-identical
+  except `zkapi.css`; outside it `index.html`, `startup.js`, `build.json` (three
+  added `zkapi` fields, new file hashes) and every bundled file under
+  `dist/assets/` differ, and the payment code is larger (next bullet). The
+  guide's [Dormant means identical](ZKAPI_VERSIONING.md#dormant-means-identical)
+  lists both halves. With `ZKAPI_V2_SDK_DIR=<unpacked zkapi repository>` (or
+  the snapshot installed under `node_modules/zkapi-sdk-v2c` with the registry
+  still dormant) the real-SDK tests run and exactly one fails, by design: the
+  SDK half of the recheck on the unpatched `0.2.0` snapshot.
+  `test/fixtures/zkapi-v2-real-shapes/regenerate.mjs <repository> --check` says
+  whether the real-shape fixtures are current.
+- **A dormant page now fetches more payment JavaScript.** Measured on the
+  mainnet build as the static closure of the boot, SDK client, SDK runtime,
+  SDK store and integration chunks beyond the app entry (gzip level 9): the
+  single chunk of 768,788 bytes (214 KB gzipped) became 17 chunks of 993,858
+  bytes (290 KB gzipped), +225 KB (29%) raw and +76 KB (35%) gzipped, behind a
+  deeper request chain (boot chunk and its imports, then SDK and integration
+  chunks and theirs). The app entry's own closure grew by 2 KB. Of it, a 52 KB
+  chunk is the exit-kit and give-up dialogs, which `RightPanel` reaches through
+  a static import of `VersionNotices.js`. The `versioning/ui.js` module is not
+  in the figure: only a versioning-active build loads it (counting it gives 19
+  files and about 1,046,000 bytes). It is a load-time cost only; no request,
+  DOM or storage changed. The fix, not made, is to import the notice and
+  dialog components lazily and only where a facade exists (`RightPanel.js`,
+  `PaymentModeRightPanel.js`).
+
+**What is easy to get wrong**
+
+- **Units.** The SDK mixes milliseconds (`config.exit.*`, `withdrawals[]
+  .expiry`, `request_settlement_pending.data`) and seconds
+  (`exit_release_pending`, `exit_locked`, `ownership_proof_wait.retry_after`,
+  `note.expiry_ts`). Every instant is checked into a believable window or it is
+  null; a unit slip must never print a 1970 date or arm a year 58000 timer.
+- **A service pause is not a deposit gate.** The SDK clears its manifest
+  problem only inside `assertServiceAvailable()` on an attempt, so a host
+  pre-block could strand a person. `native_vault_unverified` is an error-only
+  fact (the snapshot says available). `lastError` is not set by chat attempts,
+  so `api.js` has one presentation-only seam. A granted chat does not clear the
+  pause latch: the SDK reuses an active key without a service check.
+- **An error carries no balance.** Callers say what an attempt was about
+  (`{slot}`, `{noteId}`, `{recordId}`); an unattributed refusal is held 60 s
+  and never becomes a standing fact, so a set-aside record's refused action
+  cannot mark the live balance "used on another device". Note ids repeat across
+  vaults, so record actions pass `{recordId}`, checked against the loaded
+  deployment. `explainZkapiError` forwards only `{noteId, recordId}`; the chat
+  seam passes `{slot: true}`.
+- **Near expiry** is the SDK's flag (`config.exit.near_expiry`), possibly stale
+  by one reconcile; `sendGate` reads only that flag, never a held refusal.
+- **Settlement.** At or after the settlement time T the SDK makes every request
+  an escape that concedes the whole bound, and an emergency exit never waits.
+  The Withdraw view therefore depends on the kind of withdrawal and on T, T is
+  carried in the markup (a held wait disappears from the state when it runs
+  out), and a pick is spent per attempt. A settlement refusal can arrive before
+  the snapshot catches up, and the real `exit_release_pending` has no usable
+  instant.
+- **The signer never reads the SDK's saved plan to learn what was agreed.** It
+  records what the SDK proved, not what anyone confirmed. A repeat that names no
+  concession is held, as a cap, to what the signer itself accepted (its journal,
+  then page memory); nothing is persisted. The refusal words name no button,
+  because the SDK clears an unreserved escape plan before the words are
+  restored. Journal entries keep the mode signed and the exact amount so an
+  older build can still read them.
+- **`runtime.init()` takes the wallet lock** and Web Locks are not re-entrant:
+  await it before any host lock, and reload only inside it. The recheck and the
+  give-up both do. `preemptForExit` exists only in the `0.2.0` runtime.
+- **The kit.** The SDK sets `exported_seq` before the file is delivered, so
+  "exported" proves nothing. The download must run synchronously inside the
+  Save click, from inside the modal; the kit text is kept until the dialog
+  closes (Save again), the passphrase is dropped at creation. A static import of
+  the SDK's `exit-kit` subpath fails the name-parity gate; use the client
+  method behind a `typeof` guard. The exit RPC address is SDK-owned
+  (`zkapi-exit-rpc-url`) and bypasses the app's proxy; the host never touches
+  it.
+- **Credited payouts.** A credited, unclaimed record has `payoutVerified:
+  false`; it becomes true only through a proven claim (`claim_receipt`) or a
+  cleared credit (`credit_cleared`). One claim pays every credit of that
+  address, so `payoutClaimedAmount` is the total, and a credit made in the
+  claim's own block or later keeps its credit for a later claim.
+  `creditedAmount` and `finalBalance` are JS numbers, `stateBalance` and
+  `boundAtState` strings. `recordWithdrawalOutcome` branches on `payoutCredited`
+  before it says "Funds sent". A claim from the browser funding address needs
+  gas (`address_insufficient_eth`).
+- **Device flags.** The runtime derives `challengeObserved` for every published
+  record, while `deviceNotNewest` is written only together with
+  `challengeEvidence`, on restored and parked records; both are read as
+  booleans and the evidence never. The SDK writes "restore the newest backup or
+  exit kit" into such a record's `error`, so the row hides that sentence (this
+  app has no restore) and its own buttons, including "Check status".
+- **History** reads only the deposits and withdrawals stores (never the slot or
+  archives), is memory-only and has no actions on a foreign row (another vault's
+  note id would reach the loaded vault). It reads each store with a cursor and
+  projects every record as it arrives: `getAll` would hold every note state,
+  plan and proof of every other version in memory at once. A foreign status is
+  the last value the other build wrote. The legacy SDK's expiry rule lacks the
+  credited-payout clause; the host port follows the newer rule.
+- **The exit kit never reaches a clipboard.** There is no Copy button and no
+  clipboard call (a test traps `navigator.clipboard`, `execCommand` and the
+  source text): clipboards are synced and kept by managers. The passphrase is
+  selectable text, written down and retyped.
+- **A previous bundle has no watcher.** At a first activation the tabs still
+  open on today's dormant build have no watcher and no `stale_build` latch (the
+  app's own update toast only invites a reload). The SDK's foreign-wallet
+  refusal protects the note; a legacy deposit can still be started there until
+  the tab reloads, and only the operator's closure of the legacy routes stops
+  it. The rehearsal must not expect `stale_build` from that tab.
+- **The give-up bound is a min of a max.** `limit = min(ceiling, max(charge
+  cap, threshold at the quote))`: the ceiling binds below about $200 per ETH,
+  the threshold between $200 and $20,000, the cap above. "Dust is under a
+  dollar" is true only while one dollar is worth more than the cap.
+- **Amount normalizers differ on purpose.** The facade's `amountText` and
+  `ExitChoice.js` refuse `'007'` (the facade compares exact digits with the
+  balance a give-up was confirmed for); `versionState.mjs`, `copy.mjs`,
+  `exitRefusal.mjs`, `concessionV1.mjs` and `RecordExtras.js` canonicalize it
+  and take up to 30 digits, because they only print. All agree on every value
+  the SDK emits, and each copy's contract is pinned. Do not unify them without
+  that comparison in mind (the comment above `amountText` lists them).
+- **Give-up.** `archiveBrowserWallet` drops `journal`, `lease`,
+  `preparedWithdrawal`, `pendingDeposit`, `depositQuote` and `exitLock` and
+  keeps unfinished late attempts, which is why the verdict requires them
+  absent. `concession-v1` is `abandon.supported: false` until it has its own
+  review. The ETH ceiling exists because the SDK accepts any quote answer in
+  `(0, 1e18]`.
+- **The watcher must not wake on per-chat facts.** The facade fingerprints
+  `adapter.watchFacts(reading)`, which names (and removes) the facts that move
+  with every settled chat; a fact is dropped only by being named.
+- **Panel words.** A frozen balance says "frozen" (not "ready to finish"), and
+  a frozen balance another device used says the device words in the panel,
+  composer and toolbar chip as well as the dialog.
+- **Test traps.** `zkapi-ux-render.test.mjs` reads the LAST reduced-motion block
+  of `zkapi.css`, so a rule that needs one goes inside the existing block.
+  `blockSignature` keeps its `|+` marker and the digest of host markup is a
+  separate attribute. The vm sources have a free-identifier allowlist, so
+  `Blob`, `URL`, `navigator` and `crypto` live in dialog components. A page that
+  builds two test dialogs must not rely on `t.after` order for the clock. The
+  dialog's `explainZkapiError` uses the page singleton facade, so a test must
+  install the active version and attach that singleton. The payment group runs
+  one process per file, so `api.js` shims are safe in their own file.
+  - *Time bombs.* A test that seeds a fixture instant (the history fixtures sit
+    at 2026-11-15 and expire 30 days later) and reads it through code that uses
+    the real clock goes red on a date with no code change, and this repository
+    has no CI to say so. Pin `Date.now` (the boot test and `historyModal` in
+    the render test do) and check with a shifted clock.
+  - *Order and isolation.* Run each file alone, and shuffled
+    (`--test-randomize`), after adding a test: assigning a fake that carries
+    `dispatchEvent` or `now` onto a singleton such as `zkapiClient` replaces
+    the singleton's own for every later test (restore each on its owner),
+    `t.after` hooks run first in, first out, and a funding flow re-arms its own
+    timer unless the test stops it.
+    `zkapi-boot.test.mjs` drives timers and `performance.now` from a manual
+    clock (the origin must be a whole number) instead of sleeping.
+  - `acorn` is a pinned `devDependency` now: four tests parse sources with it
+    (`zkapi-wiring`, `zkapiVmSources`, `zkapiVmSourceCopies`,
+    `zkapiVersioningUiGraph`); it used to be a transitive one of `terser`.
+
+**Not done / next**
+
+- **Open item of `ownership-proof-wait`.** The dialog's continuing withdrawal
+  call sites (retry unknown, retry dropped, replace background, withdraw
+  set-aside) name no concession bound, so the signer refuses a conceding escape
+  there (Send Ethereum on a concession family only). It fails closed. It is
+  pinned by `wiring:ownership-proof-wait ... exactly the documented set`, a
+  passing test that lists the four call sites and fails when one is added or
+  the gap is closed; it is not a gate, so nothing refuses activation over it.
+  The recovery (start again from the Withdraw form, reached through "Use this
+  balance" for a set-aside balance, which is disabled while another balance
+  holds the wallet) is not always available. Closing it needs a product
+  decision about which bound applies to a balance the form is not showing.
+- A prepared emergency exit continued after a reload, once the state's bound has
+  dropped to 0, has no cap to show: cancel and start again.
+- No in-app claim for a payout of a version the app cannot open; support sends
+  `claimEscapePayout(destination)` to that vault.
+- Reviewing `concession-v1` for the give-up, a persisted "kit saved" mark (needs
+  a new key), an in-app decrypt check of a kit (needs a WebCrypto port of a
+  revision 3-only module) and deposit back-fill for foreign history are all
+  declined or deferred, with reasons in the guide.
+- The real-SDK rehearsal needs a published revision with a deployed profile for
+  the chosen proof setup (the host accepts the snapshot's `dev` bundle on
+  Sepolia; its profiles are placeholders); the recovery patch
+  (`wallet-recovery-v2c`) cannot be authored against unpublished bytes.
+- `chat/zkapi/versioning/index.js` is one large closure; splitting it needs the
+  shared state passed explicitly.
+- A balance of a retired version, or of one whose operator does not return, has
+  no in-app way out. This is a retirement precondition and a blocker: see the
+  [entry above](#2026-10-13-a-balance-the-page-holds-and-cannot-read) and the
+  guide's [Retire a version](ZKAPI_VERSIONING.md#retire-a-version).
+
+## 2026-10-10: Multi-version zkAPI support (dormant until activation)
+
+The guide is [ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md): concepts, registry,
+build, runtime, runbooks and a test map. This entry is the handoff: the current
+state and what is easy to get wrong. Build details are in
+[ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md#version-registry-and-lineage), privacy in
+[PRIVACY_MODEL.md](PRIVACY_MODEL.md#multi-version-zkapi-payments), and the one
+host write to the wallet slot in
+[ZKAPI_RECOVERY_REVIEW.md](ZKAPI_RECOVERY_REVIEW.md#boot-time-draft-discard-2026-10-10).
+
+- **State.** The versioning machinery is implemented; version 2 (circuit
+  `zkapi-v2-concession-v1`, SDK `0.2.0`, reference revision `4b955d9` on the
+  local zkapi `v0.2` branch, unpublished) is `pending`
+  on both networks and cannot be activated by a data edit (its host behaviors
+  are implemented since the
+  [2026-10-13 entry](#2026-10-13-version-2-protocol-wiring-history-and-give-up-still-dormant);
+  what holds it back is outside this repository). With one `active`
+  row per network the app is dormant: no probe, deposit guard, watcher or
+  version UI. The emitted SDK assets, rewrites, wallet database and
+  operator/RPC requests are unchanged; `zkapi.css`, `build.json` and the
+  JavaScript chunks are not, and a payment boot that cannot start now degrades
+  to ticket-only with one toast instead of rejecting `startChatApp` (see
+  [Dormant means identical](ZKAPI_VERSIONING.md#dormant-means-identical)).
+- **Activation is a data change plus an SDK pin and a recovery patch.** The
+  validator refuses a `concession-v1` row until `WIRED` lists its ten
+  `requiredWiring` names; since 2026-10-13 it lists all ten
+  (`service-message`, `credited-payouts`, `payout-alert`, `device-not-newest`,
+  `near-expiry`, `ownership-proof-wait`, `exit-kit`,
+  `withdrawal-operation-recheck`, `other-deployment-withdrawals`,
+  `other-deployment-credits`). The row still needs an SDK commit with deployed
+  profiles for the chosen proof setup (`mpc-1` or `dev`, both accepted; the
+  `0.2.0` package ships a `dev` bundle and placeholder profiles), a recovery
+  patch that provides the SDK half of the
+  withdrawal recheck (`PATCH_COVERAGE`; the registry check and the build refuse
+  the row without it), the operator's finalized manifest and schedule, and
+  updates to the tests that hard-code the dormant registry (the runner hides
+  the payment group until the architecture group passes). Runbook: [Activate a
+  new version](ZKAPI_VERSIONING.md#activate-a-new-version).
+- **Nothing is automated.** There is no CI configuration. `npm test`, the
+  registry check (`node scripts/zkapi-registry-cli.mjs check --base
+  origin/main`) and the builds are run by a person; the build accepts any
+  registry that validates on its own, including one that reverts an activation.
+
+**What is easy to get wrong**
+
+- **`3342c95` ignores `trusted_deployment.deposits`**, so "no new deposits on
+  this version" is entirely a host rule (four layers). The guard is
+  deny-by-default: a `/deposit/i` method no adapter list names is refused on a
+  closed version, so a read-only one must be listed as recovery. A lone
+  `exit-only` version is guarded too (`isVersioningActive` is false only for an
+  empty table or one `active` row); a tab told to reload takes no deposit
+  (`reload_required`).
+- **Both SDKs publish the same package name**; only the npm alias tells them
+  apart, class names are minified (never assert identity by `.name`), and
+  provenance keys on `circuitId`, `revision` and `deploymentId`.
+- **The shared slot is protected by the wallet lock plus `reload()`, not by the
+  store**: `writeBrowserWallet` is an unconditional full-slot `put`. Never bump
+  `DB_VERSION` (3) or rename the lock and channel; the build asserts them.
+- **A draft or unsent plan pins the wallet** (the SDK counts `depositQuote` and
+  `pendingDeposit` as durable state), and a closed version cannot discard its
+  own. `discardDepositDraft` is the host's automatic slot write, under the SDK's
+  lock; the other is the confirmed give-up of a zero or dust balance (through
+  the SDK's own archive transaction). An unsent plan is never "resumable".
+- **The holdings probe is version-less and read-only** (`indexedDB.open(name)`
+  never upgrades or creates). The SDK's own snapshot read writes, so it cannot
+  be used before the build is chosen. Unknown truthy slot keys count as held;
+  `knownSlotKeys()` and the drift guard must be re-run against each new store.
+- **The switch hint (`oa-zkapi-version-switch`) is deleted on consume; the
+  loop-guard log is a separate key** so a reload loop cannot reset its own
+  guard. Boot charges the guard only for a discard that happened.
+- **Boot budgets bind versioning-active builds only.** A dormant boot waits for
+  its code without a limit, as startup always did. The selection budget is
+  `probeMs * 3 + 250`: probe, discard and re-probe are one budget.
+- **Dormant pages keep the SDK's words**: the four protocol-version error
+  rewrites and the Welcome dialog's service line apply only when versioning is
+  active, because they name a version the dormant app never shows.
+- **The near-expiry cutoff applies to a send that would open a new key**, never
+  to a follow-up that reuses the session's live key.
+- **The forward-only check holds identity** (`identity_changed`,
+  `--allow-identity-change` for one reviewed change; `tombstone_mismatch` is
+  never overridable). Reopening version 1 while version 2 is `pending` fails
+  it; rollback preconditions (legacy admission and challenger still running,
+  before `X`) are the operator's and cannot be enforced here.
+- **`withdrawalConfirmed` and the `withdrawn` upgrade stage need proof**: a
+  record this tab saw close with `payoutVerified === true`. Empty holdings alone
+  prove nothing (an expired, claimed or archived balance also leaves the wallet
+  empty). Surfaces read `facade.flags()`, never storage.
+- **The four vm-evaluated sources** (`AccountModal.js`, `WelcomePanel.js`,
+  `WalletMethodControls.js`, `walletMethod.mjs`) are evaluated in a `vm` by
+  tests with imports stripped: they gain no import and no free identifier and
+  reach versions only through `zkapiClient.oaVersioning?.`
+  ([`zkapiVmSources.test.js`](../test/architecture/zkapiVmSources.test.js) pins
+  both). A new helper goes on `facade.ui`.
+- **`zkapi-ux-render.test.mjs` reads the LAST `prefers-reduced-motion` block of
+  `zkapi.css`.** The appended version styles have none; adding one after the
+  existing block breaks it. No new Tailwind utility was needed.
+- **Funding tests must stop their flows**: a flow re-arms its own status timer,
+  and `--test-force-exit` hides a leak that makes raw `node --test` hang.
+- **Main guards of modules that are also bundled** need a basename plus
+  realpath check (`patch-zkapi-sdk.mjs` and `zkapi-registry-cli.mjs` have one).
+  `generate-zkapi-vercel-config.mjs` still has the old comparison and does
+  nothing under a symlinked checkout: run it by its real path.
+- **Build pitfalls**: esbuild reports real paths (compare with `realpath`); a
+  side-effect-only import of the variant loader is tree-shaken with every
+  variant (boot must call `loadVariant`); the SDK `./build` "must not overwrite
+  its package" guard is bypassed by a non-realpath temp dir; the name-parity
+  scan reads esbuild's message wording, so an esbuild update that changes it
+  fails the parity tests. `parseTokenAmount` is host-owned
+  ([`tokenAmount.mjs`](../chat/zkapi/services/tokenAmount.mjs)) because `0.2.0`
+  does not export it.
+- **Retiring v1** removes its alias from `package.json` only once it is retired
+  on every network; a network where it is still live fails to build without it.
+  Retiring it at all strands every browser that still holds one of its notes
+  (no withdrawal, give-up or archive without its operator's manifest): the
+  precondition is in the
+  [2026-10-13 entry on a balance the page cannot read](#2026-10-13-a-balance-the-page-holds-and-cannot-read).
+- **Fixture upkeep**: after any SDK snapshot change run `verify-exports.mjs`
+  and `refresh-assets.mjs` in `test/fixtures/zkapi-sdk-v2-fixture/`; its
+  digests are tied to `4b955d9` (re-recorded on 2026-10-14; it was `82c8504`).
+- **Sweep-only funding scopes** release another build's saved non-sweep
+  transaction only on a finalized receipt or a finalized sender nonce past it;
+  the `replaced` rule needs an RPC that accepts the `finalized` tag for
+  `eth_getTransactionCount` (otherwise it fails closed). Retired-scope balance
+  reads are user gestures because each links the address to the RPC provider.
+
+**Not done / next**
+
+- **Activation** (runbook above): the v2 SDK pinned (`npm i
+  zkapi-sdk-v2c@github:...#<sha>`) with `sdk.source`, `revision`,
+  `storeSha256` and `gate.manifestSha256`; a recovery review with its own
+  `SDK_PATCHES` entry, `PATCH_COVERAGE` line and `.vercelignore` line; the
+  dormant-state tests; the registry check; the real-SDK rehearsal; a Sepolia
+  rehearsal; a composing host's routing, allowlist and artifact gates. The ten
+  wiring behaviors are done; the one open item of `ownership-proof-wait` is
+  recorded in the 2026-10-13 entry.
+- **Unverified against the real v2 SDK**: `runtime.manifest.deployment_id` and
+  `config.funding.contract_address` for the post-init identity check, the store
+  hash, and the deposit-guard drift test (it runs against the fixture package,
+  not the real one: the classification itself, run against the real `0.2.0`
+  client and runtime, reports no unlisted name, but nothing in the suite pins
+  it until the activation change points the test at the installed alias).
+  Snapshot shapes and several behaviors are now exercised against data and
+  code from the real `0.2.0` modules (see the 2026-10-13 entry), though not
+  against a deployed service.
+- **No real-browser run** of Web Locks, BroadcastChannel, the version-less open,
+  multi-tab races or the new UI; everything is spec-faithful fakes, element
+  mocks and bundled code in Node.
+- **Defaults to confirm**: legacy pin `3342c95` versus the unpublished re-cut
+  `9e1f3cd`; cookie and cohort exposure of `/zkapi/**` asset fetches. (The
+  other three that were open here are decided: other versions' history is
+  shown, a zero or dust balance can be given up, and the proof-setup rule is
+  one for both networks, accepting `mpc-1` and the single-party `dev`. See the
+  2026-10-13 entries.)
+- **Known gaps**: pre-rollout tabs can still start a legacy deposit until they
+  reload; a password-locked legacy funding row can be listed but not swept
+  (`address_locked`); a dropped non-sweep transaction on a retired scope has no
+  automatic release; `AccountModal` and `WelcomePanel` have no teardown.
+- **Small cleanups**: move `isVersioningActive` out of `versioning/index.js` so
+  `zkapiErrorCopy.mjs` need not import the facade (it also removes Node's
+  `MODULE_TYPELESS` warning from pure-`.mjs` tests); give
+  `scripts/generate-zkapi-vercel-config.mjs` the basename plus realpath guard.
+
 ## 2026-10-12: Remove Sepolia test tokens and the ERC-20 funding path
 
 - Sepolia is a native-ETH deployment identical to Mainnet except for the chain,
