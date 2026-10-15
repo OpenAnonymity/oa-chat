@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import patch from '../patches/zkapi-browser-sdk-wallet-recovery.mjs';
+import patchV2c from '../patches/zkapi-browser-sdk-v2c-recovery.mjs';
 import registry from '../deployments/zkapi/registry.json' with { type: 'json' };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -13,12 +14,13 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 // Package name the app's source imports and the first protocol version installs.
 const LEGACY_ALIAS = '@openanonymity/zkapi-browser-sdk';
 const LEGACY_PATCH = 'wallet-recovery-v1';
+const V2C_PATCH = 'wallet-recovery-v2c';
 
 // Reviewed repairs by the name a registry row lists in `sdk.patches`. A patch
 // is bound to one SDK revision and one set of file hashes; a new SDK revision
 // gets its own entry (and its own .vercelignore line), never an edit of this
 // one. A row naming a patch that is not listed here cannot be built.
-const SDK_PATCHES = Object.freeze({ [LEGACY_PATCH]: patch });
+const SDK_PATCHES = Object.freeze({ [LEGACY_PATCH]: patch, [V2C_PATCH]: patchV2c });
 
 // What each reviewed patch covers, by the protocol wiring name an adapter lists
 // in `requiredWiring` (chat/zkapi/versioning/wiring.mjs). Some wiring has a
@@ -39,7 +41,8 @@ const SDK_PATCHES = Object.freeze({ [LEGACY_PATCH]: patch });
 // provide that half (test/zkapi/zkapi-recovery-coverage.test.mjs pins that
 // every key is a registered patch and every value an adapter wiring name).
 export const PATCH_COVERAGE = Object.freeze({
-    [LEGACY_PATCH]: Object.freeze(['withdrawal-operation-recheck'])
+    [LEGACY_PATCH]: Object.freeze(['withdrawal-operation-recheck']),
+    [V2C_PATCH]: Object.freeze(['withdrawal-operation-recheck'])
 });
 
 export function zkapiSdkPatchProvenance(name = LEGACY_PATCH) {

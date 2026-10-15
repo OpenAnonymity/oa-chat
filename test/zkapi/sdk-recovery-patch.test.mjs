@@ -9,7 +9,12 @@ import { execFileSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { ZkapiClient } from '@openanonymity/zkapi-browser-sdk/client';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
-import registry from '../../deployments/zkapi/registry.json' with { type: 'json' };
+import { validRegistry } from './_registryFixtures.mjs';
+
+// The install guard is exercised on the dormant registry (version 1 live,
+// version 2 pending): the shipped file now has version 2 live on Sepolia, which
+// needs its own SDK and pin and is covered by the shipped-registry tests.
+const registry = validRegistry();
 import patch from '../../patches/zkapi-browser-sdk-wallet-recovery.mjs';
 import { patchRegisteredSdks, patchZkapiSdk, zkapiSdkPatchProvenance } from '../../scripts/patch-zkapi-sdk.mjs';
 
@@ -170,7 +175,8 @@ function retiredLegacyRegistry() {
 async function checkout(t, { registryData = registry, dependencies, legacy = false, successor = false } = {}) {
     const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'oa-patch-guard-')));
     t.after(() => fs.rm(temp, { recursive: true, force: true }));
-    for (const file of ['scripts/patch-zkapi-sdk.mjs', 'patches/zkapi-browser-sdk-wallet-recovery.mjs']) {
+    for (const file of ['scripts/patch-zkapi-sdk.mjs', 'patches/zkapi-browser-sdk-wallet-recovery.mjs',
+        'patches/zkapi-browser-sdk-v2c-recovery.mjs']) {
         await fs.mkdir(path.dirname(path.join(temp, file)), { recursive: true });
         await fs.copyFile(path.join(repositoryRoot, file), path.join(temp, file));
     }

@@ -24,16 +24,21 @@ import { concessionV1 } from '../../chat/zkapi/versioning/adapters/concessionV1.
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 
+// The SDK's helpers read protocol fixtures from outside its `sdk/` directory,
+// which an installed package does not ship: an unpacked repository has both.
+const hasHelpers = root => fs.existsSync(path.join(root, 'sdk/test/helpers/fake-bundler.mjs'))
+    && fs.existsSync(path.join(root, 'protocol/contracts/test/fixtures/transit-vectors.json'));
+
 function successorRoot() {
     if (process.env.ZKAPI_V2_SDK_DIR) {
         const root = path.resolve(process.env.ZKAPI_V2_SDK_DIR);
-        return fs.existsSync(path.join(root, 'sdk/test/helpers/fake-bundler.mjs')) ? root : null;
+        return hasHelpers(root) ? root : null;
     }
     const registry = JSON.parse(fs.readFileSync(path.join(repoRoot, 'deployments/zkapi/registry.json'), 'utf8'));
     for (const row of registry.versions) {
         if (row.sdk.alias === '@openanonymity/zkapi-browser-sdk') continue;
         const root = path.join(repoRoot, 'node_modules', row.sdk.alias);
-        if (fs.existsSync(path.join(root, 'sdk/test/helpers/fake-bundler.mjs'))) return root;
+        if (hasHelpers(root)) return root;
     }
     return null;
 }

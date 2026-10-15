@@ -60,39 +60,49 @@ function rejects(registry, code, pattern = null, overrides = {}) {
 // The shipped registry
 // ---------------------------------------------------------------------------
 
-test('the shipped registry validates against the reviewed profiles and is dormant', () => {
+test('the shipped registry validates against the reviewed profiles: v2 is active on Sepolia, dormant on mainnet', () => {
     const registry = JSON.parse(readText('deployments/zkapi/registry.json'));
     const profiles = {
         'mainnet.json': JSON.parse(readText('deployments/zkapi/mainnet.json')),
         'sepolia.json': JSON.parse(readText('deployments/zkapi/sepolia.json'))
     };
-    assert.equal(validateRegistry(registry, { profiles, adapters: getAdapter, lineage: 'fresh-20260930' }), registry);
+    assert.equal(validateRegistry(registry, { profiles, adapters: getAdapter, lineage: 'fresh-20260930', wired: WIRED }), registry);
     // Same formatting as the other deployments files.
     assert.equal(readText('deployments/zkapi/registry.json'), `${JSON.stringify(registry, null, 2)}\n`);
 
     for (const network of NETWORKS) {
-        assert.deepEqual(liveVersions(registry, network).map(row => row.id), ['v1']);
-        assert.equal(depositTarget(registry, network).id, 'v1');
-        const table = resolveRuntimeTable(registry, network, { profiles, sha256: sha256Hex });
-        // v2 is pending: not in the table, so no probe, facade or UI follows from it.
-        assert.deepEqual(table.map(version => version.id), ['v1']);
-        const [v1] = table;
         const profile = profiles[`${network}.json`];
+        const table = resolveRuntimeTable(registry, network, { profiles, sha256: sha256Hex });
+        const activated = network === 'sepolia';
+        // Mainnet: v2 is pending and not in the table, so no probe, facade or UI follows from it.
+        assert.deepEqual(liveVersions(registry, network).map(row => row.id), activated ? ['v1', 'v2'] : ['v1']);
+        assert.deepEqual(table.map(version => version.id), activated ? ['v1', 'v2'] : ['v1']);
+        assert.equal(depositTarget(registry, network).id, activated ? 'v2' : 'v1');
+        const [v1] = table;
         assert.equal(v1.deploymentId, profile.trusted_deployment.deployment_id);
         assert.equal(v1.chainId, profile.trusted_deployment.chain_id);
         assert.equal(v1.vault, profile.trusted_deployment.contract_address.toLowerCase());
-        assert.equal(v1.status, 'active');
-        assert.equal(v1.depositsOpen, true);
+        assert.equal(v1.status, activated ? 'exit-only' : 'active');
+        assert.equal(v1.depositsOpen, !activated);
         assert.equal(v1.assetBase, 'zkapi/');
         assert.equal(v1.proxyPath, '/zkapi-deployment/');
         // The legacy SDK ignores the deposits flag, so the emitted config is the
         // reviewed file, byte for byte.
         assert.equal(v1.configSha256, sha256Hex(readText(`deployments/zkapi/${network}.json`)));
         assert.equal(walletDatabaseName(registry, network), `zkapi-browser-wallet-fresh-20260930-${network}-v1`);
+        if (activated) {
+            const v2 = table[1];
+            assert.equal(v2.status, 'active');
+            assert.equal(v2.depositsOpen, true);
+            assert.equal(v2.proxyPath, '/zkapi-deployment-v2c/');
+            assert.equal(v2.assetBase, 'zkapi/v2c/');
+        }
     }
     const [v1, v2] = registry.versions;
     assert.equal(v1.networks.mainnet.activatedAt, '2026-09-30T00:00:00Z');
     assert.equal(v1.networks.sepolia.activatedAt, '2026-09-30T00:00:00Z');
+    assert.equal(v1.networks.sepolia.status, 'exit-only');
+    assert.equal(v2.networks.sepolia.status, 'active');
     assert.equal(v2.networks.mainnet.status, 'pending');
     assert.deepEqual(v2.networks.mainnet.config, { deployment_status: 'not_deployed' });
     assert.equal(v2.sdk.alias, 'zkapi-sdk-v2c');
@@ -100,34 +110,33 @@ test('the shipped registry validates against the reviewed profiles and is dorman
     assert.equal(v2.proxyPath, '/zkapi-deployment-v2c/');
 });
 
-test('the shipped registry matches the fixture registry and v2 still cannot go live from it', () => {
+test('the shipped registry differs from the fixture only by the Sepolia activation, and v2 mainnet still cannot go live', () => {
     const shipped = JSON.parse(readText('deployments/zkapi/registry.json'));
-    assert.deepEqual(shipped, validRegistry());
+    const fixture = validRegistry();
+    // Everything of mainnet is the dormant fixture's.
+    assert.deepEqual(shipped.versions[0].networks.mainnet, fixture.versions[0].networks.mainnet);
+    assert.deepEqual(shipped.versions[1].networks.mainnet, fixture.versions[1].networks.mainnet);
     // The host wiring of the successor family is implemented, so a perfect
     // activation passes the wiring gate with the checked-in set...
     validate(activatedRegistry(), { wired: WIRED });
-    // ...which means the shipped successor row is held back by what is still
-    // missing from it, not by wiring. Flipping its status alone is refused:
-    // first for the activation time it lacks, then, given one, for the profile
-    // it does not have (a placeholder is never deployable).
+    // ...and the shipped mainnet row is held back by what it still lacks:
+    // flipping its status alone is refused, first for the activation time it
+    // lacks, then, given one, for the profile it does not have.
     const flipped = withActivation => mutated(shipped, registry => {
-        for (const network of NETWORKS) {
-            registry.versions[1].networks[network].status = 'active';
-            if (withActivation) registry.versions[1].networks[network].activatedAt = '2026-11-01T00:00:00Z';
-        }
+        registry.versions[1].networks.mainnet.status = 'active';
+        if (withActivation) registry.versions[1].networks.mainnet.activatedAt = '2026-11-01T00:00:00Z';
     });
     rejects(flipped(false), 'activation_time', null, { wired: WIRED });
     rejects(flipped(true), 'profile', /not_deployed placeholder/, { wired: WIRED });
-    // And its recorded gates are all still open, each one a refusal of its own
-    // (the next test), so the activation change has real work to do.
+    // The recorded gates of the activated Sepolia row.
     const [, v2] = shipped.versions;
-    assert.equal(v2.sdk.source, null);
-    assert.equal(v2.sdk.revision, null);
-    assert.equal(v2.sdk.storeSha256, null);
-    assert.deepEqual(v2.sdk.patches, []);
-    assert.equal(v2.gate.recoveryReview.verdict, 'pending');
-    assert.equal(v2.gate.protocolWiring, 'pending');
-    assert.equal(v2.gate.manifestSha256, null);
+    assert.equal(v2.sdk.source, `github:OpenAnonymity/zkapi#${v2.sdk.revision}`);
+    assert.match(v2.sdk.revision, /^[0-9a-f]{40}$/);
+    assert.match(v2.sdk.storeSha256, /^[0-9a-f]{64}$/);
+    assert.deepEqual(v2.sdk.patches, ['wallet-recovery-v2c']);
+    assert.deepEqual(v2.gate.recoveryReview, { revision: v2.sdk.revision, verdict: 'not_required', patch: null });
+    assert.equal(v2.gate.protocolWiring, 'done');
+    assert.match(v2.gate.manifestSha256, /^[0-9a-f]{64}$/);
 });
 
 test('v2 stays pending because each of its other gates refuses on its own, with the host wiring in place', () => {

@@ -287,7 +287,9 @@ test('dormant registry: single mode emits exactly the legacy assets, bytes and r
     const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-dormant-single-'));
     t.after(() => fs.rm(temporary, { recursive: true, force: true }));
     const emittedBuild = projectRequire('esbuild').build;
-    for (const network of NETWORKS) {
+    // Sepolia has version 2 active (the activation change); only networks that
+    // still carry version 1 alone are dormant.
+    for (const network of NETWORKS.filter(name => name !== 'sepolia')) {
         const plan = registryModule.planFromRegistry({ network, deployment: DEPLOYMENT });
         assert.equal(plan.mode, 'single');
         assert.deepEqual(plan.versions.map(version => version.id), ['v1']);
@@ -325,6 +327,17 @@ test('dormant registry: single mode emits exactly the legacy assets, bytes and r
         assert.deepEqual(routing.rewrites[0], { source: '/zkapi-deployment/:path*', destination: `${origin}/:path*` });
         assert.equal(routing.rewrites.filter(rewrite => rewrite.source.startsWith('/zkapi-deployment')).length, 1);
     }
+    // The activated network: both versions, deposits to version 2, version 1
+    // at the root of its hostname and version 2 under its own /v0.2 subtree.
+    const activated = registryModule.planFromRegistry({ network: 'sepolia', deployment: DEPLOYMENT });
+    assert.equal(activated.mode, 'multi');
+    assert.deepEqual(activated.versions.map(version => version.id), ['v1', 'v2']);
+    assert.equal(activated.depositTarget, 'v2');
+    const root1 = new URL(activated.versions[0].config.trusted_deployment.protocol_server_url).origin;
+    assert.deepEqual(generator.zkapiProxyRewrites(activated), [
+        { source: '/zkapi-deployment/:path*', destination: `${root1}/:path*` },
+        { source: '/zkapi-deployment-v2c/v0.2/:path*', destination: `${root1}/v0.2/:path*` }
+    ]);
 });
 
 // One hostname for two deployments: the newer version is pinned under a plain
@@ -357,9 +370,11 @@ test('a second version served under a prefix of the first one\'s hostname is pla
             { source: '/zkapi-deployment-v2c/c/:path*', destination: `${origin}/c/:path*` }
         ]);
         const routing = generator.buildZkapiVercelConfig({ orgOrigin: 'https://org-staging.openanonymity.ai', network, deployment: DEPLOYMENT });
-        // The shipped registry's own v2 is still pending: nothing of this
-        // variant leaks into the generated configuration of the real one.
-        assert.equal(routing.rewrites.filter(rewrite => rewrite.source.startsWith('/zkapi-deployment-v2c')).length, 0);
+        // The shipped registry's own v2 is pending on mainnet (nothing of this
+        // variant leaks into it) and routed under /v0.2 on Sepolia.
+        assert.equal(routing.rewrites.filter(rewrite => rewrite.source.startsWith('/zkapi-deployment-v2c')).length,
+            network === 'sepolia' ? 1 : 0);
+        if (network === 'sepolia') assert.ok(routing.rewrites.some(rewrite => rewrite.source === '/zkapi-deployment-v2c/v0.2/:path*'));
     }
 });
 
@@ -377,7 +392,7 @@ test('a dormant single-version build emits the legacy tree, byte for byte, excep
     t.after(() => fs.rm(temporary, { recursive: true, force: true }));
     const emittedBuild = projectRequire('esbuild').build;
     const sdk = legacySdkRoot();
-    for (const network of NETWORKS) {
+    for (const network of NETWORKS.filter(name => name !== 'sepolia')) {
         const registered = await build.buildZkapiAssets({
             network, deployment: DEPLOYMENT, repoRoot: root, outDir: path.join(temporary, `${network}-registry`), build: emittedBuild
         });
@@ -1430,7 +1445,9 @@ test('a live version on the development setup is warned about once per build; mp
         assert.deepEqual((await emit(ceremony, network, `ceremony-${network}`)).warnings, [], network);
     }
 
-    // Nor does the shipped (dormant) registry: version 1 names no setup.
+    // Nor does the shipped registry where it is dormant (mainnet: version 1
+    // names no setup); its activated Sepolia row is on the development setup
+    // by the owner's decision and warns exactly once.
     const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-dormant-warning-'));
     t.after(() => fs.rm(temporary, { recursive: true, force: true }));
     for (const network of NETWORKS) {
@@ -1439,7 +1456,12 @@ test('a live version on the development setup is warned about once per build; mp
             network, deployment: DEPLOYMENT, repoRoot: root, outDir: path.join(temporary, network), build: esbuild.build,
             warn: message => warnings.push(message)
         });
-        assert.deepEqual(warnings, [], network);
+        if (network === 'sepolia') {
+            assert.equal(warnings.length, 1, warnings.join('\n'));
+            assert.match(warnings[0], /^\[build\] WARNING: zkAPI v2 on sepolia is built on the single-party development proof setup \(dev\)\./);
+        } else {
+            assert.deepEqual(warnings, [], network);
+        }
     }
 
     // The default sink is console.warn: the build prints it without a caller
@@ -1918,10 +1940,11 @@ test('the bundled Vercel generator imports only node built-ins and routes every 
             network, deployment: ${JSON.stringify(DEPLOYMENT)}, orgOrigin: 'https://org-staging.openanonymity.ai'
         }).rewrites.map(rewrite => rewrite.source))));
     `], { cwd: directory, encoding: 'utf8' });
-    for (const sources of JSON.parse(result)) {
-        assert.equal(sources[0], '/zkapi-deployment/:path*');
-        assert.deepEqual(sources.filter(source => source.startsWith('/zkapi-deployment')), ['/zkapi-deployment/:path*']);
-    }
+    const [mainnetSources, sepoliaSources] = JSON.parse(result);
+    for (const sources of [mainnetSources, sepoliaSources]) assert.equal(sources[0], '/zkapi-deployment/:path*');
+    assert.deepEqual(mainnetSources.filter(source => source.startsWith('/zkapi-deployment')), ['/zkapi-deployment/:path*']);
+    assert.deepEqual(sepoliaSources.filter(source => source.startsWith('/zkapi-deployment')),
+        ['/zkapi-deployment/:path*', '/zkapi-deployment-v2c/v0.2/:path*']);
 });
 
 test('Vercel source uploads allow exactly the reviewed registry file besides the pins', async t => {
@@ -1930,10 +1953,11 @@ test('Vercel source uploads allow exactly the reviewed registry file besides the
     await fs.copyFile('.vercelignore', path.join(directory, '.vercelignore'));
     execFileSync('git', ['init', '-q', directory]);
     const included = ['deployments/zkapi/registry.json', 'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json',
-        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'scripts/zkapi-registry-cli.mjs', 'scripts/zkapiRegistry.mjs',
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-v2c-recovery.mjs',
+        'scripts/zkapi-registry-cli.mjs', 'scripts/zkapiRegistry.mjs',
         'scripts/zkapiFacadePlugin.mjs', 'chat/zkapi/versioning/registryModel.mjs'];
     const excluded = ['deployments/zkapi/registry.json.bak', 'deployments/zkapi/other-registry.json',
-        'deployments/zkapi/nested/registry.json', 'patches/zkapi-browser-sdk-v2c-recovery.mjs'];
+        'deployments/zkapi/nested/registry.json', 'patches/zkapi-browser-sdk-unreviewed.mjs'];
     const ignored = execFileSync('git', ['-c', 'core.excludesFile=.vercelignore', 'check-ignore', '--no-index', '--stdin'], {
         cwd: directory, input: [...included, ...excluded].join('\n') + '\n', encoding: 'utf8'
     }).trim().split('\n');

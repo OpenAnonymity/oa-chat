@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import patch from '../../patches/zkapi-browser-sdk-wallet-recovery.mjs';
+import patchV2c from '../../patches/zkapi-browser-sdk-v2c-recovery.mjs';
 import { ADAPTER_IDS, getAdapter } from '../../chat/zkapi/versioning/adapters/index.mjs';
 import { RegistryError } from '../../chat/zkapi/versioning/registryModel.mjs';
 import { WIRED } from '../../chat/zkapi/versioning/wiring.mjs';
@@ -70,8 +71,9 @@ const covered = () => withPatches(activatedRegistry(), ['wallet-recovery-v1'], {
 
 test('PATCH_COVERAGE names registered patches and adapter wiring, and is not part of a patch entry', () => {
     assert.ok(Object.isFrozen(PATCH_COVERAGE));
-    assert.deepEqual(Object.keys(PATCH_COVERAGE), ['wallet-recovery-v1']);
+    assert.deepEqual(Object.keys(PATCH_COVERAGE), ['wallet-recovery-v1', 'wallet-recovery-v2c']);
     assert.deepEqual([...PATCH_COVERAGE['wallet-recovery-v1']], [RECHECK]);
+    assert.deepEqual([...PATCH_COVERAGE['wallet-recovery-v2c']], [RECHECK]);
     const everyName = new Set(ADAPTER_IDS.flatMap(id => getAdapter(id).requiredWiring));
     for (const [name, covers] of Object.entries(PATCH_COVERAGE)) {
         // A registered patch: provenance exists for it, and throws for any other.
@@ -90,11 +92,18 @@ test('PATCH_COVERAGE names registered patches and adapter wiring, and is not par
     assert.equal('coverage' in patch, false);
     assert.deepEqual(Object.keys(zkapiSdkPatchProvenance('wallet-recovery-v1')), ['name', 'revision', 'sha256', 'files']);
     assert.deepEqual(Object.keys(patch).sort(), ['files', 'revision']);
+    // The successor's entry rewrites nothing (its revision carries the SDK half
+    // itself) and is still bound to exactly that revision.
+    assert.deepEqual(patchV2c.files, []);
+    assert.match(patchV2c.revision, /^[0-9a-f]{40}$/);
+    assert.deepEqual(Object.keys(zkapiSdkPatchProvenance('wallet-recovery-v2c')), ['name', 'revision', 'sha256', 'files']);
+    assert.deepEqual(zkapiSdkPatchProvenance('wallet-recovery-v2c').files, {});
 });
 
 test('the reviewed patches are the map joined with the revision each patch is bound to', () => {
     assert.deepEqual(reviewedRecoveryPatches(), {
-        'wallet-recovery-v1': { revision: PATCH_REVISION, covers: [RECHECK] }
+        'wallet-recovery-v1': { revision: PATCH_REVISION, covers: [RECHECK] },
+        'wallet-recovery-v2c': { revision: patchV2c.revision, covers: [RECHECK] }
     });
     // A copy: changing it cannot change the map or the next answer.
     reviewedRecoveryPatches()['wallet-recovery-v1'].covers.push('payout-alert');
@@ -122,14 +131,18 @@ test('every behavior with a half in the SDK is wired by the host and required by
 // ---------------------------------------------------------------------------
 
 test('a registry whose successor is pending, or whose live rows need nothing, has no gap', () => {
-    // The shipped state: v1 live (a family that lists no such behavior), v2 pending.
+    // The fixture: v1 live (a family that lists no such behavior), v2 pending.
     assert.deepEqual(recoveryCoverageGaps(validRegistry()), []);
     const shipped = JSON.parse(fs.readFileSync(path.join(repoRoot, 'deployments/zkapi/registry.json'), 'utf8'));
     assert.deepEqual(recoveryCoverageGaps(shipped), []);
     assert.doesNotThrow(() => assertRecoveryCoverage(shipped));
-    // The successor is not live, so what its family lists is not asked of it.
+    // The shipped successor is live on Sepolia only, and its patch is the
+    // registered one for its own revision, so nothing is missing; mainnet is
+    // pending and is not asked for what its family lists.
     assert.equal(shipped.versions[1].adapter, 'concession-v1');
-    assert.deepEqual(NETWORKS.map(network => shipped.versions[1].networks[network].status), ['pending', 'pending']);
+    assert.deepEqual(NETWORKS.map(network => shipped.versions[1].networks[network].status), ['pending', 'active']);
+    assert.deepEqual(shipped.versions[1].sdk.patches, ['wallet-recovery-v2c']);
+    assert.equal(shipped.versions[1].sdk.revision, patchV2c.revision);
 });
 
 test('a live row of a family that lists the recheck, with no patch that covers it, is a gap', () => {
@@ -304,7 +317,8 @@ function mirror(t, registry) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'oa-registry-mirror-'));
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     for (const relative of ['scripts/zkapiRegistry.mjs', 'scripts/patch-zkapi-sdk.mjs', 'chat/zkapi/versioning',
-        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-v2c-recovery.mjs',
+        'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
         fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true });
         fs.cpSync(path.join(repoRoot, relative), path.join(directory, relative), { recursive: true });
     }
@@ -330,9 +344,11 @@ test('the shipped registry cannot be planned for a build while a live row lacks 
         assert.equal(planned.mode, 'multi', network);
         assert.deepEqual(planned.versions.map(version => version.id), ['v1', 'v2'], network);
     }
-    // And a build of the registry that ships today is unchanged.
+    // And a build of the registry that ships today plans: mainnet is still
+    // single, Sepolia has both versions with the registered covering patch.
     const shipped = await mirror(t, JSON.parse(fs.readFileSync(path.join(repoRoot, 'deployments/zkapi/registry.json'), 'utf8')));
     assert.equal(shipped.planFromRegistry({ network: 'mainnet', deployment: DEPLOYMENT }).mode, 'single');
+    assert.equal(shipped.planFromRegistry({ network: 'sepolia', deployment: DEPLOYMENT }).mode, 'multi');
     assert.equal(shipped.planFromRegistry({ network: 'mainnet', deployment: '' }).mode, 'sdk-default');
 });
 

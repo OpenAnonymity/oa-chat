@@ -3576,6 +3576,33 @@ price functions, and a wallet database dump written by the real store) for the
 host's normalizers, state, notices and history. Protocol behavior beyond what
 the rehearsal drives is verified only at activation.
 
+### 11.4a Activation record: version 2 on Sepolia
+
+Version 2 is `active` on Sepolia and version 1 `exit-only` there; mainnet is
+unchanged (version 1 `active`, version 2 `pending`).
+
+- **SDK pin.** `zkapi-sdk-v2c` is the commit `3e2ecf1` of the zkapi repository:
+  `4b955d9` plus the deployed Sepolia profile (setup `dev`), the re-synced asset
+  manifest and the SDK half of the withdrawal recheck (`prepareWithdrawal` takes
+  `expectedNoteId` and `expectedWithdrawalOperationId` and compares them inside
+  the wallet lock; `claimPreparedWithdrawalSubmission` compares the plan it is
+  about to claim). The recovery patch `wallet-recovery-v2c` therefore rewrites no
+  file: it binds the name to that revision and `PATCH_COVERAGE` covers
+  `withdrawal-operation-recheck` for it. The review verdict is `not_required`,
+  and the real-SDK rehearsal test passes unpatched.
+- **Hostname.** The deployment shares the hostname of version 1 under the plain
+  prefix `/v0.2` ([One hostname for several deployments](#one-hostname-for-several-deployments)).
+- **Proof setup.** `dev`, by the owner's decision; the build warns once per
+  build and `check` repeats it. A vault on these keys is never switched to
+  `mpc-1` (that is a new vault and a user migration).
+- **Sponsored withdrawals are off.** The reviewed profile pins `gasless: null`:
+  the operator's bundler release gates have not run, so no bundler route is
+  generated and the "paid from this withdrawal" choice is never drawn.
+- **Open items.** The `ownership-proof-wait` residue of
+  [11.1](#111-protocol-wiring-requiredwiring) and the dialogs' continuing-call
+  sites named in [11.5](#115-known-limits-and-support-runbooks) are accepted
+  as they were documented, not closed by this change.
+
 ### 11.5 Known limits and support runbooks
 
 - **Set-aside and continuing paths name no cap.** Retrying an unknown or dropped

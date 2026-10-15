@@ -15,6 +15,7 @@
 !/patches
 /patches/*
 !/patches/zkapi-browser-sdk-wallet-recovery.mjs
+!/patches/zkapi-browser-sdk-v2c-recovery.mjs
 !/deployments
 /deployments/*
 !/deployments/zkapi
