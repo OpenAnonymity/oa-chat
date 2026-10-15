@@ -3581,12 +3581,15 @@ the rehearsal drives is verified only at activation.
 Version 2 is `active` on Sepolia and version 1 `exit-only` there; mainnet is
 unchanged (version 1 `active`, version 2 `pending`).
 
-- **SDK pin.** `zkapi-sdk-v2c` is the commit `3e2ecf1` of the zkapi repository:
+- **SDK pin.** `zkapi-sdk-v2c` is the commit `7320d5e` of the zkapi repository:
   `4b955d9` plus the deployed Sepolia profile (setup `dev`), the re-synced asset
   manifest and the SDK half of the withdrawal recheck (`prepareWithdrawal` takes
   `expectedNoteId` and `expectedWithdrawalOperationId` and compares them inside
   the wallet lock; `claimPreparedWithdrawalSubmission` compares the plan it is
-  about to claim). The recovery patch `wallet-recovery-v2c` therefore rewrites no
+  about to claim) and accepts the host's provider-key policy (`verifyProviderKey`
+  and `assertProviderKey`, as the legacy line has through its host patch; a page
+  that passes them to an SDK that refuses the names cannot start its wallet).
+  The recovery patch `wallet-recovery-v2c` therefore rewrites no
   file: it binds the name to that revision and `PATCH_COVERAGE` covers
   `withdrawal-operation-recheck` for it. The review verdict is `not_required`,
   and the real-SDK rehearsal test passes unpatched.

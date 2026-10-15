@@ -365,3 +365,23 @@ test('wiring:exit-kit exportExitKit seals a kit and marks it exported before the
     await runtime.reload();
     assert.equal(runtime.runtime.exitKitExportedSeq, 4);
 });
+
+test('the successor SDK accepts every option the host configures it with', { skip }, async () => {
+    // The host passes the same options to whichever SDK a version binds. One
+    // it refuses (an option the legacy line gained by a host patch, for
+    // example the provider-key policy) stops the wallet from starting at all.
+    const source = fs.readFileSync(path.join(repoRoot, 'chat/zkapi/index.js'), 'utf8');
+    const block = /configureBrowserSdk\(\{([\s\S]*?)\n    \}\);/.exec(source)?.[1] || '';
+    const names = [...block.matchAll(/^\s{8}(\w+)\s*[:,]/gm)].map(match => match[1]);
+    assert.ok(names.includes('verifyProviderKey') && names.includes('assertProviderKey'), 'the host policy is among them');
+    const { configureBrowserSdk, browserSdkOptions } = await import(pathToFileURL(path.join(root, 'sdk/configure.js')).href);
+    const values = {
+        configUrl: 'https://app.example/zkapi/v2c/browser-config.json', workerUrl: 'https://app.example/zkapi/v2c/worker.js',
+        mode: 'browser', requestTestnetPassword: async () => '', verifyProviderKey: async () => ({ status: 'verified' }),
+        assertProviderKey: () => {}, transport: async () => new Response('{}')
+    };
+    const given = Object.fromEntries(names.map(name => [name, values[name]]));
+    for (const name of names) assert.notEqual(values[name], undefined, `the test knows ${name}`);
+    assert.doesNotThrow(() => configureBrowserSdk(given));
+    assert.equal(typeof browserSdkOptions().verifyProviderKey, 'function');
+});
