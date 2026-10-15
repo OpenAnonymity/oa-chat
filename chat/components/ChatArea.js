@@ -3081,6 +3081,30 @@ export default class ChatArea {
     }
 
     /**
+     * The model is thinking again after part of its answer (a tool call in
+     * between). Its settled header goes back to the shimmering "Thinking...";
+     * the next answer words settle it with the new duration.
+     * @param {string} messageId - The message ID
+     */
+    resumeReasoningDisplay(messageId) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.textContent = 'Thinking...';
+        subtitleEl.classList.add('reasoning-subtitle-streaming');
+    }
+
+    /**
+     * Wordless thinking (the provider withheld the words) is over: the header
+     * is all there is, so it takes the new duration. A trace with words
+     * settles through settleReasoningDisplay instead.
+     * @param {string} messageId - The message ID
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleWithheldReasoningDisplay(messageId, reasoningDuration) {
+        this.updateReasoningSubtitleToDuration(messageId, reasoningDuration);
+    }
+
+    /**
      * Updates the reasoning subtitle to show duration when thinking completes.
      * Called when output starts streaming after reasoning finishes.
      * @param {string} messageId - The message ID

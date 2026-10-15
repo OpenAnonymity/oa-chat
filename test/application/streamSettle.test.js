@@ -291,3 +291,56 @@ test('the required save still holds the composer: a follow-up waits for the repl
     assert.equal(calls, 2);
     assert.equal(assistant().at(-1).content, 'Follow-up answer.');
 });
+
+// A model that answers in segments (Grok with search: think, a line of answer,
+// a search while it thinks again with its words withheld, the rest) must not
+// look finished after its first line.
+test('wordless thinking after part of the answer shows Thinking again until the answer continues', async t => {
+    const restore = installBrowser();
+    const tick = () => new Promise(resolve => setTimeout(resolve, 15));
+    let duringSearch = null;
+    const { app, assistant, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('', { withheld: true });
+        await tick();
+        await chunk('I will look it up.');
+        await reasoning('', { withheld: true, resumed: true });
+        duringSearch = { record: structuredClone(assistant().at(-1)), calls: paints.map(call => call.name) };
+        await tick();
+        await chunk('\n\nA few repos match.');
+        await chunk(' More.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.ok(duringSearch.calls.includes('resumeReasoningDisplay'), 'the settled header says Thinking... again');
+    const settleCalls = paints.filter(call => call.name === 'settleWithheldReasoningDisplay');
+    assert.equal(settleCalls.length, 1, 'the next words settle it once, not on every chunk');
+    assert.ok(paints.findIndex(call => call.name === 'resumeReasoningDisplay')
+        < paints.findIndex(call => call.name === 'settleWithheldReasoningDisplay'));
+    assert.ok(settleCalls[0].args[1] >= 30, 'the duration runs to the end of the second thinking segment');
+    const settled = assistant().at(-1);
+    assert.equal(settled.content, 'I will look it up.\n\nA few repos match. More.');
+    assert.equal(settled.streamingReasoning, false);
+    assert.equal(settled.reasoningWithheld, true);
+    assert.ok(settled.reasoningDuration >= 30);
+});
+
+test('a resumed signal for a trace with words reopens it; the next words settle it through the usual path', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('Looking at the question.');
+        await chunk('First line.');
+        await reasoning('', { withheld: true, resumed: true });
+        await chunk('\n\nSecond line.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    const names = paints.map(call => call.name);
+    const resumed = names.indexOf('resumeReasoningDisplay');
+    assert.ok(resumed > names.indexOf('settleReasoningDisplay'), 'reopened after the first settle');
+    assert.ok(names.indexOf('settleReasoningDisplay', resumed) > resumed, 'settled again at the next words');
+    assert.equal(names.includes('settleWithheldReasoningDisplay'), false);
+});

@@ -5199,6 +5199,32 @@ class ChatApp {
     }
 
     /**
+     * A model that answers in segments (answer a line, call a tool, think,
+     * answer on) is not done when its first words arrive. When it thinks
+     * again, its settled trace goes back to "Thinking..." so the reply does
+     * not look finished while the model is still working.
+     * @returns {boolean} true when the thinking has no words (the caller
+     *   settles it at the next content); words settle through the usual path
+     */
+    resumeThinkingDisplay(streamingMessage, streamedReasoning, sessionId) {
+        const wordless = !streamedReasoning;
+        if (wordless) streamingMessage.streamingReasoning = true;
+        if (this.chatArea && this.isViewingSession(sessionId)) {
+            this.chatArea.resumeReasoningDisplay(streamingMessage.id);
+        }
+        return wordless;
+    }
+
+    /** The answer continued after wordless thinking: time the trace again. */
+    settleResumedWithheldThinking(streamingMessage, reasoningStartTime, sessionId) {
+        streamingMessage.streamingReasoning = false;
+        streamingMessage.reasoningDuration = Date.now() - reasoningStartTime;
+        if (this.chatArea && this.isViewingSession(sessionId)) {
+            this.chatArea.settleWithheldReasoningDisplay(streamingMessage.id, streamingMessage.reasoningDuration);
+        }
+    }
+
+    /**
      * Checks if the user is currently viewing the specified session.
      * Used to gate UI updates for streaming to prevent cross-session pollution.
      * @param {string} sessionId - Session ID to check
@@ -7544,6 +7570,9 @@ class ChatApp {
                 const SAVE_INTERVAL_CHARS = 100;
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
+                // Wordless thinking that resumed after part of the answer; the
+                // next content settles it again.
+                let resumedWithheldThinking = false;
 
                 // Stop settles this reply from the catch block below while a
                 // delivery callback can still be inside one of its awaited
@@ -7608,6 +7637,10 @@ class ChatApp {
                                         reasoningEndTime - reasoningStartTime
                                     );
                                 }
+                            } else if (resumedWithheldThinking) {
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id);
+                                resumedWithheldThinking = false;
+                                reasoningEndTime = Date.now();
                             }
                         }
 
@@ -7662,6 +7695,10 @@ class ChatApp {
                                 this.updateSessionStreamingPhase(session.id, 'thinking');
                                 streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                                 if (typingId) this.updateTypingIndicator(typingId, 'thinking');
+                            } else if (meta.resumed && firstChunkReceived && reasoningEndTime) {
+                                // Thinking again after part of the answer: the trace says so until the answer continues.
+                                reasoningEndTime = null;
+                                resumedWithheldThinking = this.resumeThinkingDisplay(streamingMessage, streamedReasoning, session.id);
                             }
                             return;
                         }
@@ -7721,7 +7758,7 @@ class ChatApp {
                 streamingMessage.citations = tokenData.citations || null;
 
                 // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
+                if ((streamingMessage.reasoning || streamingMessage.reasoningWithheld) && reasoningStartTime) {
                     streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
                 }
 
@@ -8417,6 +8454,9 @@ class ChatApp {
                 let firstContentChunk = true; // Track when content starts (after reasoning)
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
+                // Wordless thinking that resumed after part of the answer; the
+                // next content settles it again.
+                let resumedWithheldThinking = false;
                 ({
                     processedMessages,
                     memoryGenerationAtProcess
@@ -8473,6 +8513,8 @@ class ChatApp {
                                         );
                                     }
                                     firstContentChunk = false; // Mark that we've handled the transition
+                                } else if (streamingMessage.reasoningWithheld && reasoningStartTime) {
+                                    firstContentChunk = false;
                                 }
                             }
 
@@ -8510,6 +8552,11 @@ class ChatApp {
                                         reasoningDuration
                                     );
                                 }
+                            } else if (resumedWithheldThinking) {
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id);
+                                resumedWithheldThinking = false;
+                                firstContentChunk = false;
+                                reasoningEndTime = Date.now();
                             }
                         }
 
@@ -8564,6 +8611,11 @@ class ChatApp {
                                 this.updateSessionStreamingPhase(session.id, 'thinking');
                                 streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                                 if (typingId) this.updateTypingIndicator(typingId, 'thinking');
+                            } else if (meta.resumed && firstChunkReceived && reasoningEndTime) {
+                                // Thinking again after part of the answer: the trace says so until the answer continues.
+                                reasoningEndTime = null;
+                                firstContentChunk = true;
+                                resumedWithheldThinking = this.resumeThinkingDisplay(streamingMessage, streamedReasoning, session.id);
                             }
                             return;
                         }
@@ -8621,7 +8673,7 @@ class ChatApp {
                 streamingMessage.citations = tokenData.citations || null;
 
                 // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
+                if ((streamingMessage.reasoning || streamingMessage.reasoningWithheld) && reasoningStartTime) {
                     // Use already-calculated end time if available, otherwise calculate now
                     const finalReasoningEndTime = reasoningEndTime || Date.now();
                     streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
