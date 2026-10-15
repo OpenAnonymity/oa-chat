@@ -1,3 +1,4 @@
+import { STILL_WORKING_DELAY_MS } from './services/streamSegments.js';
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
 import { reportDiagnostic } from './services/diagnostics.js';
@@ -5218,12 +5219,43 @@ class ChatApp {
         return wordless;
     }
 
-    /**
-     * The answer continued after wordless thinking: record the time so far.
-     * The header itself keeps saying "Thinking..." until the reply completes.
-     */
-    settleResumedWithheldThinking(streamingMessage, reasoningStartTime) {
+    /** The answer continued after wordless thinking: the header takes the new time. */
+    settleResumedWithheldThinking(streamingMessage, reasoningStartTime, sessionId) {
+        streamingMessage.streamingReasoning = false;
         streamingMessage.reasoningDuration = Date.now() - reasoningStartTime;
+        if (this.chatArea && this.isViewingSession(sessionId)) {
+            this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
+        }
+    }
+
+    /**
+     * "Still working…" under a reply whose text has stalled: armed by each
+     * answer chunk, shown after STILL_WORKING_DELAY_MS without new text,
+     * cleared by text, by thinking (the header says so) and by the end.
+     */
+    createStillWorkingSignal(messageId, sessionId, turnStopped) {
+        let timer = null;
+        let shown = false;
+        const show = (working) => {
+            if (shown === working) return;
+            shown = working;
+            if (this.chatArea && this.isViewingSession(sessionId)) {
+                this.chatArea.setStreamingStillWorking?.(messageId, working);
+            }
+        };
+        const clear = () => {
+            if (timer) clearTimeout(timer);
+            timer = null;
+            show(false);
+        };
+        const arm = () => {
+            clear();
+            timer = setTimeout(() => {
+                timer = null;
+                if (!turnStopped()) show(true);
+            }, STILL_WORKING_DELAY_MS);
+        };
+        return { arm, clear };
     }
 
     /**
@@ -7502,6 +7534,7 @@ class ChatApp {
             // How long the model has been thinking, readable from the catch
             // below (the timing variables live inside the attempt).
             let thinkingDuration = () => null;
+            let stillWorking = { arm() {}, clear() {} };
             let streamedContent = '';
             let streamedReasoning = '';
             let firstChunkReceived = false;
@@ -7589,6 +7622,7 @@ class ChatApp {
                 // IndexedDB writes. A callback that starts or resumes after Stop
                 // must neither change the reply nor repaint it.
                 const turnStopped = () => abortController.signal.aborted;
+                stillWorking = this.createStillWorkingSignal(streamingMessageId, session.id, turnStopped);
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -7597,6 +7631,7 @@ class ChatApp {
                     session,
                     async (chunk, imageData) => {
                         if (turnStopped()) return;
+                        if (chunk) stillWorking.arm();
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -7609,7 +7644,6 @@ class ChatApp {
                             if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
                                 reasoningEndTime = Date.now();
                                 streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
-                                streamingMessage.streamingReasoning = true; // still thinking until the reply completes
                             }
 
                             // Handle text content
@@ -7647,10 +7681,9 @@ class ChatApp {
                                         streamedReasoning,
                                         reasoningEndTime - reasoningStartTime
                                     );
-                                    this.chatArea.resumeReasoningDisplay(streamingMessageId); // the header stays on Thinking... until the reply completes
                                 }
                             } else if (resumedWithheldThinking) {
-                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime);
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id);
                                 resumedWithheldThinking = false;
                                 reasoningEndTime = Date.now();
                             }
@@ -7699,6 +7732,7 @@ class ChatApp {
                     },
                     async (reasoningChunk, meta) => {
                         if (turnStopped()) return;
+                        stillWorking.clear();
                         // Reasoning the provider withholds: no words to show, so the
                         // pending line says "Thinking..." and the trace is timed from here.
                         if (meta?.withheld) {
@@ -7752,6 +7786,7 @@ class ChatApp {
                 );
 
                 // Save the final message content with token data, reasoning, and citations
+                stillWorking.clear();
                 this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
                 if (streamingMessage.scrubber) {
@@ -7811,6 +7846,7 @@ class ChatApp {
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
+                stillWorking.clear();
                 if (typingId) this.removeTypingIndicator(typingId);
 
                 if (error?.isCancelled) {
@@ -8410,6 +8446,7 @@ class ChatApp {
             // How long the model has been thinking, readable from the catch
             // below (the timing variables live inside the attempt).
             let thinkingDuration = () => null;
+            let stillWorking = { arm() {}, clear() {} };
             let firstChunkReceived = false;
             let streamedContent = '';
             let streamedReasoning = '';
@@ -8501,6 +8538,7 @@ class ChatApp {
                 // IndexedDB writes. A callback that starts or resumes after Stop
                 // must neither change the reply nor repaint it.
                 const turnStopped = () => abortController.signal.aborted;
+                stillWorking = this.createStillWorkingSignal(streamingMessageId, session.id, turnStopped);
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -8509,6 +8547,7 @@ class ChatApp {
                     session,
                     async (chunk, imageData) => {
                         if (turnStopped()) return;
+                        if (chunk) stillWorking.arm();
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -8519,7 +8558,6 @@ class ChatApp {
                             if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
                                 reasoningEndTime = Date.now();
                                 streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
-                                streamingMessage.streamingReasoning = true; // still thinking until the reply completes
                             }
 
                             // Handle text content
@@ -8540,7 +8578,6 @@ class ChatApp {
                                             streamedReasoning,
                                             reasoningDuration
                                         );
-                                        this.chatArea.resumeReasoningDisplay(streamingMessageId); // the header stays on Thinking... until the reply completes
                                     }
                                     firstContentChunk = false; // Mark that we've handled the transition
                                 } else if (streamingMessage.reasoningWithheld && reasoningStartTime) {
@@ -8581,10 +8618,9 @@ class ChatApp {
                                         streamedReasoning,
                                         reasoningDuration
                                     );
-                                    this.chatArea.resumeReasoningDisplay(streamingMessageId); // the header stays on Thinking... until the reply completes
                                 }
                             } else if (resumedWithheldThinking) {
-                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime);
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id);
                                 resumedWithheldThinking = false;
                                 firstContentChunk = false;
                                 reasoningEndTime = Date.now();
@@ -8634,6 +8670,7 @@ class ChatApp {
                     },
                     async (reasoningChunk, meta) => {
                         if (turnStopped()) return;
+                        stillWorking.clear();
                         // Reasoning the provider withholds: no words to show, so the
                         // pending line says "Thinking..." and the trace is timed from here.
                         if (meta?.withheld) {
@@ -8686,6 +8723,7 @@ class ChatApp {
                 );
 
                 // Save the final message content with token data, reasoning, and citations
+                stillWorking.clear();
                 this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
                 if (streamingMessage.scrubber) {
@@ -8747,6 +8785,7 @@ class ChatApp {
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
+                stillWorking.clear();
                 if (typingId) this.removeTypingIndicator(typingId);
                 // A turn that never produced a chunk leaves no pending row
                 // behind; the branches below persist the outcome themselves.

@@ -1583,7 +1583,8 @@ a.quick-ask-source:focus-visible {
 
 /* Output already shown, model not finished: same shimmer as the pending
    line, aligned to the response text. */
-.council-lane-working {
+.council-lane-working,
+.message-still-working {
     padding: 0 1rem 0.5rem;
     line-height: 1.25;
 }
