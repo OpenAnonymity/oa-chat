@@ -1,4 +1,4 @@
-import { showSurface, hideSurface } from '../ui/uiMotion.js';
+import { showSurface, hideSurface, motionDuration } from '../ui/uiMotion.js';
 /**
  * Sidebar Component
  * Manages the left sidebar including session list rendering and session controls.
@@ -17,6 +17,31 @@ const SIDEBAR_DEFAULT_WIDTH = 220;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 420;
 const SIDEBAR_SNAPSHOT_KEY = 'oa-left-sidebar-width';
+const SESSION_MENU_GAP = 4;
+const SESSION_MENU_MARGIN = 8;
+
+/**
+ * Places a chat row's menu against its ··· button, in viewport coordinates.
+ * It opens below the button and flips above only when it does not fit below
+ * but fits (or has more room) above; when neither side fits it takes the
+ * roomier side and reports a maxHeight so the menu scrolls instead of clipping.
+ */
+export function placeSessionMenu(anchor, size, viewport, { gap = SESSION_MENU_GAP, margin = SESSION_MENU_MARGIN } = {}) {
+    const below = viewport.height - anchor.bottom - gap - margin;
+    const above = anchor.top - gap - margin;
+    const side = size.height <= below || below >= above ? 'bottom' : 'top';
+    const room = Math.max(0, side === 'bottom' ? below : above);
+    const height = Math.min(size.height, room);
+    const top = side === 'bottom' ? anchor.bottom + gap : anchor.top - gap - height;
+    const maxLeft = viewport.width - margin - size.width;
+    const left = Math.max(margin, Math.min(anchor.right - size.width, maxLeft));
+    return {
+        side,
+        top: Math.round(top),
+        left: Math.round(left),
+        maxHeight: height < size.height ? Math.floor(height) : null
+    };
+}
 
 export default class Sidebar {
     /**
@@ -34,6 +59,8 @@ export default class Sidebar {
         this.virtualScrollRaf = null;
         this.listenersAttached = false;
         this.deletingSessionIds = new Set();
+        this.floatingMenu = null;
+        this.floatingMenuSessionId = null;
         this.requestAnimationFrame = globalThis.requestAnimationFrame?.bind(globalThis) ||
             (callback => globalThis.setTimeout?.(callback, 0));
         this.initialViewportSettled = false;
@@ -222,7 +249,7 @@ export default class Sidebar {
                     <button class="${starButtonClass}" aria-label="${starLabel}" title="${starLabel}" aria-pressed="${isStarred ? 'true' : 'false'}" data-session-id="${this.escapeHtmlAttribute(session.id)}">
                         ${this.getStarIconSvg(isStarred)}
                     </button>
-                    <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground border border-transparent h-9 w-9 opacity-0 group-hover:opacity-100" aria-label="Session options" data-session-id="${session.id}">
+                    <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground border border-transparent h-9 w-9 opacity-0 group-hover:opacity-100" aria-label="Session options" aria-haspopup="menu" aria-expanded="false" data-session-id="${session.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
                         </svg>
@@ -259,7 +286,7 @@ export default class Sidebar {
         scrollArea?.addEventListener('pointerdown', releaseInitialViewport, { passive: true });
         scrollArea?.addEventListener('keydown', releaseInitialViewport);
 
-        list.addEventListener('click', async (e) => {
+        const handleClick = async (e) => {
             this.releaseInitialViewportSettlement();
             const starBtn = e.target.closest('.session-star-btn');
             if (starBtn) {
@@ -365,12 +392,7 @@ export default class Sidebar {
             const menuBtn = e.target.closest('.session-menu-btn');
             if (menuBtn) {
                 e.stopPropagation();
-                const sessionId = menuBtn.dataset.sessionId;
-                const menu = list.querySelector(`.session-menu[data-session-id="${sessionId}"]`);
-                this.closeAllMenus(menu);
-                if (menu) {
-                    menu.classList.contains('hidden') ? showSurface(menu, 'dropdown') : hideSurface(menu);
-                }
+                this.toggleSessionMenu(menuBtn);
                 return;
             }
 
@@ -385,6 +407,21 @@ export default class Sidebar {
                 this.closeAllMenus();
                 this.app.switchSession(sessionId);
             }
+        };
+        this.handleSessionListClick = handleClick;
+        list.addEventListener('click', handleClick);
+
+        // The open menu lives at body level (see openSessionMenu), so it
+        // needs its own outside-click, Escape and resize handling.
+        const doc = list.ownerDocument;
+        doc?.addEventListener?.('click', (e) => {
+            if (this.floatingMenu && !this.floatingMenu.contains(e.target)) this.closeFloatingMenu();
+        });
+        doc?.addEventListener?.('keydown', (e) => {
+            if (e.key === 'Escape' && this.floatingMenu) this.closeFloatingMenu({ restoreFocus: true });
+        });
+        doc?.defaultView?.addEventListener?.('resize', () => {
+            if (this.floatingMenu) this.closeFloatingMenu();
         });
 
         list.addEventListener('keydown', (e) => {
@@ -602,7 +639,124 @@ export default class Sidebar {
         this.app.updateToolbarDivider();
     }
 
+    /**
+     * Opens or closes a chat row's menu from its ··· button.
+     * @param {HTMLElement} button
+     */
+    toggleSessionMenu(button) {
+        const wasOpen = this.isFloatingMenuOpen(button?.dataset?.sessionId);
+        this.closeAllMenus();
+        if (!wasOpen) this.openSessionMenu(button);
+    }
+
+    isFloatingMenuOpen(sessionId = null) {
+        const menu = this.floatingMenu;
+        if (!menu?.isConnected || menu.classList.contains('hidden')) return false;
+        return sessionId == null || this.floatingMenuSessionId === sessionId;
+    }
+
+    /**
+     * The row's menu markup is a template: a copy is shown at body level so
+     * the scrolling list (overflow) can never clip it, placed by
+     * placeSessionMenu against the button.
+     * @param {HTMLElement} button
+     */
+    openSessionMenu(button) {
+        const row = button?.closest?.('.chat-session');
+        const template = row?.querySelector('.session-menu');
+        const doc = button?.ownerDocument;
+        if (!template || !doc?.body) return;
+
+        doc.querySelectorAll('.session-menu--floating').forEach(stale => stale.remove());
+        const menu = template.cloneNode(true);
+        menu.classList.add('session-menu--floating');
+        menu.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.handleSessionListClick?.(e);
+        });
+        doc.body.appendChild(menu);
+        this.floatingMenu = menu;
+        this.floatingMenuSessionId = button.dataset.sessionId;
+        this.positionFloatingMenu(button);
+        this.setSessionMenuAnchorState(row, button, true);
+        showSurface(menu, 'dropdown');
+    }
+
+    positionFloatingMenu(button) {
+        const menu = this.floatingMenu;
+        if (!menu || !button?.getBoundingClientRect) return;
+        const doc = menu.ownerDocument;
+        const view = doc.defaultView;
+        const wasHidden = menu.classList.contains('hidden');
+        menu.style.maxHeight = '';
+        // Measured in the same task it is shown in, so the hidden state never paints.
+        if (wasHidden) menu.classList.remove('hidden');
+        const size = { width: menu.offsetWidth, height: menu.offsetHeight };
+        if (wasHidden) menu.classList.add('hidden');
+        const viewport = {
+            width: doc.documentElement?.clientWidth || view?.innerWidth || 0,
+            height: view?.innerHeight || doc.documentElement?.clientHeight || 0
+        };
+        const place = placeSessionMenu(button.getBoundingClientRect(), size, viewport);
+        menu.style.top = `${place.top}px`;
+        menu.style.left = `${place.left}px`;
+        menu.style.maxHeight = place.maxHeight ? `${place.maxHeight}px` : '';
+        menu.dataset.side = place.side;
+        menu.dataset.origin = place.side === 'top' ? 'bottom-right' : 'top-right';
+    }
+
+    findSessionRow(sessionId) {
+        const list = this.app.elements.sessionsList;
+        if (!list || sessionId == null) return null;
+        return [...list.querySelectorAll('.chat-session')]
+            .find(row => row.dataset.sessionId === sessionId) || null;
+    }
+
+    setSessionMenuAnchorState(row, button, open) {
+        row?.toggleAttribute?.('data-menu-open', open);
+        button?.setAttribute?.('aria-expanded', open ? 'true' : 'false');
+    }
+
+    closeFloatingMenu({ restoreFocus = false } = {}) {
+        const menu = this.floatingMenu;
+        if (!menu) return;
+        const row = this.findSessionRow(this.floatingMenuSessionId);
+        const button = row?.querySelector('.session-menu-btn');
+        this.floatingMenu = null;
+        this.floatingMenuSessionId = null;
+        this.setSessionMenuAnchorState(row, button, false);
+        if (restoreFocus) button?.focus?.({ preventScroll: true });
+        hideSurface(menu, { remove: true });
+        // The app's global Escape/outside-click handlers may have started the
+        // exit already (without removal); drop the copy once it has faded.
+        const view = menu.ownerDocument?.defaultView;
+        view?.setTimeout?.(() => {
+            if (menu !== this.floatingMenu && menu.classList.contains('hidden')) menu.remove();
+        }, motionDuration(menu, '--dropdown-close-dur') + 50);
+    }
+
+    /**
+     * Keeps an open menu attached across list re-renders: re-anchors it to
+     * the new row's button, or closes it when that row is gone.
+     */
+    syncFloatingMenu() {
+        if (!this.floatingMenu) return;
+        if (!this.isFloatingMenuOpen()) {
+            this.closeFloatingMenu();
+            return;
+        }
+        const row = this.findSessionRow(this.floatingMenuSessionId);
+        const button = row?.querySelector('.session-menu-btn');
+        if (!button) {
+            this.closeFloatingMenu();
+            return;
+        }
+        this.setSessionMenuAnchorState(row, button, true);
+        this.positionFloatingMenu(button);
+    }
+
     closeAllMenus(exceptMenu = null) {
+        if (this.floatingMenu && this.floatingMenu !== exceptMenu) this.closeFloatingMenu();
         const list = this.app.elements.sessionsList;
         if (!list) return;
         list.querySelectorAll('.session-menu').forEach(menu => {
@@ -702,6 +856,7 @@ export default class Sidebar {
             : '';
 
         list.innerHTML = html + footerHtml + emptyHtml + endSpacerHtml;
+        this.syncFloatingMenu();
     }
 
     prepareVirtualItems(sessionsToRender) {
@@ -780,6 +935,8 @@ export default class Sidebar {
     }
 
     handleScroll(force = false) {
+        // The menu is fixed to the viewport; scrolling the list would leave it behind.
+        if (this.floatingMenu) this.closeFloatingMenu();
         this.updateScrollFade();
         if (!this.virtualState.enabled) return;
         if (!force) {
@@ -887,6 +1044,7 @@ export default class Sidebar {
             .join('');
 
         list.innerHTML = topSpacer + visibleHtml + bottomSpacer;
+        this.syncFloatingMenu();
         this.virtualState.lastRange = { start: startIndex, end: endIndex };
     }
 
