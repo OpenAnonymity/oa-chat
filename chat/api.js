@@ -29,7 +29,7 @@ import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { hasWithheldReasoning, reasoningTextFromDetails } from './services/reasoningParser.js';
-import { paragraphBreakBefore } from './services/streamSegments.js';
+import { paragraphBreakBefore, holdsThinkingThroughAnswer } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
 const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
@@ -735,7 +735,7 @@ export class OpenRouterAPI {
         let lastDeltaKind = null;
         // Grok answers in segments around its own searches, with its thinking
         // withheld; only its stream reopens the thinking header mid-answer.
-        const isGrokStream = () => /^x-ai\//i.test(modelId || '') || /^x-ai\//i.test(modelUsed || '');
+        const isGrokStream = () => holdsThinkingThroughAnswer(modelId) || holdsThinkingThroughAnswer(modelUsed);
         let citations = []; // Track citations for web search results
         const annotationsMap = new Map(); // Track annotations with deduplication by URL
         let estimatedReasoningTokens = 0; // Track reasoning tokens for cumulative display
