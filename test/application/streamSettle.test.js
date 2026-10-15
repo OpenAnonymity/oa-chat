@@ -382,6 +382,33 @@ test('a stopped reply keeps its thinking time, so it reads "Thought for …" aft
     assert.ok(assistant().at(-1).reasoningDuration >= 20);
 });
 
+for (const withheld of [true, false]) {
+    test(`Stop during resumed ${withheld ? 'withheld' : 'text'} thinking saves the latest duration`, async t => {
+        const restore = installBrowser();
+        t.after(restore);
+        let now = 1000;
+        t.mock.method(Date, 'now', () => now);
+        const { app, assistant } = streamHarness(async (...args) => {
+            const [chunk, abortController, opened, reasoning] = [args[3], args[7], args[8], args[9]];
+            await opened();
+            now = 1020;
+            await reasoning(withheld ? '' : 'First thought.', withheld ? { withheld: true } : undefined);
+            now = 1040;
+            await chunk('Partial answer.');
+            now = 1060;
+            await reasoning(withheld ? '' : 'A second thought.', withheld ? { withheld: true, resumed: true } : undefined);
+            now = 1120;
+            const stopped = untilStopped(abortController);
+            app.stopSessionStreaming('one');
+            return stopped;
+        });
+        await app.sendMessage();
+        const saved = assistant().at(-1);
+        assert.equal(saved.reasoningDuration, 120, 'includes the resumed thinking up to Stop');
+        assert.equal(saved.streamingReasoning, false);
+    });
+}
+
 // Grok may think again after any line, so it is not done thinking until the
 // reply is: its header says "Thinking..." while the answer streams and
 // "Thought for Ns" only once the reply completes.

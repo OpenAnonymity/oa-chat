@@ -14,6 +14,11 @@ duration when saved and reloaded. Council text-reasoning headers likewise stay
 active until their lane completes. This does not add provider reasoning that was
 never disclosed, or introduce any additional telemetry.
 
+Integration review also keeps the fixed header during live heading updates and
+session restoration (provider headings remain in the trace body), and corrects
+Stop during resumed thinking to persist the latest duration rather than the
+first segment's time. Deterministic tests cover text and withheld reasoning.
+
 ## October 15, 2026 — staging menu and scoped diagnostics candidate
 
 The row menu is portaled outside the scrolling list, opens below when it fits,

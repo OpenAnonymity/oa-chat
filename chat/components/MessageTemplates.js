@@ -991,27 +991,8 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     // stream as the thinking: one disclosure, steps first.
     reasoningHtml = buildKeptAccessTraceInline(accessTrace) + reasoningHtml;
 
-    // Generate subtitle - show timing for completed reasoning, or compute from content during streaming
-    // When switching back to a streaming session, compute subtitle from available reasoning content
-    let subtitle;
-    if (isStreaming) {
-        // If we have reasoning content, try to extract a meaningful subtitle from it
-        if (trimmedReasoning && trimmedReasoning.length > 20) {
-            const summaries = extractReasoningSummaries(trimmedReasoning);
-            if (summaries.length > 0) {
-                const lastSummary = summaries[summaries.length - 1];
-                subtitle = lastSummary.text.length > 150
-                    ? lastSummary.text.substring(0, 147) + '...'
-                    : lastSummary.text;
-            } else {
-                subtitle = 'Thinking...';
-            }
-        } else {
-            subtitle = 'Thinking...';
-        }
-    } else {
-        subtitle = generateReasoningSubtitle(reasoning, reasoningDuration);
-    }
+    // Live renders and session restores use the same fixed streaming header.
+    const subtitle = isStreaming ? 'Thinking...' : generateReasoningSubtitle(reasoning, reasoningDuration);
 
     // Full-width during streaming to show more subtitle, compact when finished
     const buttonWidthClass = isStreaming ? 'w-full' : '';

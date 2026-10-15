@@ -3013,33 +3013,8 @@ export default class ChatArea {
         return { summaries, sections };
     }
 
-    /**
-     * Extracts a meaningful subtitle from reasoning content.
-     * Only uses explicit subtitle markers (## headings or **bold** text).
-     * Returns "Thinking..." if no markers are found (e.g., Claude models).
-     * @param {string} reasoning - The reasoning content
-     * @returns {string} The subtitle text
-     */
-    extractReasoningSubtitle(reasoning) {
-        if (!reasoning || reasoning.trim().length === 0) {
-            return 'Thinking...';
-        }
-
-        const MAX_LENGTH = 150;
-        const structure = this.parseReasoningStructure(reasoning);
-
-        // Only use explicit subtitle markers (headings or bold text)
-        // If none found, keep showing "Thinking..." - don't fall back to body text
-        if (structure.summaries.length > 0) {
-            const lastSummary = structure.summaries[structure.summaries.length - 1];
-            const summaryText = lastSummary.text;
-
-            return summaryText.length > MAX_LENGTH
-                ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
-                : summaryText;
-        }
-
-        // No subtitle markers detected - keep default streaming indicator
+    /** Keep the streaming header stable even when reasoning contains headings. */
+    extractReasoningSubtitle() {
         return 'Thinking...';
     }
 
