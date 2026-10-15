@@ -1,4 +1,28 @@
-## October 15, 2026 — thinking header included in staging candidate
+## October 15, 2026 — one-second stalled-text feedback
+
+The staging candidate now includes `e05aba3a` and supersedes the earlier
+"Thinking until the end" choice below. The header shows "Thinking..." only during
+reasoning, settles to "Thought for Ns" at answer text, and reopens if thinking
+resumes. Existing paragraph boundaries and measured durations are preserved.
+Single replies and Parallel lanes show "Still working…" after one second without
+new answer text while the stream remains open and is not reasoning. Text,
+reasoning, completion, failure and Stop clear it, using the existing lane fade.
+
+Integration handles visible or withheld reasoning that first starts after answer
+text, including Parallel/synthesis headers. Hidden-to-visible lane reasoning
+replaces its header rather than duplicating IDs. A small per-turn in-memory map
+restores a single reply's live reasoning flags and stalled line when switching
+back to its chat; it is removed on every terminal path. It adds no storage,
+network requests or telemetry. Only disclosed reasoning is rendered.
+
+The browser fixture `test/fixtures/stall-browser.html` exercises actual ChatApp
+signals, ChatArea DOM methods, message templates and shipped CSS with synthetic
+text and no wallet or provider calls. Bundle `test/fixtures/stall-browser.js` to
+`local/stall-browser.js` with esbuild (browser ESM), serve the repository, then
+click "Run streaming checks". Controller tests use fake clocks for exact timing,
+short pauses, Stop, completion, hidden thinking and navigation restoration.
+
+## October 15, 2026 — earlier thinking header choice (superseded above)
 
 The candidate includes the complete `79e33389` branch alongside the menu and
 scoped diagnostics fixes. The chosen behavior applies to all models: an existing

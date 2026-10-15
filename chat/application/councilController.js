@@ -1301,6 +1301,7 @@ export default class CouncilController {
                             response: synthesisResponse,
                             images: extractImages(synthesisResult),
                             reasoning: synthesisReasoning,
+                            reasoningWithheld: synthesisResult?.reasoningWithheld === true,
                             reasoningDuration: synthesisResult?.reasoningDuration || null,
                             streamingReasoning: false,
                             streamingTokens: null,
@@ -1680,14 +1681,18 @@ export default class CouncilController {
                             laneState.images = [...images];
                         }
                     }
-                    if (firstContentChunk && reasoningStartTime && reasoning.length > 0) {
+                    if (firstContentChunk && reasoningStartTime && (reasoning.length > 0 || laneState?.reasoningWithheld)) {
                         firstContentChunk = false;
                         reasoningEndTime = Date.now();
                         const reasoningDuration = reasoningEndTime - reasoningStartTime;
                         if (laneState) {
                             laneState.reasoningDuration = reasoningDuration;
+                            laneState.streamingReasoning = false;
                         }
-                        updateReasoningDuration(reasoningDuration);
+                        if (reasoning.length > 0) updateReasoningDuration(reasoningDuration);
+                        else if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                            this.app.chatArea.updateWithheldReasoning?.(assistantMessage.id, false, reasoningDuration, laneId);
+                        }
                     }
                     if (chunk) updateContent();
                     if (newImages.length > 0) {
@@ -1719,8 +1724,23 @@ export default class CouncilController {
                     markRunning();
                     persistSnapshot(true);
                 },
-                (reasoningChunk) => {
+                (reasoningChunk, meta) => {
                     markRunning();
+                    if (meta?.withheld) {
+                        stopStillWorking();
+                        reasoningStartTime ??= streamOpenedAt ?? Date.now();
+                        reasoningEndTime = null;
+                        firstContentChunk = true;
+                        if (laneState) {
+                            laneState.reasoningWithheld = true;
+                            laneState.streamingReasoning = true;
+                        }
+                        if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                            this.app.chatArea.updateWithheldReasoning?.(assistantMessage.id, true, null, laneId);
+                        }
+                        persistSnapshot(true);
+                        return;
+                    }
                     if (!reasoningChunk) return;
                     if (!reasoningStartTime) {
                         reasoningStartTime = streamOpenedAt ?? Date.now();
@@ -1728,6 +1748,7 @@ export default class CouncilController {
                     reasoning += reasoningChunk;
                     // Thinking after an answer segment (tools): settle again at the next content.
                     firstContentChunk = true;
+                    reasoningEndTime = null;
                     if (laneState) {
                         laneState.reasoning = reasoning;
                         laneState.streamingReasoning = true;
@@ -1772,7 +1793,7 @@ export default class CouncilController {
             laneState.reasoning = tokenData.reasoning || reasoning || null;
             laneState.streamingReasoning = false;
             laneState.streamingTokens = null;
-            if (laneState.reasoning && reasoningStartTime) {
+            if ((laneState.reasoning || laneState.reasoningWithheld) && reasoningStartTime) {
                 const finalReasoningEndTime = reasoningEndTime || Date.now();
                 laneState.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
             }
@@ -1784,6 +1805,10 @@ export default class CouncilController {
                 laneState.reasoning,
                 laneState.reasoningDuration
             );
+        }
+        if (assistantMessage?.id && laneId && laneState?.reasoningWithheld && !laneState.reasoning
+            && this.app.chatArea && this.app.isViewingSession(session.id)) {
+            this.app.chatArea.updateWithheldReasoning?.(assistantMessage.id, false, laneState.reasoningDuration, laneId);
         }
         persistSnapshot(true);
 
@@ -1800,6 +1825,7 @@ export default class CouncilController {
             model: reportedModel,
             images: images.length > 0 ? [...images] : null,
             reasoning: tokenData.reasoning || reasoning || null,
+            reasoningWithheld: laneState?.reasoningWithheld === true,
             reasoningDuration: laneState?.reasoningDuration || null,
             citations: tokenData.citations || null,
             data: {

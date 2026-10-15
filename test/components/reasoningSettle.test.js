@@ -3,10 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// The model's thinking always precedes its answer. The client must show it
-// that way too: the first content chunk settles the trace (full text, no
-// "Thinking..." indicator, duration in the header), and nothing that arrives
-// later may reopen it. These read the sources because ChatArea needs a DOM.
+// First answer text settles each thinking phase. A later reasoning phase can
+// reopen it; stale duplicate tail chunks cannot. Source checks complement the
+// controller tests and the real DOM fixture in test/fixtures/stall-browser.html.
 const read = relative => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 test('the first content chunk settles the reasoning trace on every streaming path', () => {

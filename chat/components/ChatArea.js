@@ -1879,6 +1879,10 @@ export default class ChatArea {
             return;
         }
 
+        // Live reasoning state can be newer than the last periodic database save.
+        messages = messages.map(message => ({ ...message,
+            ...this.app.getStreamingReplyDisplay?.(message.id, session.id) }));
+
         // Build HTML for all messages using shared templates
         const helpers = {
             processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
@@ -1978,6 +1982,7 @@ export default class ChatArea {
         this.app.detachStalePromptSlideUpEffect?.();
         const detachedQuickAskWindow = this.detachQuickAskWindowForRender(session.id);
         messagesContainer.innerHTML = messagesHtml;
+        this.app.restoreStreamingReplyDisplays?.(session.id);
         this.restoreQuickAskWindowAfterRender(detachedQuickAskWindow, session.id);
         const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
             session.id,
@@ -2403,6 +2408,22 @@ export default class ChatArea {
         this.app.updateScrollButtonVisibility();
     }
 
+    /** A provider may first signal hidden reasoning after its answer has begun. */
+    updateWithheldReasoning(messageId, thinking, duration, laneId = null) {
+        const reasoningId = laneId ? this.getCouncilLaneReasoningId(messageId, laneId) : messageId;
+        if (!document.getElementById(`reasoning-${reasoningId}`)) {
+            const row = document.querySelector(`[data-message-id="${messageId}"]`);
+            const body = laneId ? this.getCouncilLaneBody(messageId, laneId)
+                : row?.querySelector('.message-content')?.closest('.message-assistant')?.parentElement;
+            if (!body) return;
+            if (laneId) this.removeCouncilLanePending(body);
+            body.insertAdjacentHTML('afterbegin', buildReasoningTrace('', reasoningId, thinking,
+                null, duration, null, { withheld: true }));
+        }
+        if (thinking) this.resumeReasoningDisplay(reasoningId);
+        else this.settleThinkingHeader(reasoningId, duration);
+    }
+
     /** Shows or clears the "Still working…" line under a single reply whose text has stalled. */
     setStreamingStillWorking(messageId, working) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
@@ -2514,6 +2535,8 @@ export default class ChatArea {
         );
         const traceEl = traceWrapper.firstElementChild;
         if (!traceEl) return null;
+        // Replace a header-only withheld trace when visible reasoning arrives.
+        document.getElementById(`reasoning-${reasoningId}`)?.remove();
 
         // Thinking always leads the lane, above text, images and status.
         const firstOutputEl = bodyEl.querySelector(':scope > .council-lane-content-shell, :scope > .council-lane-images, :scope > .council-lane-working');
@@ -2759,6 +2782,16 @@ export default class ChatArea {
             this.typewriter.displayedLength = settledLength;
             document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
         }
+        // Some models answer first, then reveal their first reasoning during a tool call.
+        if (!document.getElementById(`reasoning-content-${messageId}`)) {
+            const row = document.querySelector(`[data-message-id="${messageId}"]`);
+            const body = row?.querySelector('.message-content')?.closest('.message-assistant')?.parentElement;
+            if (body) {
+                document.getElementById(`reasoning-${messageId}`)?.remove();
+                body.insertAdjacentHTML('afterbegin', buildReasoningTrace(reasoning, messageId, true));
+            }
+        }
+        this.resumeReasoningDisplay(messageId);
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -3093,9 +3126,8 @@ export default class ChatArea {
 
     /**
      * The thinking is over: the header takes its duration. Used for wordless
-     * thinking (the header is all there is) and for the header held on
-     * "Thinking..." until the reply completed; a trace's words settle
-     * through settleReasoningDisplay.
+     * thinking (the header is all there is); a disclosed trace's words
+     * settle through settleReasoningDisplay.
      * @param {string} messageId - The message ID
      * @param {number} reasoningDuration - Duration in milliseconds
      */
