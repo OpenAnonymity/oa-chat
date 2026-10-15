@@ -2051,7 +2051,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         return `
             <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}" data-streaming-pending="true" data-pending-session-id="${escapeHtmlAttribute(message.sessionId || '')}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
-                    <div class="${CLASSES.assistantHeader}">
+                    <div class="${CLASSES.assistantHeader}" data-assistant-header>
                         <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                             ${iconData.html}
                         </div>
@@ -2324,7 +2324,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
                 ${isMemoryAgent ? `
-                <div class="${CLASSES.assistantHeader}">
+                <div class="${CLASSES.assistantHeader}" data-assistant-header>
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                         ${memoryAgentIcon}
                     </div>
@@ -2332,7 +2332,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                 </div>
                 ` : `
-                <div class="${CLASSES.assistantHeader}">
+                <div class="${CLASSES.assistantHeader}" data-assistant-header>
                     <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                         ${iconData.html}
                     </div>
@@ -2385,7 +2385,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
     return `
         <div id="${id}" class="typing-indicator ${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}"${sessionId ? ` data-pending-session-id="${escapeHtmlAttribute(sessionId)}"` : ''}>
             <div class="${CLASSES.assistantGroup}">
-                <div class="${CLASSES.assistantHeader}">
+                <div class="${CLASSES.assistantHeader}" data-assistant-header>
                     <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
                         ${iconData.html}
                     </div>

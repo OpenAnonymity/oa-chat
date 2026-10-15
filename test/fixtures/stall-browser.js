@@ -23,6 +23,21 @@ const render = () => { stage.innerHTML = buildMessageHTML({ ...message, ...app.g
     { processContentWithLatex: text => text, formatTime: () => '' }, [], 'Test model'); };
 const line = () => stage.querySelector('.message-still-working');
 const header = () => document.getElementById('reasoning-subtitle-synthetic');
+const checkReasoningOrder = () => {
+    const row = stage.querySelector('[data-message-id="synthetic"]');
+    const model = row.querySelector('[data-assistant-model-name]');
+    const trace = row.querySelector('#reasoning-synthetic');
+    const answer = row.querySelector('.message-content');
+    check(model && trace && answer, 'missing model, reasoning or answer');
+    check(model.compareDocumentPosition(trace) & Node.DOCUMENT_POSITION_FOLLOWING,
+        'reasoning appeared above the model name');
+    check(trace.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING,
+        'reasoning appeared below the answer');
+    check(model.getBoundingClientRect().bottom <= trace.getBoundingClientRect().top,
+        'reasoning visually overlaps the model header');
+    check(trace.getBoundingClientRect().bottom <= answer.getBoundingClientRect().top,
+        'reasoning visually overlaps the answer');
+};
 let signal;
 async function run() {
     signal?.dispose();
@@ -43,10 +58,12 @@ async function run() {
     signal.clear();
     area.updateStreamingReasoning(message.id, 'Checking a source after answering.');
     check(header()?.textContent === 'Thinking...', 'first reasoning after text has no header');
+    checkReasoningOrder();
     await delay(200);
     check(!line(), 'line remains during thinking');
     area.settleReasoningDisplay(message.id, 'Checking a source after answering.', 2000);
     check(header()?.textContent === 'Thought for 2s', 'header did not settle at answer');
+    checkReasoningOrder();
     message.reasoning = 'Checking a source after answering.';
     message.reasoningDuration = 2000;
     app.state.currentSessionId = 'other';
@@ -57,18 +74,44 @@ async function run() {
     app.state.currentSessionId = 'one';
     render();
     app.restoreStreamingReplyDisplays('one');
+    checkReasoningOrder();
     check(line()?.dataset.reveal === 'shown', 'return to stalled chat lost the line');
     signal.dispose();
     await delay(200);
     check(!line() && app.streamingReplyDisplays.size === 0, 'completion did not remove live state');
-    // First hidden reasoning after an answer needs a header with no disclosure.
+    // Start a fresh synthetic turn for hidden reasoning after an answer.
+    area.settledReasoningIds.clear();
     delete message.reasoning;
     render();
     area.updateWithheldReasoning(message.id, true);
     check(header()?.textContent === 'Thinking...', 'hidden reasoning has no header');
+    checkReasoningOrder();
     check(!document.getElementById('reasoning-content-synthetic'), 'hidden reasoning exposes a trace');
     area.settleThinkingHeader(message.id, 3000);
     check(header()?.textContent === 'Thought for 3s', 'hidden header failed to settle');
+    checkReasoningOrder();
+    area.updateStreamingReasoning(message.id, 'Now showing the reasoning.');
+    check(stage.querySelectorAll('#reasoning-synthetic').length === 1, 'hidden-to-visible duplicates headers');
+    check(document.getElementById('reasoning-content-synthetic'), 'hidden-to-visible trace missing');
+    checkReasoningOrder();
+    area.settleReasoningDisplay(message.id, 'Now showing the reasoning.', 3000);
+    // Late headers also work without a text bubble and preserve an access trace.
+    area.settledReasoningIds.clear();
+    render();
+    const modelHeader = stage.querySelector('[data-assistant-header]');
+    modelHeader.insertAdjacentHTML('afterend', '<div class="kept-access-trace">Private access ready</div>');
+    stage.querySelector('.message-content').closest('.message-assistant').remove();
+    area.updateWithheldReasoning(message.id, true);
+    check(modelHeader.nextElementSibling.classList.contains('kept-access-trace'), 'access trace moved ahead of model');
+    check(modelHeader.nextElementSibling.nextElementSibling.id === 'reasoning-synthetic', 'textless reply misplaced reasoning');
+    area.updateStreamingReasoning(message.id, 'Reasoning without a text bubble.');
+    check(modelHeader.nextElementSibling.nextElementSibling.id === 'reasoning-synthetic', 'textless replacement misplaced reasoning');
+    check(document.getElementById('reasoning-content-synthetic'), 'textless visible trace missing');
+    area.settleReasoningDisplay(message.id, 'Reasoning without a text bubble.', 3000);
+    // Leave the screenshot in the reported state: model, brief Thought, answer.
+    render();
+    area.updateWithheldReasoning(message.id, false, 200);
+    checkReasoningOrder();
     // Parallel uses the same header and fade implementation.
     stage.insertAdjacentHTML('beforeend', '<div data-message-id="parallel"><div class="council-response-panel" data-council-lane-id="secondary"><div class="council-response-body"></div></div></div>');
     area.updateWithheldReasoning('parallel', true, null, 'secondary');
@@ -78,6 +121,6 @@ async function run() {
     area.ensureCouncilLaneReasoningTrace('parallel', 'secondary');
     check(stage.querySelectorAll('#reasoning-parallel-secondary').length === 1, 'parallel hidden-to-visible reasoning duplicates headers');
     check(document.getElementById('reasoning-content-parallel-secondary'), 'parallel visible reasoning missing');
-    output.textContent = 'PASS: delay, fade, resumed thinking, hidden thinking, chat return, cleanup and Parallel headers.';
+    output.textContent = 'PASS: delay, fade, resumed thinking, hidden thinking, chat return, cleanup, Parallel headers and model → reasoning → answer order.';
 }
 document.querySelector('#run').onclick = () => run().catch(error => { output.textContent = `FAIL: ${error.message}`; signal?.dispose(); });

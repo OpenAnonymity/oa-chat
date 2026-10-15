@@ -1,3 +1,13 @@
+## October 15, 2026 — late reasoning stays below the model header
+
+Live insertion of first visible or withheld reasoning now anchors after the model
+header (and any standalone access trace), matching restored-message order. The
+previous group-level prepend put Thinking/Thought above the model name. The
+anchor works without a text bubble, including image-only replies; hidden-to-visible
+replacement keeps a single trace. Parallel lane bodies keep their existing order.
+The browser regression fixture checks DOM order and rendered geometry for live,
+settled, restored and hidden-to-visible reasoning, alongside stall behavior.
+
 ## October 15, 2026 — Sentry client repairs for staging
 
 Security Details now tolerates a failed native version getter. Sync status checks
