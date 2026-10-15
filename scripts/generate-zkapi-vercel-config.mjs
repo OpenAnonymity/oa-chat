@@ -4,21 +4,25 @@ import { fileURLToPath } from 'node:url';
 import { buildDemoVercelConfig } from './generate-demo-vercel-config.mjs';
 import { planFromRegistry, readZkapiBuildConfig, resolveZkapiNetwork } from './zkapiBuild.mjs';
 import { bundlerRoutePath, pinnedBundlerUrl } from '../chat/zkapi/versioning/sponsored.mjs';
+import { parseServiceBase, proxyRewrite } from '../chat/zkapi/versioning/serviceBase.mjs';
 
-// The deployment origin a reviewed profile pins, as an exact credential-free
-// HTTPS origin the same-origin proxy may forward to.
-function protocolOrigin(pins) {
-    const deployment = new URL(pins.trusted_deployment.protocol_server_url);
-    if (deployment.protocol !== 'https:' || deployment.username || deployment.password
-        || deployment.pathname !== '/' || deployment.search || deployment.hash) {
-        throw new Error('The SDK deployment must pin a credential-free HTTPS origin.');
+// The service a reviewed profile pins: an exact credential-free HTTPS origin,
+// optionally with a plain path prefix so two deployments can share a hostname
+// (versioning/serviceBase.mjs), which the same-origin proxy may forward to.
+function protocolService(pins) {
+    const service = parseServiceBase(pins.trusted_deployment.protocol_server_url);
+    if (!service) {
+        throw new Error('The SDK deployment must pin a credential-free HTTPS origin, optionally with a plain path prefix.');
     }
-    return deployment.origin;
+    return service;
 }
 
 /**
  * One proxy route per live version of a plan, ordinal ascending (version 1
- * first): `<proxyPath>:path*` to that version's pinned protocol origin. A
+ * first): `<proxyPath><prefix>/:path*` to that version's pinned protocol base
+ * (its origin and path prefix, if any: only the service's own subtree is
+ * forwarded, so a version's proxy path never reaches another deployment's
+ * routes on a shared hostname). A
  * version whose reviewed profile pins sponsored withdrawals (a `gasless`
  * object with its bundler URL) gets its bundler route first: the exact path
  * `<proxyPath>_bundler` to that URL, listed before the version's own
@@ -31,7 +35,7 @@ export function zkapiProxyRewrites(plan) {
         const bundler = pinnedBundlerUrl(version.config?.trusted_deployment?.gasless);
         const route = bundlerRoutePath(version.proxyPath);
         if (bundler && route) rewrites.push({ source: route, destination: bundler });
-        rewrites.push({ source: `${version.proxyPath}:path*`, destination: `${protocolOrigin(version.config)}/:path*` });
+        rewrites.push(proxyRewrite(version.proxyPath, protocolService(version.config)));
         return rewrites;
     });
 }
@@ -47,8 +51,8 @@ export function buildZkapiVercelConfig({ orgOrigin, network, deployment: selecte
     }
     const proxies = selectedDeployment
         ? zkapiProxyRewrites(planFromRegistry({ network, deployment: selectedDeployment }))
-        : [{ source: '/zkapi-deployment/:path*',
-            destination: `${protocolOrigin(readZkapiBuildConfig({ network, deployment: selectedDeployment }))}/:path*` }];
+        : [proxyRewrite('/zkapi-deployment/',
+            protocolService(readZkapiBuildConfig({ network, deployment: selectedDeployment })))];
     const config = buildDemoVercelConfig(orgOrigin, false);
     return {
         ...config,

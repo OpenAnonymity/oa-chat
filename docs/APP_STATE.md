@@ -1,3 +1,50 @@
+## 2026-10-15: Two versions can share one hostname (a path prefix on the newer one)
+
+A new version no longer needs a new hostname. The deployment's service URL
+(`protocol_server_url`, shared by the indexer) may be an origin **or an origin
+plus a plain path prefix**, so the older deployment stays at the root of its
+hostname and the newer one is served under a prefix of the same hostname named
+after its protocol version: `/v0.2`, then `/v0.3`, `/v1.0` for later upgrades. The guide's [section "One hostname for several deployments"](ZKAPI_VERSIONING.md#one-hostname-for-several-deployments)
+is the full record; this entry is the handoff.
+
+- **Why a path.** Both generations answer on the same route names (`/v2/...`,
+  `/v1/tree/snapshot`, `/config.json`) and the browser can vary nothing but the
+  path: the SDK's fetches carry no custom header and the Vercel rewrite cannot
+  add one. A per-version `Host` or header was not an option.
+- **What changed.** `versioning/serviceBase.mjs` (new, pure): `parseServiceBase`,
+  `pathPrefix`, `servicesOverlap`, `proxyRewrite`. `validateBaseProfile`
+  (`adapters/noteBoundV1.mjs`, shared by both families) accepts the prefix for the
+  protocol and indexer base and for `<base>/config.json`; `rpc_url` and
+  `verifier_url` stay origins. The registry's `identity_collision` is on the
+  base URL (same base, or one prefix inside another), not the origin. The route
+  generator scopes each rewrite to the service's subtree
+  (`/zkapi-deployment-v2c/v0.2/:path*` to `https://<host>/v0.2/:path*`); a root
+  deployment's rewrite is byte-for-byte what it was.
+- **Non-obvious.**
+  - The prefix lives **in the pin and in the manifest the service publishes**
+    (the SDK compares them). The alternative of keeping the pin at the bare
+    origin and letting the rewrite add the prefix was rejected: the pinned URL
+    would not be where the service is, and the exit kit and `zkapi-clientd`
+    (which use the profile URL directly) would hit the root deployment.
+  - The SDK carries the prefix through the proxy by itself: it forwards
+    `<proxyPath><pathname of the target URL>`, so the rewrite must carry the
+    prefix on both sides and must **not** be a broad `<proxyPath>:path*` (that
+    would let a version's proxy path reach the other deployment's routes).
+  - Reserved first segments: `v1`, `v2`, `config.json`, `_bundler`. A prefix
+    named like a protocol route would shadow the root deployment's API, which is
+    why the registry row ids themselves (`v1`, `v2`) cannot be the prefix while a
+    version number such as `v0.2` can: the dot makes it another segment.
+  - A trailing slash is refused for a prefixed pin: the SDK appends
+    `/v2/...` to the string it is given.
+  - The operator's ingress must route the prefix, and the service's own
+    manifest must say the prefixed URL; the host cannot check either.
+- **Evidence.** `test/zkapi/service-base.test.mjs` (the rules, the rewrite, and
+  the real `deploymentProxyUrl` of both the installed legacy SDK and a successor
+  SDK), additions to `zkapi-registry-model.test.mjs`,
+  `zkapi-snapshot-adapters.test.mjs` and `zkapiVersionedBuild.test.js`.
+- **Not done.** Nothing about a live operator stack was exercised, and the
+  registry's rows are unchanged (version 2 is still `pending` with null pins).
+
 ## 2026-10-14: Sponsored (gasless) withdrawals built into the host (dormant)
 
 A person can now choose "Paid from this withdrawal" under "Network fee" in the
@@ -56,9 +103,9 @@ this entry is the handoff.
   `test/fixtures/zkapi-sponsored-vectors.json`), `address-funding-sponsored`,
   `sponsored-fees`, `sponsored-withdrawal-real-sdk` (needs a successor SDK) and
   additions to the error-copy, record-extras, holdings, other-version-history and
-  version-ui-render tests. Whole suite (after rebasing onto the Sepolia-token removal): 2361 pass,
-  0 fail, 18 skipped without a successor SDK; with one, 2427 of 2430 payment
-  tests pass and the one failure is
+  version-ui-render tests. Whole suite (after rebasing onto the Sepolia-token removal and adding the
+  shared-hostname work below): 2373 pass, 0 fail, 18 skipped without a
+  successor SDK; with one, 2440 of 2443 payment tests pass and the one failure is
   the by-design SDK half of the recheck.
 - **A real build was rehearsed** with a synthetic deployed profile that pins a
   `gasless` object: the registry check and both networks pass, the object reaches

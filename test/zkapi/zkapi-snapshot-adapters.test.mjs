@@ -223,7 +223,8 @@ test('note-bound-v1 validateProfile accepts and rejects exactly what validateZka
         config => { config.allowed_deployment_manifest_urls = []; },
         config => { config.trusted_deployment.protocol_server_url = 'https://user:password@example.test'; },
         config => { config.trusted_deployment.protocol_server_url = 'http://zkapi-mainnet.openanonymity.ai'; },
-        config => { config.trusted_deployment.protocol_server_url = 'https://zkapi-mainnet.openanonymity.ai/path'; },
+        // A path prefix is the one deliberate extension of the former rule
+        // (serviceBase.mjs); its own test follows this one.
         config => { config.trusted_deployment.protocol_server_url = 'not a url'; },
         config => { delete config.trusted_deployment.protocol_server_url; },
         config => { config.trusted_deployment.indexer_url = 'https://other.example.test'; },
@@ -280,6 +281,48 @@ test('note-bound-v1 validateProfile accepts and rejects exactly what validateZka
     // A missing config fails with the same message as before.
     assert.deepEqual(outcome(() => noteBoundV1.validateProfile(undefined, { network: 'mainnet', circuitId: 'zkapi-v2-note-bound-v1', files: {} })),
         outcome(() => legacyValidateZkapiDeploymentPins(undefined, { network: 'mainnet', circuitId: 'zkapi-v2-note-bound-v1', files: {} })));
+});
+
+test('a service URL may carry a plain path prefix; every other part of the old rule stands', () => {
+    const prefixed = (prefix, mutate = null) => noteBoundProfile('mainnet', config => {
+        const base = `${config.trusted_deployment.protocol_server_url}${prefix}`;
+        config.trusted_deployment.protocol_server_url = base;
+        config.trusted_deployment.indexer_url = base;
+        config.deployment_manifest_url = `${base}/config.json`;
+        config.allowed_deployment_manifest_urls = [`${base}/config.json`];
+        if (mutate) mutate(config);
+    });
+    // The prefix is data of the deployment, for both families.
+    noteBoundV1.validateProfile(prefixed('/c'), { network: 'mainnet' });
+    noteBoundV1.validateProfile(prefixed('/zkapi/c'), { network: 'mainnet', strict: true });
+    const concession = concessionProfile('mainnet', { slot: 2, mutate: config => {
+        const base = `${config.trusted_deployment.protocol_server_url}/c`;
+        config.trusted_deployment.protocol_server_url = base;
+        config.trusted_deployment.indexer_url = base;
+        config.deployment_manifest_url = `${base}/config.json`;
+        config.allowed_deployment_manifest_urls = [`${base}/config.json`];
+    } });
+    concessionV1.validateProfile(concession, { network: 'mainnet', strict: true });
+    // The indexer and the manifest are at the same base, exactly.
+    assert.throws(() => noteBoundV1.validateProfile(prefixed('/c', config => {
+        config.trusted_deployment.indexer_url = 'https://zkapi-mainnet.openanonymity.ai';
+    }), { network: 'mainnet' }), /routes must match/);
+    assert.throws(() => noteBoundV1.validateProfile(prefixed('/c', config => {
+        config.deployment_manifest_url = 'https://zkapi-mainnet.openanonymity.ai/config.json';
+        config.allowed_deployment_manifest_urls = [config.deployment_manifest_url];
+    }), { network: 'mainnet' }), /routes must match/);
+    // The shape rules: no trailing slash, no route names of the protocol, no
+    // escapes, no query, no credentials, no deep paths.
+    for (const prefix of ['/c/', '/v2', '/v1/x', '/config.json', '/_bundler', '/%2e%2e', '/a/b/c/d', '//c']) {
+        assert.throws(() => noteBoundV1.validateProfile(prefixed(prefix), { network: 'mainnet' }), /\[build\]/, prefix);
+    }
+    assert.throws(() => noteBoundV1.validateProfile(prefixed('/c', config => {
+        config.trusted_deployment.protocol_server_url = 'https://user:pw@zkapi-mainnet.openanonymity.ai/c';
+    }), { network: 'mainnet' }), /credential-free/);
+    // What the runtime reads as an origin stays an origin.
+    assert.throws(() => noteBoundV1.validateProfile(prefixed('/c', config => {
+        config.trusted_deployment.rpc_url = 'https://rpc.example.test/path';
+    }), { network: 'mainnet', strict: true }), /credential-free/);
 });
 
 test('static validation omits emitted file hashes but still requires well formed pins', () => {

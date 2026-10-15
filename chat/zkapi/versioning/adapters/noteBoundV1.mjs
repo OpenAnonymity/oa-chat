@@ -15,6 +15,8 @@
 // concessionV1.mjs reuses; both families describe the same host-visible
 // concepts (a vault, a note with an expiry, set-aside closes).
 
+import { parseServiceBase } from '../serviceBase.mjs';
+
 const NOTE_BOUND_CIRCUIT_ID = 'zkapi-v2-note-bound-v1';
 const OPENROUTER_INFERENCE_BASE = 'https://openrouter.ai/api/v1';
 
@@ -76,6 +78,24 @@ function publicOrigin(value) {
     return url.origin;
 }
 
+// The base URL of a deployment's service (protocol server and indexer): an
+// origin, or an origin plus a plain path prefix so that two deployments can
+// share one hostname (versioning/serviceBase.mjs). The origin-only rule above
+// still holds for everything else the runtime reads as an origin.
+function publicServiceBase(value) {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+        throw new Error('[build] Deployment pins must use credential-free HTTPS origins.');
+    }
+    if (url.pathname === '/') return url.origin;
+    const parsed = parseServiceBase(value);
+    if (!parsed) {
+        throw new Error('[build] A deployment service URL may carry only a plain path prefix: up to three segments of '
+            + 'letters, digits, dots and dashes, with no trailing slash, and not starting with v1, v2, config.json or _bundler.');
+    }
+    return parsed.base;
+}
+
 /**
  * Checks every protocol family shares for a reviewed host profile
  * (browser-config.json): network and chain, proving key pins, origins and
@@ -120,10 +140,10 @@ export function validateBaseProfile(config, ctx, family) {
             throw new Error(`[build] ${kind} proving key does not match the selected deployment pins.`);
         }
     }
-    const origin = publicOrigin(pins.protocol_server_url);
+    const base = publicServiceBase(pins.protocol_server_url);
     const proxyPath = options.proxyPath === undefined ? family.defaultProxyPath : options.proxyPath;
-    if (publicOrigin(pins.indexer_url) !== origin
-        || config.deployment_manifest_url !== `${origin}/config.json`
+    if (publicServiceBase(pins.indexer_url) !== base
+        || config.deployment_manifest_url !== `${base}/config.json`
         || JSON.stringify(config.allowed_deployment_manifest_urls) !== JSON.stringify([config.deployment_manifest_url])
         || config.deployment_api_proxy_path !== proxyPath
         || config.proving_keys_base_url !== './proofs/') {

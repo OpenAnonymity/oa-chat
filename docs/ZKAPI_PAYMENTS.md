@@ -280,7 +280,7 @@ build does with them.
     are unique and do not overlap;
   - per network: at most one `active` row, at least one live row
     (`no_live_version`), unique deployment ids and `(chainId, vault)` across live
-    rows and tombstones, unique protocol origins among live rows, and a
+    rows and tombstones, unique protocol base URLs among live rows (two may share a hostname under different path prefixes), and a
     tombstone `chainId` equal to the network's chain (mainnet 1, Sepolia
     11155111);
   - live rows pass their adapter's profile rules (chain, proving-key pins,

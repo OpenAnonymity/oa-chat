@@ -553,7 +553,7 @@ test('identity: deployment ids and vaults are distinct across the rows and tombs
         registry.versions[1].networks.mainnet.config.trusted_deployment.contract_address =
             noteBoundProfile('mainnet').trusted_deployment.contract_address.toLowerCase();
     }), 'identity_collision', /vault/);
-    // A second version cannot share the first one's protocol origin.
+    // A second version cannot share the first one's protocol base URL.
     rejects(mutated(activatedRegistry(), registry => {
         const origin = noteBoundProfile('mainnet').trusted_deployment.protocol_server_url;
         const config = registry.versions[1].networks.mainnet.config;
@@ -561,7 +561,7 @@ test('identity: deployment ids and vaults are distinct across the rows and tombs
         config.trusted_deployment.indexer_url = origin;
         config.deployment_manifest_url = `${origin}/config.json`;
         config.allowed_deployment_manifest_urls = [`${origin}/config.json`];
-    }), 'identity_collision', /protocol origin/);
+    }), 'identity_collision', /protocol URL/);
     // The same vault on another chain is another vault.
     validate(mutated(activatedRegistry(), registry => {
         registry.versions[1].networks.sepolia.config.trusted_deployment.contract_address =
@@ -1435,6 +1435,7 @@ test('WIRED lists exactly the adapter\'s requiredWiring and cannot be changed th
 test('the registry model, wiring and adapters are pure: no Node built-ins, SDK, network or storage', () => {
     const files = [
         'chat/zkapi/versioning/registryModel.mjs',
+        'chat/zkapi/versioning/serviceBase.mjs',
         'chat/zkapi/versioning/wiring.mjs',
         'chat/zkapi/versioning/adapters/index.mjs',
         'chat/zkapi/versioning/adapters/noteBoundV1.mjs',
@@ -1460,4 +1461,90 @@ test('the registry model, wiring and adapters are pure: no Node built-ins, SDK, 
         // Browser bundles target es2020: nothing that esbuild would have to downlevel or polyfill.
         assert.doesNotMatch(source, /\?\?=|\|\|=|&&=|\bstructuredClone\b|Object\.hasOwn\b|\.at\(|#[a-zA-Z_]+\s*[=;(]/, file);
     }
+});
+
+// ---------------------------------------------------------------------------
+// One hostname for several deployments (a path prefix on the newer one)
+// ---------------------------------------------------------------------------
+//
+// The old deployment is pinned at the root of its hostname and cannot move.
+// The newer one may be served under a plain path prefix of that same hostname
+// (versioning/serviceBase.mjs); the pin names the prefix, and so does the
+// manifest the service publishes. Identity is the base URL, not the origin.
+
+function onSharedHostname(registry, prefix, { network = 'mainnet', row = 1 } = {}) {
+    const origin = noteBoundProfile(network).trusted_deployment.protocol_server_url;
+    const base = `${origin}${prefix}`;
+    const config = registry.versions[row].networks[network].config;
+    config.trusted_deployment.protocol_server_url = base;
+    config.trusted_deployment.indexer_url = base;
+    config.deployment_manifest_url = `${base}/config.json`;
+    config.allowed_deployment_manifest_urls = [`${base}/config.json`];
+    return registry;
+}
+
+test('a newer version may share the older one\'s hostname under a path prefix', () => {
+    for (const network of ['mainnet', 'sepolia']) {
+        validate(mutated(activatedRegistry(), registry => onSharedHostname(registry, '/c', { network })));
+    }
+    // Two prefixes of one hostname are fine as long as neither contains the other.
+    validate(mutated(threeVersionRegistry(), registry => {
+        onSharedHostname(registry, '/c', { row: 1 });
+        onSharedHostname(registry, '/zkapi-v3c', { row: 2 });
+    }));
+});
+
+test('a prefix is a distinct service only when it does not contain, or sit inside, another', () => {
+    rejects(mutated(threeVersionRegistry(), registry => {
+        onSharedHostname(registry, '/c', { row: 1 });
+        onSharedHostname(registry, '/c/next', { row: 2 });
+    }), 'identity_collision', /protocol URL/);
+    rejects(mutated(threeVersionRegistry(), registry => {
+        onSharedHostname(registry, '/c', { row: 1 });
+        onSharedHostname(registry, '/c', { row: 2 });
+    }), 'identity_collision', /protocol URL/);
+    // Prefixes named after the protocol version, upgrade after upgrade.
+    validate(mutated(threeVersionRegistry(), registry => {
+        onSharedHostname(registry, '/v0.2', { row: 1 });
+        onSharedHostname(registry, '/v0.3', { row: 2 });
+    }));
+    // The bare registry ids are the protocol's own route names.
+    rejects(mutated(activatedRegistry(), registry => onSharedHostname(registry, '/v2')), 'profile', null);
+    // A sibling that merely starts with the same letters is another service.
+    validate(mutated(threeVersionRegistry(), registry => {
+        onSharedHostname(registry, '/c', { row: 1 });
+        onSharedHostname(registry, '/cc', { row: 2 });
+    }));
+});
+
+test('a prefix must be plain: no trailing slash, no protocol route names, no escapes', () => {
+    for (const prefix of ['/c/', '/v2', '/V1', '/config.json', '/_bundler', '//c', '/c//d', '/%2e%2e', '/a/b/c/d', '/c?x=1']) {
+        const registry = mutated(activatedRegistry(), candidate => {
+            const origin = noteBoundProfile('mainnet').trusted_deployment.protocol_server_url;
+            const base = `${origin}${prefix}`;
+            const config = candidate.versions[1].networks.mainnet.config;
+            config.trusted_deployment.protocol_server_url = base;
+            config.trusted_deployment.indexer_url = base;
+            config.deployment_manifest_url = `${base}/config.json`;
+            config.allowed_deployment_manifest_urls = [`${base}/config.json`];
+        });
+        rejects(registry, 'profile', null);
+    }
+});
+
+test('the indexer and the manifest follow the service base, not the bare origin', () => {
+    // The indexer on the bare origin while the protocol server is under a prefix.
+    rejects(mutated(activatedRegistry(), registry => {
+        onSharedHostname(registry, '/c');
+        const config = registry.versions[1].networks.mainnet.config;
+        config.trusted_deployment.indexer_url = noteBoundProfile('mainnet').trusted_deployment.protocol_server_url;
+    }), 'profile', /manifest, proxy and proof routes/);
+    // The manifest at the origin's /config.json while the service lives under the prefix.
+    rejects(mutated(activatedRegistry(), registry => {
+        onSharedHostname(registry, '/c');
+        const config = registry.versions[1].networks.mainnet.config;
+        const origin = noteBoundProfile('mainnet').trusted_deployment.protocol_server_url;
+        config.deployment_manifest_url = `${origin}/config.json`;
+        config.allowed_deployment_manifest_urls = [`${origin}/config.json`];
+    }), 'profile', /manifest, proxy and proof routes/);
 });

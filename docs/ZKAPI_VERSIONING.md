@@ -144,7 +144,7 @@ also cites the same checkout's `sdk/build.mjs`, `demo/contracts/script/`,
 | --- | --- | --- |
 | Version | One protocol generation of the app: id `v1`, `v2`, an ordinal, a label, an SDK pin, URL paths, transition policy and one entry per network. Data. | a row of [registry.json](../deployments/zkapi/registry.json) |
 | Adapter | The code half of a version: how to validate a profile, what vault calldata looks like, which SDK methods start a deposit, how to read the SDK snapshot, the chat cutoff, the protocol wiring the host owes, the billing unit of its amounts and whether the family has been reviewed for giving up a balance (`abandon`). Code, one per protocol family (`note-bound-v1`, `concession-v1`). | [adapters/](../chat/zkapi/versioning/adapters/) |
-| Deployment | One vault plus one operator stack on one network, identified by deployment id, chain id, vault address and protocol origin. One per (version, network). | the version's profile (file or inline `config`) |
+| Deployment | One vault plus one operator stack on one network, identified by deployment id, chain id, vault address and protocol base URL (an origin, optionally with a path prefix: [one hostname for several deployments](#one-hostname-for-several-deployments)). One per (version, network). | the version's profile (file or inline `config`) |
 | Lineage | The registry-level namespace `fresh-20260930`. It is the value of `OA_ZKAPI_DEPLOYMENT` and the name stem of the shared wallet database. Changing it would orphan wallets, so the forward-only check refuses it. | `registry.lineage` |
 
 Version 1 is adapter `note-bound-v1` (vault revision 1, SDK `3342c95` plus the
@@ -391,7 +391,7 @@ Network entry:
 
 | Value | Rule |
 | --- | --- |
-| deployment id, chain id, vault, rpc, protocol origin, key hashes | read from the reviewed profile and checked against the row's `circuitId` |
+| deployment id, chain id, vault, rpc, protocol base URL, key hashes | read from the reviewed profile and checked against the row's `circuitId` |
 | wallet database | `walletDatabase` with `{lineage}` and `{network}` filled: `zkapi-browser-wallet-fresh-20260930-mainnet-v1`, `...-sepolia-v1` |
 | `assetBase` | `publicPath` without the leading slash (`zkapi/`, `zkapi/v2c/`) |
 | `depositsOpen(v)` | `status === 'active'`. A build-time constant; dates never drive it |
@@ -429,7 +429,7 @@ with one of these stable codes:
 | `transition` | margin or window out of range; `reminderDays` not strictly decreasing, over 8 entries, or starting beyond the prompt window; `dustThresholdUsdMicros` not a whole non-negative number, above the family's smallest chat key, or set for a family with no give-up data; `abandonEnabled` not a boolean |
 | `multiple_active` | more than one `active` row on a network |
 | `no_live_version` | a network with no `active` or `exit-only` row (all pending or retired). An empty or tombstones-only table would otherwise read as "legacy SDK defaults" at boot, so `resolveRuntimeTable` refuses it too |
-| `identity_collision` | within one network, over all non-pending rows (tombstones included): a reused deployment id, a reused `(chainId, vault)`, or two live rows sharing a protocol origin. Uniqueness is per network: each network has its own database, build and config |
+| `identity_collision` | within one network, over all non-pending rows (tombstones included): a reused deployment id, a reused `(chainId, vault)`, or two live rows whose protocol base URLs are the same, or one a path prefix inside the other (two deployments may share a hostname under different prefixes). Uniqueness is per network: each network has its own database, build and config |
 | `parameter_mismatch` | live rows of a network differ in `openrouter_inference_base` or `request_charge_cap` (request-visible parameters stay version-identical) |
 | `sdk_pin` | a live row with `source`, `revision` or `storeSha256` null, or a `source` that does not end in `#<revision>` |
 | `gate_recovery_review` | the review covers another revision; verdict `pending`; `patched` without a patch named in `sdk.patches`; `not_required` that names a patch |
@@ -442,8 +442,8 @@ A live profile must also pass its adapter's `validateProfile` with the registry'
 strict options: chain id for the network, native ETH billing, verified OA keys
 (`require_oa_key_source`), `proving_keys_base_url === "./proofs/"`,
 `deployment_api_proxy_path` equal to the row's `proxyPath`, manifest URLs equal
-to the protocol origin's `/config.json`, credential-free HTTPS origins for
-protocol, indexer, verifier and RPC, and the reviewed OpenRouter inference base.
+to the protocol base URL's `/config.json`, a credential-free HTTPS base URL for
+protocol and indexer (an origin, or an origin and a plain path prefix: [see below](#one-hostname-for-several-deployments)) and credential-free HTTPS origins for verifier and RPC, and the reviewed OpenRouter inference base.
 `concession-v1` adds `vault_revision 3`, `exit_concession 1`,
 `clearance_ownership_proof "required"`, `deployment_status` absent or
 `deployed`, no `deposits` key, a deployment id that does not contain
@@ -479,6 +479,94 @@ The strict origin and inference-base checks apply only through the registry. The
 legacy `validateZkapiDeploymentPins` wrapper in `zkapiBuild.mjs` is the same
 adapter without them, so its accept and reject behavior is exactly what the
 pre-registry build tests assert.
+
+### One hostname for several deployments
+
+A new version does not need a new hostname. Two protocol generations answer on
+the same route names (`/v2/billing/quote`, `/v2/openrouter/leases`,
+`/v1/tree/snapshot`, `/config.json`), so a single hostname has to tell them
+apart by something the browser can vary, and the only such thing is the URL
+path: the SDK's requests carry no custom header and the app's static rewrite
+cannot add one. The rule is therefore:
+
+- **The older deployment keeps the root it was pinned at.** A live pin cannot
+  move (`identity_changed`), and its SDK appends its routes to that origin.
+- **A newer one is served under a plain path prefix of the same hostname**,
+  named after its protocol version (`/v0.2`, then `/v0.3`, `/v1.0`, and so on),
+  and its profile pins that URL: `protocol_server_url` and `indexer_url` are
+  `https://<hostname>/<prefix>` (no trailing slash), and
+  `deployment_manifest_url` and the one entry of
+  `allowed_deployment_manifest_urls` are `https://<hostname>/<prefix>/config.json`.
+  The service must publish the same URL as `protocol_server_url` in its manifest
+  (the SDK compares the two), so the pin is the address the service really
+  lives at, never a prefix the host adds behind the SDK's back.
+
+```
+version 1   https://zkapi.example.com            proxy /zkapi-deployment/
+version 2   https://zkapi.example.com/v0.2       proxy /zkapi-deployment-v2c/
+(later)     https://zkapi.example.com/v0.3       proxy /zkapi-deployment-v3c/
+```
+
+**Naming the prefix.** Use the deployment's protocol (SDK) version with its
+leading `v`: `v0.2` for the `0.2.x` line, `v0.3` for the next. The dots are plain
+characters of one segment, and `v0.2`, `v0.20`, `v0.3` and `v1.0` are all
+distinct services. Do not use the registry row ids `v1` and `v2` themselves:
+those are the protocol's own API route names (`/v2/billing/quote`), so a prefix
+named `/v2` would shadow the root deployment's API, and the base is refused. The
+prefix is data of the deployment, not derived from anything: a later upgrade
+picks its own name by the same convention, and the registry does not need to
+change for it.
+
+**What a prefix may be** (`chat/zkapi/versioning/serviceBase.mjs`, shared by the
+adapters, the registry model and the route generator): one to three plain
+segments of letters, digits, dots, dashes, underscores and tildes (each at most
+64 characters, 96 in all), written exactly, with no trailing slash, query,
+fragment, credentials, escapes, empty or dot segments. The first segment cannot
+be `v1`, `v2`, `config.json` or `_bundler` (in any case): those are routes of
+the protocol or of this app's proxy, and a prefix named like one would shadow
+the root deployment's own API on the same hostname. `rpc_url` and `verifier_url`
+stay origins.
+
+**What is distinct.** Identity is the base URL, not the origin. Two live rows
+may share a hostname under different prefixes; they may not have the same base
+or one prefix inside another (`/v0.2` and `/v0.2/next`: a request under the inner
+one would be the outer one's as well; `/v0.2` and `/v0.20` do not overlap). `identity_collision` says "shares its
+protocol URL with ...". A root and a prefix of one hostname are distinct because
+the root's routes are fixed names that a prefix never starts with.
+
+**What the build generates.** One rewrite per live version, scoped to the
+service's subtree on both sides:
+
+```
+/zkapi-deployment/:path*            ->  https://zkapi.example.com/:path*
+/zkapi-deployment-v2c/v0.2/:path*   ->  https://zkapi.example.com/v0.2/:path*
+```
+
+The SDK builds `<protocol_server_url>/v2/...` and forwards
+`<proxyPath><path of that URL>`, so the prefix travels through the proxy
+unchanged and lands where the service is mounted. A version's proxy path does
+not reach another deployment's routes on the shared hostname (there is no
+`/zkapi-deployment-v2c/:path*` for a prefixed version). Both SDK generations
+(the pinned legacy one and `4b955d9`) map a URL under a prefix this way, which
+`test/zkapi/service-base.test.mjs` shows against the real `deploymentProxyUrl`.
+
+**What the operator does.** Serve the new stack under the prefix on the
+existing hostname (an ingress rule that routes `/<prefix>/*` to it, with or
+without stripping the prefix, so long as the service's manifest says the
+prefixed URL), and put that URL into the profile passed to
+`deployment-profile.mjs` as `--protocol-server-url` and `--indexer-url`. Name
+the prefix by the version convention above (never one of the reserved names,
+and never one the legacy stack's own routes use). The legacy stack at the root is not
+touched. The indexer shares the protocol base (the registry requires it), so it
+is served under the same prefix.
+
+**What this does not change.** The cohort and IP visibility of
+[9](#9-privacy-and-security-notes) are as before: the app's host still sees
+which proxy path (`/zkapi-deployment/` or `/zkapi-deployment-v2c/`) a browser
+uses, and the operator, who now has one hostname, sees both in its own logs. The
+anonymity set is per vault, not per hostname. Direct (non-proxied) use of the
+URL, such as the exit-kit companion or `zkapi-clientd`, is by the full base URL
+and needs the same ingress rule.
 
 ### The forward-only check
 
@@ -715,7 +803,10 @@ The lock lookup is per alias. `build.json` is also what the running app polls
 for [stale builds](#57-the-watcher-and-stale_build).
 
 `generate-zkapi-vercel-config.mjs` emits one rewrite per live version, version 1
-first, computed from static JSON only (the bundled generator imports `node:`
+first (each forwards only its service's own subtree: a version on a path prefix
+of a shared hostname gets `<proxyPath><prefix>/:path*` to
+`<origin><prefix>/:path*`, a root deployment `<proxyPath>:path*` to
+`<origin>/:path*`), computed from static JSON only (the bundled generator imports `node:`
 builtins only and runs with `import.meta.resolve` denied; a test pins this).
 A retired version gets no route and a pending one none yet. `build.env` and
 `buildCommand` are unchanged. A second origin needs no CSP change because the
@@ -2646,11 +2737,12 @@ already wired family is [Add a future version](#add-a-future-version).
 
    `--rpc-url`, `--price-feed` and `--settlement-window-seconds` default to the
    base's values. The deployment id is new (never containing `note-bound`; the
-   script refuses it) and its hostname is distinct from every other version's.
+   script refuses it) and its protocol base URL differs from every other version's: a new hostname, or the
+   same hostname under a plain path prefix ([one hostname for several deployments](#one-hostname-for-several-deployments)).
    The script keeps the base's browser-level fields, so three need editing
    before the file is pasted in as the inline `config`: `deployment_manifest_url`
    and the one entry of `allowed_deployment_manifest_urls` (both
-   `<protocol origin>/config.json`; the base ships `null` and `[]`) and
+   `<protocol base URL>/config.json`; the base ships `null` and `[]`) and
    `deployment_api_proxy_path` (equal to the row's `proxyPath`; the base carries
    version 1's `/zkapi-deployment/`). The registry also requires the shape of
    `mainnet.json`: protocol and indexer on one origin, `proving_keys_base_url:
@@ -3574,9 +3666,9 @@ ZKAPI_V2_SDK_DIR="$TMPDIR/zkapi-v0.2" node scripts/run-unit-tests.mjs
   withdrawal replaced after it was displayed`. Whole suite with the package
   unpacked at `ZKAPI_V2_SDK_DIR` (after the sponsored withdrawals of
   [11.7](#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal)
-  were added): 1162 of 1162 core tests, and 2427 of 2430 payment tests (the
+  were added): 1163 of 1163 core tests, and 2440 of 2443 payment tests (the
   expected failure and two skips that need Anvil). Without a successor SDK:
-  2361 pass, none fail and 18 skip.
+  2373 pass, none fail and 18 skip.
 - `verify-exports.mjs <package root>`: 26 name lists match the real package,
   name by name. The fixture gained the `./gasless` subpath (91 names, primitive
   constants real, the rest throwing), the new store, wallet and contract-error
@@ -3896,7 +3988,7 @@ holdings and history tests are in [13](#13-test-map).
 | # | Decision (default taken) | How to change it |
 | --- | --- | --- |
 | 1 | **Legacy pin.** Keep `3342c95` plus `wallet-recovery-v1`. | Move version 1 to the unpublished legacy re-cut by updating `package.json` and the lock, the row's `sdk.source`, `revision` and `storeSha256`, its `patches` and `gate.recoveryReview`, and `honorsDepositsFlag: true`; the host guard stays installed. It needs its own recovery review. |
-| 2 | **Version 2 topology.** New hostname, `proxyPath /zkapi-deployment-v2c/`, `publicPath /zkapi/v2c/`. Blocked on the operator supplying the finalized profile, SDK remote and commit. | Edit the pending row's paths before activation (path rules apply). After activation a path change would alias force-cached proving keys; use a new row instead. |
+| 2 | **Version 2 topology.** A new hostname, or the first version's hostname under a plain path prefix ([one hostname for several deployments](#one-hostname-for-several-deployments)); `proxyPath /zkapi-deployment-v2c/`, `publicPath /zkapi/v2c/`. Blocked on the operator supplying the finalized profile, SDK remote and commit. | Edit the pending row's paths before activation (path rules apply). After activation a path change would alias force-cached proving keys; use a new row instead. |
 | 3 | **Cookies and cohort on `/zkapi/**` asset fetches.** Accepted and documented ([9](#9-privacy-and-security-notes)). | A byte-hash-guarded patch of both SDK workers to `credentials: 'omit'`, registered like `wallet-recovery-v1` and listed in each row's `sdk.patches`; it changes emitted asset bytes and provenance. |
 | 4 | **In-app history of other versions' payments** is shown, read-only and text only, from the shared wallet database ([5.4](#54-the-shared-wallet-database)). A foreign row carries no action; the only control is "Open version P" through the existing switch. A payout of a version the app cannot open has no in-app claim. | Drop `readHistory` from the boot seam to hide it. A claim path for an unopenable version would need a new signer scope and its own review. |
 | 5 | **Version 2's browser-held funding address** is offered as the legacy withdrawal destination, on explicit click, with a browser-only-custody warning. | The "new funding address" choice and the leftover-ETH section both depend on `versionUi.rescue` (`createVersionUi` in `versioning/ui.js`); without it neither is shown and a typed destination still works. |
@@ -4141,7 +4233,8 @@ half of the withdrawal recheck.
 | File | Pins |
 | --- | --- |
 | [zkapi-registry-model.test.mjs](../test/zkapi/zkapi-registry-model.test.mjs) | every rule and error code above; derive-do-not-duplicate; runtime table excludes pending; activation yields one target; the add-v3 scenario; `deposits: "closed"` only for `honorsDepositsFlag` rows; both networks accept `mpc-1` and `dev` alike (the profile's `allow_dev_setup` is ignored) and refuse any other setup, none and `not_deployed` with identical messages, and `allowDevSetup` is an unknown field; activation gates (review revision, `WIRED`, manifest hash), each refusing on its own with the host wiring in place; the `dustThresholdUsdMicros` and `abandonEnabled` rules; a revert fixture fails and a rollback fixture passes; identity continuity (`tombstone_mismatch`, `identity_changed`, `identity_unverified`, the override), including that a live row keeps its proof setup and each key pin in both directions between `dev` and `mpc-1`, through every move and for profile files edited in place, and that a further row on the other setup is a legitimate move; tombstone and per-network uniqueness; `no_live_version`; tombstone chain. Several of its tests pin today's dormant registry ([Activate](#activate-a-new-version)) |
-| [zkapi-snapshot-adapters.test.mjs](../test/zkapi/zkapi-snapshot-adapters.test.mjs) | normalization of both SDK snapshot shapes; deadline fuzz (a unit change or garbage never overrides a deposit-row expiry); call-profile table equals the real encoders; deposit-entry-point classification; `getActiveAdapter()` returns the installed adapter; the proof-setup rule on both networks (`mpc-1` and `dev` accepted alike, anything else refused) with and without a bundle `setupId`, and `proofSetupKind`; adapter `billing`, `abandon` and `watchFacts` data |
+| [service-base.test.mjs](../test/zkapi/service-base.test.mjs) | one hostname for several deployments ([3](#one-hostname-for-several-deployments)): the shape of a service base and its prefix (exact, no trailing slash, reserved first segments), which pairs overlap, the scoped proxy rewrite and the generated configuration (bundler route first, no broad rewrite for a prefixed version), and that the installed legacy SDK and a successor SDK (when present) map a URL under a prefix to the proxy URL the rewrite forwards |
+| [zkapi-snapshot-adapters.test.mjs](../test/zkapi/zkapi-snapshot-adapters.test.mjs) | profile validation accepts a plain path prefix on the protocol and indexer base for both families and nothing else of the former origin rule changes; normalization of both SDK snapshot shapes; deadline fuzz (a unit change or garbage never overrides a deposit-row expiry); call-profile table equals the real encoders; deposit-entry-point classification; `getActiveAdapter()` returns the installed adapter; the proof-setup rule on both networks (`mpc-1` and `dev` accepted alike, anything else refused) with and without a bundle `setupId`, and `proofSetupKind`; adapter `billing`, `abandon` and `watchFacts` data |
 | [zkapi-wallet-holdings.test.mjs](../test/zkapi/zkapi-wallet-holdings.test.mjs) | classifier parity with upstream cases; fail-closed unknown keys; the probe writes and creates nothing; schema parity with a database made by the real legacy store; `draft_only` and `unsent_prepared` detection; discard preconditions, `ifAvailable`, no-locks refusal, channel post; the drift guard (11.3) |
 | [zkapi-version-loader.test.mjs](../test/zkapi/zkapi-version-loader.test.mjs) | rows 1 to 7; three-version generalization; `prefer` rules; unreadable and timeout; unknown and retired owners; credit holders; purity; the lost-race re-read with three concurrent tabs; guard charged only for discards that happened |
 | [zkapi-switch-protocol.test.mjs](../test/zkapi/zkapi-switch-protocol.test.mjs) | round trip; enum and id validation; view and `prefer` normalization; busy refusal; the loop guard across simulated reloads; URL never read; storage failures; intent expiry; `canDiscard` and `noteDiscard`; no key reaches account sync |

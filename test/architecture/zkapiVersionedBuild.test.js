@@ -327,6 +327,42 @@ test('dormant registry: single mode emits exactly the legacy assets, bytes and r
     }
 });
 
+// One hostname for two deployments: the newer version is pinned under a plain
+// path prefix of the older one's hostname (versioning/serviceBase.mjs). The
+// plan, the registry rules and the generated routes must agree: the older
+// version keeps its root rewrite, the newer one's rewrite forwards only its own
+// subtree, and no rewrite of either reaches the other's routes.
+test('a second version served under a prefix of the first one\'s hostname is planned and routed to its own subtree', async t => {
+    const { generator, registry: registryModule } = await helpers();
+    const project = await makeProject(t, {
+        mutateRegistry(registry) {
+            for (const network of NETWORKS) {
+                const origin = registryModule.PROFILE_FILES[`${network}.json`].trusted_deployment.protocol_server_url;
+                const base = `${origin}/c`;
+                const config = registry.versions[1].networks[network].config;
+                config.trusted_deployment.protocol_server_url = base;
+                config.trusted_deployment.indexer_url = base;
+                config.deployment_manifest_url = `${base}/config.json`;
+                config.allowed_deployment_manifest_urls = [`${base}/config.json`];
+            }
+        }
+    });
+    for (const network of NETWORKS) {
+        const plan = project.plan(network);
+        assert.deepEqual(plan.versions.map(version => version.id), ['v1', 'v2']);
+        const origin = plan.versions[0].config.trusted_deployment.protocol_server_url;
+        assert.equal(plan.versions[1].config.trusted_deployment.protocol_server_url, `${origin}/c`);
+        assert.deepEqual(generator.zkapiProxyRewrites(plan), [
+            { source: '/zkapi-deployment/:path*', destination: `${origin}/:path*` },
+            { source: '/zkapi-deployment-v2c/c/:path*', destination: `${origin}/c/:path*` }
+        ]);
+        const routing = generator.buildZkapiVercelConfig({ orgOrigin: 'https://org-staging.openanonymity.ai', network, deployment: DEPLOYMENT });
+        // The shipped registry's own v2 is still pending: nothing of this
+        // variant leaks into the generated configuration of the real one.
+        assert.equal(routing.rewrites.filter(rewrite => rewrite.source.startsWith('/zkapi-deployment-v2c')).length, 0);
+    }
+});
+
 // "Dormant means identical": a build that is not versioning-active must ship
 // the legacy tree it always shipped. Every file under dist/zkapi/ except the
 // stylesheet (which carries host UI and changes with it) is compared with what

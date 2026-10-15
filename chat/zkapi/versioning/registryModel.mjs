@@ -31,6 +31,7 @@
 // recognized and a typo in it strands whoever holds them.
 
 import { WIRED } from './wiring.mjs';
+import { parseServiceBase, servicesOverlap } from './serviceBase.mjs';
 
 export const REGISTRY_NETWORKS = Object.freeze(['mainnet', 'sepolia']);
 
@@ -356,12 +357,13 @@ function trustedPins(config, where) {
     return pins;
 }
 
-function protocolOrigin(pins, where) {
-    try {
-        return new URL(pins.protocol_server_url).origin;
-    } catch {
-        return fail('profile', `${where} has an invalid protocol origin.`);
-    }
+// The service base a profile pins: its origin and an optional path prefix
+// (serviceBase.mjs). The adapter already refused a malformed one; this keeps
+// the model total for a hand-built registry.
+function protocolService(pins, where) {
+    const service = parseServiceBase(pins.protocol_server_url);
+    if (!service) fail('profile', `${where} has an invalid protocol URL.`);
+    return service;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,7 +504,7 @@ export function validateRegistry(registry, options = {}) {
             fail('no_live_version', `Network ${network} has no live version.`);
         }
 
-        const origins = new Map();
+        const services = [];
         const liveChains = new Set();
         const tombstones = [];
         let inferenceBase;
@@ -535,9 +537,13 @@ export function validateRegistry(registry, options = {}) {
             // Identity (code `identity_collision`).
             claimIdentity(`deployment:${pins.deployment_id}`, 'a deployment id', where);
             claimIdentity(`vault:${pins.chain_id}:${String(pins.contract_address).toLowerCase()}`, 'a vault', where);
-            const origin = protocolOrigin(pins, where);
-            if (origins.has(origin)) fail('identity_collision', `${where} shares its protocol origin with ${origins.get(origin)}.`);
-            origins.set(origin, where);
+            // Two deployments may share a hostname, but never a base URL: the
+            // same base, or one prefix inside another, would send a request
+            // to both (a root and a prefix of one origin are distinct).
+            const service = protocolService(pins, where);
+            const clash = services.find(other => servicesOverlap(other.service, service));
+            if (clash) fail('identity_collision', `${where} shares its protocol URL with ${clash.where}.`);
+            services.push({ service, where });
 
             // Request-visible parameters stay identical across versions (code
             // `parameter_mismatch`).
