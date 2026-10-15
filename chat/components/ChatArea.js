@@ -2408,17 +2408,31 @@ export default class ChatArea {
         this.app.updateScrollButtonVisibility();
     }
 
+    /** Keep late reasoning in the same position as the full message template. */
+    insertSingleReasoningTrace(messageId, html) {
+        const row = document.querySelector(`[data-message-id="${messageId}"]`);
+        const header = row?.querySelector('[data-assistant-header]');
+        if (!header) return;
+        // A standalone access trace precedes reasoning in the restored template.
+        const accessTrace = header.parentElement.querySelector(':scope > .kept-access-trace');
+        document.getElementById(`reasoning-${messageId}`)?.remove();
+        (accessTrace || header).insertAdjacentHTML('afterend', html);
+    }
+
     /** A provider may first signal hidden reasoning after its answer has begun. */
     updateWithheldReasoning(messageId, thinking, duration, laneId = null) {
         const reasoningId = laneId ? this.getCouncilLaneReasoningId(messageId, laneId) : messageId;
         if (!document.getElementById(`reasoning-${reasoningId}`)) {
-            const row = document.querySelector(`[data-message-id="${messageId}"]`);
-            const body = laneId ? this.getCouncilLaneBody(messageId, laneId)
-                : row?.querySelector('.message-content')?.closest('.message-assistant')?.parentElement;
-            if (!body) return;
-            if (laneId) this.removeCouncilLanePending(body);
-            body.insertAdjacentHTML('afterbegin', buildReasoningTrace('', reasoningId, thinking,
-                null, duration, null, { withheld: true }));
+            const html = buildReasoningTrace('', reasoningId, thinking,
+                null, duration, null, { withheld: true });
+            if (laneId) {
+                const body = this.getCouncilLaneBody(messageId, laneId);
+                if (!body) return;
+                this.removeCouncilLanePending(body);
+                body.insertAdjacentHTML('afterbegin', html);
+            } else {
+                this.insertSingleReasoningTrace(messageId, html);
+            }
         }
         if (thinking) this.resumeReasoningDisplay(reasoningId);
         else this.settleThinkingHeader(reasoningId, duration);
@@ -2784,12 +2798,7 @@ export default class ChatArea {
         }
         // Some models answer first, then reveal their first reasoning during a tool call.
         if (!document.getElementById(`reasoning-content-${messageId}`)) {
-            const row = document.querySelector(`[data-message-id="${messageId}"]`);
-            const body = row?.querySelector('.message-content')?.closest('.message-assistant')?.parentElement;
-            if (body) {
-                document.getElementById(`reasoning-${messageId}`)?.remove();
-                body.insertAdjacentHTML('afterbegin', buildReasoningTrace(reasoning, messageId, true));
-            }
+            this.insertSingleReasoningTrace(messageId, buildReasoningTrace(reasoning, messageId, true));
         }
         this.resumeReasoningDisplay(messageId);
         // Always update buffer immediately (non-blocking)
