@@ -1,3 +1,4 @@
+import { reportDiagnostic } from '../services/diagnostics.js';
 import {
     isVerifierResultUsable,
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
@@ -315,6 +316,7 @@ export async function acquireVerifiedAccess(options = {}) {
                     if (!(removedNow > 0)) {
                         error.message = 'Couldn’t update the tickets saved on this device. Please try again.';
                         error.code = 'TICKET_SWEEP_STALLED';
+                        reportDiagnostic('access.sweep_stalled', { tier: ticketsRequired });
                         onAccessRequestError(buildSafeAccessErrorMetadata(error));
                         throw error;
                     }
@@ -336,6 +338,7 @@ export async function acquireVerifiedAccess(options = {}) {
                     if (remainingTickets >= ticketsRequired) {
                         error.message = 'Couldn’t update the tickets saved on this device. Please try again.';
                         error.code = 'TICKET_SWEEP_STALLED';
+                        reportDiagnostic('access.sweep_stalled', { tier: ticketsRequired });
                     } else {
                         error.message = remainingTickets > 0
                             ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`

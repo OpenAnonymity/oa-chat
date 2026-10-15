@@ -39,3 +39,38 @@ test('the menu never runs off the left or right edge', () => {
     assert.equal(placeSessionMenu({ top: 100, bottom: 136, right: 60 }, size, viewport).left, 8);
     assert.equal(placeSessionMenu({ top: 100, bottom: 136, right: 1400 }, size, viewport).left, 1280 - 8 - 175);
 });
+
+test('keyboard menu opening focuses the first action; pointer opening preserves focus', async () => {
+    const { default: Sidebar } = await import('../../chat/components/Sidebar.js');
+    const opened = [];
+    let focuses = 0;
+    const doc = { body: { appendChild(menu) { menu.isConnected = true; opened.push(menu); } }, querySelectorAll: () => [], defaultView: {} };
+    const template = { cloneNode() {
+        const names = new Set(['hidden']);
+        return { ownerDocument: doc, classList: { add: x => names.add(x), remove: x => names.delete(x), contains: x => names.has(x) },
+            addEventListener() {}, removeAttribute() {}, querySelector: () => ({ focus() { focuses++; } }) };
+    } };
+    const row = { querySelector: () => template, toggleAttribute() {} };
+    const button = { ownerDocument: doc, dataset: { sessionId: 'synthetic' }, closest: () => row, setAttribute() {} };
+    const sidebar = Object.create(Sidebar.prototype);
+    sidebar.positionFloatingMenu = () => {};
+    sidebar.openSessionMenu(button, { focusMenu: true });
+    assert.equal(focuses, 1);
+    assert.equal(opened[0].classList.contains('session-menu--floating'), true);
+    sidebar.openSessionMenu(button, { focusMenu: false });
+    assert.equal(focuses, 1);
+});
+
+test('hiding the sidebar closes its detached menu before the sidebar becomes inert', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { runInNewContext } = await import('node:vm');
+    const source = await readFile(new URL('../../chat/app.js', import.meta.url), 'utf8');
+    const method = source.slice(source.indexOf('    hideSidebar(options = {}) {'), source.indexOf('    showSidebar(options = {}) {'));
+    const order = [];
+    const app = { sidebar: { closeAllMenus: () => order.push('close') }, elements: { sidebar: {
+        classList: { add() {}, remove() {}, contains: () => false }, set inert(value) { if (value) order.push('inert'); }
+    } }, isMobileView: () => true, setSidebarClosingAttribute() {}, setSidebarHiddenAttribute() {}, updateWideModeButtonVisibility() {}, updateToolbarDivider() {} };
+    const hide = runInNewContext(`({${method}}).hideSidebar`, { clearTimeout() {}, setTimeout() {}, SIDEBAR_CLOSE_DURATION_MS: 0 });
+    hide.call(app, { persist: false, predictToolbar: false });
+    assert.deepEqual(order, ['close', 'inert']);
+});

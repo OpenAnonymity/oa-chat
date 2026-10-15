@@ -10897,6 +10897,7 @@ class ChatApp {
     }
 
     hideSidebar(options = {}) {
+        this.sidebar?.closeAllMenus?.();
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
@@ -12194,7 +12195,6 @@ Your API key has been cleared. A new key from a different station will be obtain
                     },
                     onAccessRequestError: (error) => {
                         console.error('Failed to automatically acquire API access:', error);
-                        if (error?.code === 'TICKET_SWEEP_STALLED') reportDiagnostic('access.sweep_stalled', {});
                     },
                     onVerificationWarning: (...args) => {
                         console.warn(...args);

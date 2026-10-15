@@ -2,8 +2,6 @@
  * Network Logger Service
  * Tracks and stores network requests for debugging and monitoring
  */
-import { addBreadcrumb, breadcrumbFromLogEntry } from './diagnostics.js';
-
 import { providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
 
 class NetworkLogger {
@@ -84,10 +82,6 @@ class NetworkLogger {
 
         // Add to beginning of array (most recent first)
         this.logs.unshift(logEntry);
-
-        // The same step, reduced to a category, a name and a status, for the
-        // trail an error report carries (see services/diagnostics.js).
-        addBreadcrumb(breadcrumbFromLogEntry(logEntry));
 
         // Trim to max size
         if (this.logs.length > this.maxLogs) {

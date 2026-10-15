@@ -7,10 +7,10 @@ bounded, explicitly instrumented request failures and a short catalogue of
 client incidents (a ticket sweep, a stream timeout, a failed local write or
 sync) to Sentry. Reports contain fixed error categories, allowlisted request
 phases/statuses, bucketed counts, four fixed-value tags (payment mode, surface,
-page visibility, online state), a trail of the client's own recent steps
-reduced to step names and HTTP statuses, and generated code locations — not
+page visibility, online state), the failing operation's fixed steps and
+relative times (rounded to 100ms), and generated code locations — not
 exception text, chats, credentials, account identifiers, hosts, model names or
-activity histories.
+cross-chat activity histories. Unscoped failures carry no trail.
 The direct transport still exposes source IP, browser HTTP metadata and error
 arrival time to Sentry. It is not covered by OA's inference relay or strongest
 metadata-unlinkability claims. Reporting is absent from unconfigured builds.

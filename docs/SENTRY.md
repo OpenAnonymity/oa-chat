@@ -144,25 +144,25 @@ same finite-vocabulary model, so the data boundary stays the one described
 above — nothing free-form, nothing from a prompt, a response, a URL, a ticket
 or an account can get in, because there is no field that would carry it.
 
-**The trail.** Every entry the Activity Timeline records is reduced by
-`chat/services/diagnostics.js` (`breadcrumbFromLogEntry`) to a category
-(`access`, `verify`, `tickets`, `stream`, `sync`, `send`, `billing`, `local`,
-`other`), a step name from a fixed path table (`request_key`, `submit_key`,
-`split`, `completion`, …), the HTTP status, the org's structured `error_code`
-when it is one of `ORG_ERROR_CODES`, and whether the request was aborted. The
-host, path parameters, headers and bodies never reach the breadcrumb. The SDK
-keeps the last 40 (`maxBreadcrumbs: 40`; `beforeBreadcrumb` drops anything not
-under `oa.*`, so console, fetch and click breadcrumbs cannot appear), and
-`beforeSend` rebuilds the trail from scratch with `sanitizeBreadcrumbs`. Every
-report — uncaught error, handled request failure or diagnostic — carries it.
-A report that used to say "access failed: http_401" now also shows the thirteen
-`request_key 401 TICKET_ALREADY_SPENT` steps that preceded it.
+**The trail (option a).** Each failing request observation owns a local buffer,
+with `started` and `failed` steps. The stream watchdog additionally records
+`opened`, `first_output` and `timeout`. Reports contain only the failing operation
+within the turn; they do not reconstruct the entire turn or use the Activity
+Timeline. Concurrent requests never share a buffer. Unscoped background incidents
+and uncaught exceptions have no trail. There are no request/turn/session identifiers.
+Relative milliseconds are rounded to 100ms and bounded to one hour; absolute
+breadcrumb timestamps are removed. Each buffer retains at most forty steps.
+All step names are an explicit catalogue, not merely strings matching a pattern.
+The SDK's global breadcrumbs are disabled (`maxBreadcrumbs: 0`), and the outgoing
+sanitizer reconstructs the explicit request trail. Request exceptions attach it
+through `beforeSend`'s original synthetic error hint; diagnostics use explicit
+breadcrumbs in their event. No original exception or request data is retained.
 
 **Tags.** Four, each with fixed values (`TAGS` in `scripts/sentry/privacy.mjs`):
 `oa.mode` (ticket | zkapi), `oa.surface` (web | desktop), `oa.visibility`
 (visible | hidden), `oa.online` (online | offline). They are read from the page
 when the event is sent (`collectLiveTags`) and filter dashboards and alerts;
-none of them narrows down a person. Model names, providers, stations and
+these tags are coarse operational context. Model names, providers, stations and
 destinations remain excluded.
 
 **Diagnostics.** A catalogued incident that is not an exception:
@@ -188,12 +188,12 @@ alert rules can be set per name. The catalogue today:
 Adding one: add the name and its fields to `DIAGNOSTIC_CATALOG` first, then
 call `reportDiagnostic` at the site. An unknown name or field is silently
 dropped, so a call without a catalogue entry sends nothing. Application code
-never imports the SDK: diagnostics and breadcrumbs travel as DOM events
-(`oa:diagnostic`, `oa:breadcrumb`) that `scripts/sentry/browser.mjs` listens
+never imports the SDK: diagnostics travel as DOM events
+(`oa:diagnostic`, `oa:request-failure`) that `scripts/sentry/browser.mjs` listens
 for, and an unconfigured build has nothing listening.
 
 What this still does not do, on purpose: no success events (request volume per
-address would be usage tracking), no per-request timing, no session or user
+address would be usage tracking), no successful-request reports, no absolute trail timing, no session or user
 identity, no model or provider names, no error text. The transport caveat is
 unchanged: Sentry sees the sender's IP, so the hosted project still needs the
 IP-storage and `$user.geo.**` scrubbing rules above.
@@ -214,3 +214,11 @@ Checks: `node --test test/services/diagnostics.test.js test/sentryDiagnostics.te
   entry with both global error handlers, verifying sanitized envelopes.
 - Changes remain local on `codex/sentry-setup-20261012`. No hosting configuration,
   project platform setting, IP-storage setting, or deployed application changed.
+
+### Staging release boundaries (2026-10-15)
+
+This candidate adds browser diagnostics only. Source-map upload tooling/tokens,
+server-side Sentry and Sentry project administration are not changed. Before
+promoting additional telemetry to production, an administrator must verify
+IP-storage prevention and `$user.geo.**` scrubbing in the hosted project. Local
+sanitizer tests do not establish those hosted settings.

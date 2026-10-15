@@ -392,7 +392,7 @@ export default class Sidebar {
             const menuBtn = e.target.closest('.session-menu-btn');
             if (menuBtn) {
                 e.stopPropagation();
-                this.toggleSessionMenu(menuBtn);
+                this.toggleSessionMenu(menuBtn, { focusMenu: e.detail === 0 });
                 return;
             }
 
@@ -419,6 +419,12 @@ export default class Sidebar {
         });
         doc?.addEventListener?.('keydown', (e) => {
             if (e.key === 'Escape' && this.floatingMenu) this.closeFloatingMenu({ restoreFocus: true });
+            else if ((e.metaKey || e.ctrlKey) && this.floatingMenu) this.closeFloatingMenu();
+        });
+        doc?.addEventListener?.('focusin', (e) => {
+            if (!this.floatingMenu || this.floatingMenu.contains(e.target)) return;
+            const anchor = this.findSessionRow(this.floatingMenuSessionId)?.querySelector('.session-menu-btn');
+            if (e.target !== anchor) this.closeFloatingMenu();
         });
         doc?.defaultView?.addEventListener?.('resize', () => {
             if (this.floatingMenu) this.closeFloatingMenu();
@@ -643,10 +649,10 @@ export default class Sidebar {
      * Opens or closes a chat row's menu from its ··· button.
      * @param {HTMLElement} button
      */
-    toggleSessionMenu(button) {
+    toggleSessionMenu(button, options = {}) {
         const wasOpen = this.isFloatingMenuOpen(button?.dataset?.sessionId);
         this.closeAllMenus();
-        if (!wasOpen) this.openSessionMenu(button);
+        if (!wasOpen) this.openSessionMenu(button, options);
     }
 
     isFloatingMenuOpen(sessionId = null) {
@@ -661,7 +667,7 @@ export default class Sidebar {
      * placeSessionMenu against the button.
      * @param {HTMLElement} button
      */
-    openSessionMenu(button) {
+    openSessionMenu(button, { focusMenu = false } = {}) {
         const row = button?.closest?.('.chat-session');
         const template = row?.querySelector('.session-menu');
         const doc = button?.ownerDocument;
@@ -680,6 +686,7 @@ export default class Sidebar {
         this.positionFloatingMenu(button);
         this.setSessionMenuAnchorState(row, button, true);
         showSurface(menu, 'dropdown');
+        if (focusMenu) menu.querySelector('button:not(:disabled)')?.focus?.({ preventScroll: true });
     }
 
     positionFloatingMenu(button) {
@@ -700,7 +707,7 @@ export default class Sidebar {
         const place = placeSessionMenu(button.getBoundingClientRect(), size, viewport);
         menu.style.top = `${place.top}px`;
         menu.style.left = `${place.left}px`;
-        menu.style.maxHeight = place.maxHeight ? `${place.maxHeight}px` : '';
+        menu.style.maxHeight = place.maxHeight !== null ? `${place.maxHeight}px` : '';
         menu.dataset.side = place.side;
         menu.dataset.origin = place.side === 'top' ? 'bottom-right' : 'top-right';
     }

@@ -66,7 +66,7 @@ export function requestFailureReason(error) {
 }
 
 const BREADCRUMB_CATEGORIES = Object.freeze(['access', 'verify', 'tickets', 'stream', 'sync', 'send', 'billing', 'local', 'other']);
-const BREADCRUMB_CODE = /^[a-z][a-z0-9_]{0,39}$/;
+const BREADCRUMB_CODES = new Set(['request_confidential_key', 'request_key', 'submit_key', 'attestation', 'register', 'split', 'code_redeem', 'free_access', 'waitlist', 'legacy_transfer', 'request', 'auth', 'completion', 'models', 'ticket_select', 'ticket_select_split', 'tickets_blind', 'tickets_signed', 'tickets_unblind', 'prompt_edit', 'session_fork', 'access_discard', 'access_replace', 'started', 'opened', 'first_output', 'failed', 'timeout']);
 // The org's structured error codes (oa-org auth/ticket_auth.py and the
 // billing, account and sync routes). A code not listed here is not carried.
 export const ORG_ERROR_CODES = Object.freeze([
@@ -82,7 +82,7 @@ const ORG_ERROR_CODE_SET = new Set(ORG_ERROR_CODES);
 export function normalizeBreadcrumb(input) {
     const category = input?.category;
     const code = input?.code;
-    if (!BREADCRUMB_CATEGORIES.includes(category) || typeof code !== 'string' || !BREADCRUMB_CODE.test(code)) return null;
+    if (!BREADCRUMB_CATEGORIES.includes(category) || typeof code !== 'string' || !BREADCRUMB_CODES.has(code)) return null;
     const crumb = { category, code };
     const status = Number(input.status);
     if (Number.isInteger(status) && status >= 0 && status <= 999) crumb.status = status;
@@ -90,6 +90,9 @@ export function normalizeBreadcrumb(input) {
     const count = bucketCount(input.count);
     if (count > 0) crumb.count = count === Infinity ? 1000 : count;
     if (input.aborted === true) crumb.aborted = true;
+    if (Number.isFinite(input.elapsedMs) && input.elapsedMs >= 0 && input.elapsedMs <= 3600000) {
+        crumb.elapsedMs = Math.round(input.elapsedMs / 100) * 100;
+    }
     return crumb;
 }
 
@@ -138,7 +141,7 @@ export function createDiagnosticsReporter({ target, now = Date.now } = {}) {
     };
     return {
         /** Sends a catalogued event; silently drops anything else. Never throws. */
-        report(name, fields = {}) {
+        report(name, fields = {}, trail = []) {
             try {
                 const normalized = normalizeDiagnostic(name, fields);
                 if (!normalized) return false;
@@ -155,7 +158,7 @@ export function createDiagnosticsReporter({ target, now = Date.now } = {}) {
                 sentAt.set(name, at);
                 sentCount.set(name, count + 1);
                 total += 1;
-                return dispatch(DIAGNOSTIC_EVENT, { name, fields: normalized, repeats: bucketCount(repeats) === Infinity ? 1000 : bucketCount(repeats) });
+                return dispatch(DIAGNOSTIC_EVENT, { name, fields: normalized, repeats: bucketCount(repeats) === Infinity ? 1000 : bucketCount(repeats), trail: normalizeTrail(trail) });
             } catch {
                 return false; // Diagnostics can never affect the app.
             }
@@ -174,7 +177,7 @@ export function createDiagnosticsReporter({ target, now = Date.now } = {}) {
 }
 
 const reporter = createDiagnosticsReporter();
-export const reportDiagnostic = (name, fields) => reporter.report(name, fields);
+export const reportDiagnostic = (name, fields, trail) => reporter.report(name, fields, trail);
 export const addBreadcrumb = input => reporter.breadcrumb(input);
 
 // --- Breadcrumbs from the Activity Timeline ---------------------------------
@@ -218,4 +221,33 @@ export function breadcrumbFromLogEntry(entry) {
         errorCode: detail?.error_code,
         aborted: entry.isAborted === true
     });
+}
+
+// Each caller owns its request-local buffer. No current-chat lookup, shared SDK
+// breadcrumbs, identifiers, or cross-request history participates in a report.
+export function normalizeTrail(trail) {
+    return (Array.isArray(trail) ? trail : []).slice(-40).map(normalizeBreadcrumb).filter(Boolean);
+}
+
+export function createDiagnosticTrail(category, { now = () => globalThis.performance?.now?.() ?? Date.now() } = {}) {
+    const entries = [];
+    let started;
+    try { started = now(); } catch { started = 0; }
+    return {
+        add(code) {
+            try {
+                const crumb = normalizeBreadcrumb({ category, code, elapsedMs: Math.max(0, now() - started) });
+                if (crumb) entries.push(crumb);
+                if (entries.length > 40) entries.shift();
+            } catch { /* Reporting must never affect a request. */ }
+        },
+        snapshot() { return entries.map(entry => ({ ...entry })); }
+    };
+}
+
+export function trailToBreadcrumbs(trail) {
+    return normalizeTrail(trail).map(({ category, code, elapsedMs, errorCode, ...data }) => ({
+        category: `oa.${category}`, message: code, level: 'info',
+        data: { ...data, ...(errorCode ? { error_code: errorCode } : {}), ...(elapsedMs !== undefined ? { elapsed_ms: elapsedMs } : {}) }
+    }));
 }

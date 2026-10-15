@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { init, captureEvent, flush, makeFetchTransport, getCurrentScope } from '@sentry/browser';
+import { init, captureEvent, captureException, flush, makeFetchTransport, getCurrentScope } from '@sentry/browser';
 import { sanitizeErrorEvent, privacyOptions } from '../scripts/sentry/privacy.mjs';
 
 // The repository bundles unit tests into /tmp. Load the build helper from its
@@ -156,4 +156,41 @@ test('actual SDK envelope keeps finite provider error categories and drops priva
     assert.ok(String(requests[0].body).includes('OARequest_completion_provider_code_429'));
     assert.equal(String(requests[0].body).includes(privateText), false);
     assert.equal(requests[0].credentials, 'omit');
+});
+
+
+test('actual SDK diagnostic envelope retains only scoped steps and relative times', async () => {
+    const requests = [];
+    init({ ...privacyOptions(config), transport: options => makeFetchTransport(options, async (_url, request) => {
+        requests.push(request); return { status: 200, headers: new Headers() };
+    }) });
+    captureEvent({ message: 'OADiag_stream.timeout', contexts: { oa: { stage: 'idle', seconds: 45, prompt: privateText } },
+        breadcrumbs: [{ category: 'oa.stream', message: 'opened', timestamp: 1700000000, data: { elapsed_ms: 125, sessionId: privateText } }] });
+    await flush(2000);
+    assert.equal(requests.length, 1);
+    const body = String(requests[0].body);
+    assert.equal(body.includes(privateText), false);
+    assert.equal(body.includes('1700000000'), false);
+    assert.ok(body.includes('elapsed_ms'));
+    assert.ok(body.includes('opened'));
+});
+
+
+test('actual SDK captureException attaches the synthetic error request trail through beforeSend', async () => {
+    const requests = [];
+    init({ ...privacyOptions(config), transport: options => makeFetchTransport(options, async (_url, request) => {
+        requests.push(request); return { status: 200, headers: new Headers() };
+    }) });
+    const failure = new Error('Request failed (details withheld)');
+    failure.name = 'OARequest_completion_http_503';
+    failure.stack = `OARequest_completion_http_503: Request failed\n    at send (${config.origin}/assets/app-ABC.js:42:8)`;
+    failure.oaTrail = [{ category: 'stream', code: 'started', elapsedMs: 0 }, { category: 'stream', code: 'failed', elapsedMs: 1200, prompt: privateText }];
+    captureException(failure);
+    await flush(2000);
+    assert.equal(requests.length, 1);
+    const body = String(requests[0].body);
+    assert.ok(body.includes('elapsed_ms'));
+    assert.ok(body.includes('started'));
+    assert.ok(body.includes('failed'));
+    assert.equal(body.includes(privateText), false);
 });

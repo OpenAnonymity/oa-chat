@@ -1,3 +1,4 @@
+import { createDiagnosticTrail } from '../diagnostics.js';
 import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
@@ -6,10 +7,13 @@ import { getDefaultModelConfig } from '../modelConfig.js';
 import { reportRequestFailure } from '../requestDiagnostics.js';
 
 async function observeRequest(phase, run, signal) {
+    const trail = createDiagnosticTrail(phase === 'completion' ? 'stream' : phase === 'verification' ? 'verify' : 'access');
+    trail.add('started');
     try {
         return await run();
     } catch (error) {
-        reportRequestFailure(phase, error, signal);
+        trail.add('failed');
+        reportRequestFailure(phase, error, signal, trail.snapshot());
         throw error;
     }
 }
