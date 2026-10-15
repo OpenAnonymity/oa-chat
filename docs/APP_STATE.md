@@ -1,3 +1,19 @@
+## October 15, 2026 — thinking header included in staging candidate
+
+The candidate includes the complete `79e33389` branch alongside the menu and
+scoped diagnostics fixes. The chosen behavior applies to all models: an existing
+reasoning header says "Thinking..." throughout the reply, then "Thought for Ns"
+when it completes. Reasoning text still settles when answer text starts; only
+the header remains active. No alternative header designs are pending.
+
+Duration starts when the stream opens and ends at the last thinking stretch,
+rather than measuring only a provider's late reasoning burst or the whole reply.
+Resumed withheld reasoning updates that duration and preserves paragraph breaks
+between answer segments. Interrupted single-model replies retain their measured
+duration when saved and reloaded. Council text-reasoning headers likewise stay
+active until their lane completes. This does not add provider reasoning that was
+never disclosed, or introduce any additional telemetry.
+
 ## October 15, 2026 — staging menu and scoped diagnostics candidate
 
 The row menu is portaled outside the scrolling list, opens below when it fits,
