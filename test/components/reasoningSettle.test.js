@@ -41,8 +41,12 @@ test('a finished message that streamed after thinking gets its action row (Copy,
     assert.match(chatArea, /replaceAssistantActionsRow\(messageEl, message\) \{[\s\S]*?assistant-actions-placeholder[\s\S]*?row\.replaceWith\(fresh\)/);
 });
 
-test('a Parallel lane settles its trace body at the first answer words but its header stays on Thinking until the lane completes', () => {
+test('Parallel lanes and single replies share the 1 s "Still working…" delay, and a lane header settles at its first answer words', () => {
     const council = read('chat/application/councilController.js');
-    assert.match(council, /settleCouncilLaneReasoning\(assistantMessage\.id, laneId, reasoning, duration\);\n(?:\s*\/\/[^\n]*\n)*\s*this\.app\.chatArea\.resumeReasoningDisplay\?\.\(this\.app\.chatArea\.getCouncilLaneReasoningId\(assistantMessage\.id, laneId\)\);/);
-    assert.match(council, /finalizeCouncilLaneReasoning\(\s*assistantMessage\.id,\s*laneId,\s*laneState\.reasoning,\s*laneState\.reasoningDuration\s*\)/, 'the lane header takes its time when the lane completes');
+    const app = read('chat/app.js');
+    assert.match(read('chat/services/streamSegments.js'), /export const STILL_WORKING_DELAY_MS = 1000;/);
+    assert.match(council, /import \{ STILL_WORKING_DELAY_MS \} from '\.\.\/services\/streamSegments\.js';/);
+    assert.doesNotMatch(council, /const STILL_WORKING_DELAY_MS =/);
+    assert.match(app, /import \{ STILL_WORKING_DELAY_MS \} from '\.\/services\/streamSegments\.js';/);
+    assert.doesNotMatch(council, /resumeReasoningDisplay/);
 });

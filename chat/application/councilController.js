@@ -1,4 +1,5 @@
 import { trackFeatureUsage } from '../services/featureUsage.js';
+import { STILL_WORKING_DELAY_MS } from '../services/streamSegments.js';
 import { waitForSignal } from '../services/inference/reliability.js';
 import { chatDB as defaultChatDB } from '../db.js';
 import { parseReasoningContent, reasoningTextFromDetails } from '../services/reasoningParser.js';
@@ -25,7 +26,6 @@ const LANE_IDS = ['primary', 'secondary'];
 const SYNTHESIS_LANE_ID = 'synthesis';
 // How long a lane may go quiet after showing output before it says it is
 // still working. Long enough to stay hidden while text is streaming.
-const STILL_WORKING_DELAY_MS = 1200;
 const SYNTHESIS_CONTEXT_MAX_CHARS = 8000;
 
 function isAbortError(error) {
@@ -1654,9 +1654,6 @@ export default class CouncilController {
             if (!assistantMessage?.id || !laneId) return;
             if (this.app.chatArea && this.app.isViewingSession(session.id)) {
                 this.app.chatArea.settleCouncilLaneReasoning(assistantMessage.id, laneId, reasoning, duration);
-                // A model may think again after any line: the lane header stays
-                // on "Thinking..." until the lane completes.
-                this.app.chatArea.resumeReasoningDisplay?.(this.app.chatArea.getCouncilLaneReasoningId(assistantMessage.id, laneId));
             }
         };
 
