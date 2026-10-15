@@ -408,14 +408,19 @@ test('the claim, finalization and deposit calls do not read the withdrawal field
     assert.equal(await verdict(provider, finalize, finalizeContext, { kind: 'finalization', noteId: 8 }), 4100);
 });
 
-test('concession-v1 profile: deposit and finalization keep their unchanged layouts', async () => {
+test('concession-v1 profile: the two-argument deposit and the unchanged finalization', async () => {
     const { provider } = signer({ protocol: v2Protocol() });
     const amount = 5_000_000n;
-    const deposit = { to: VAULT, data: codec.encodeDeposit({ commitment: '0x123', zero_path: Array(32).fill('0x0') }, amount),
-        value: hex(amount * 1_000_000_000n) };
+    // deposit(bytes32 commitment, uint128 amount): the vault appends the leaf itself.
+    const word = value => BigInt(value).toString(16).padStart(64, '0');
+    const deposit = { to: VAULT, data: `0x56d2e1ea${word('0x123')}${word(amount)}`, value: hex(amount * 1_000_000_000n) };
     const depositContext = { version: 1, kind: 'deposit', deploymentId: V2_DEPLOYMENT, chainId: 1, contractAddress: VAULT,
         operationId: 'op', submissionId: 'sub', amount: amount.toString(), commitment: '0x123' };
     assert.equal(await verdict(provider, deposit, depositContext, { kind: 'deposit', amount: amount.toString() }), 'accepted');
+    // The legacy 34-word deposit (a Merkle path follows) is not this vault's call.
+    const legacy = { to: VAULT, data: codec.encodeDeposit({ commitment: '0x123', zero_path: Array(32).fill('0x0') }, amount),
+        value: deposit.value };
+    assert.equal(await verdict(provider, legacy, depositContext, { kind: 'deposit', amount: amount.toString() }), 4100);
     assert.equal(await verdict(provider, { to: VAULT, data: codec.encodeFinalizeEscape(7) },
         { version: 1, kind: 'finalization', deploymentId: V2_DEPLOYMENT, chainId: 1, contractAddress: VAULT, operationId: 'op',
             submissionId: 'sub', noteId: 7 }, { kind: 'finalization', noteId: 7 }), 'accepted');

@@ -640,8 +640,10 @@ test('the concession-v1 call profile equals the revision 3 vault calldata', () =
         finalBalance: 0x1fffffffffffff, destination: '0x2222222222222222222222222222222222222222', nullifier: 0x16, conceded: 0x64
     });
 
-    // Unchanged from the legacy vault: deposit and finalize.
-    assert.deepEqual(profile.deposit, noteBoundV1.callProfile.deposit);
+    // The vault appends a deposit's leaf itself: two words, a new selector.
+    // Finalize is unchanged from the legacy vault.
+    assert.deepEqual(profile.deposit, { selector: '56d2e1ea', words: 2 });
+    assert.notDeepEqual(profile.deposit, noteBoundV1.callProfile.deposit);
     assert.deepEqual(profile.finalize, noteBoundV1.callProfile.finalize);
     assert.deepEqual(profile.fields, noteBoundV1.callProfile.fields);
 

@@ -66,8 +66,8 @@
       "vaultRevision": 3,
       "sdk": {
         "alias": "zkapi-sdk-v2c",
-        "source": "github:OpenAnonymity/zkapi#3e2ecf1cde7cad5d202c005910e509a399c052bf",
-        "revision": "3e2ecf1cde7cad5d202c005910e509a399c052bf",
+        "source": "github:OpenAnonymity/zkapi#30ca3b2b3540a9fbea297f57e329a262cb9d5adf",
+        "revision": "30ca3b2b3540a9fbea297f57e329a262cb9d5adf",
         "storeSha256": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
         "patches": [
           "wallet-recovery-v2c",
@@ -88,12 +88,12 @@
       },
       "gate": {
         "recoveryReview": {
-          "revision": "3e2ecf1cde7cad5d202c005910e509a399c052bf",
+          "revision": "30ca3b2b3540a9fbea297f57e329a262cb9d5adf",
           "verdict": "not_required",
           "patch": null
         },
         "protocolWiring": "done",
-        "manifestSha256": "a5c7d618e8d5f211269fba7dd088b1abff063264a50979748f8a528c2ef341c4"
+        "manifestSha256": "35c2eb3f3a3a46e73cc608fd4f90c71f3f7ff5cc420f49a277d1ca1978be30d1"
       },
       "networks": {
         "mainnet": {
@@ -112,10 +112,10 @@
             ],
             "trusted_deployment": {
               "deployment_status": "deployed",
-              "deployment_id": "zkapi-native-eth-sepolia-concession-v1",
+              "deployment_id": "zkapi-native-eth-sepolia-concession-v1-r2",
               "chain_id": 11155111,
-              "contract_address": "0x8c521805e0192b26a4fab14ed01515d7eded2428",
-              "deploy_block": 11921353,
+              "contract_address": "0xb07fafa8d018878fb9a7637c10df25adcb9e20e8",
+              "deploy_block": 11923682,
               "billing_token_address": null,
               "protocol_server_url": "https://zkapi-sepolia.openanonymity.ai/v0.2",
               "indexer_url": "https://zkapi-sepolia.openanonymity.ai/v0.2",
@@ -137,16 +137,16 @@
               "native_price_max_age_seconds": 4500,
               "circuit_id": "zkapi-v2-concession-v1",
               "setup_id": "dev",
-              "request_proving_key_sha256": "99155d9863693ab4bcb70459563f21e19c7fd55f40a3c87733fbea8de715ab56",
-              "withdrawal_proving_key_sha256": "b9b94b9fcd6ac96c2539d396ee583e8968299a51ca2b13cb2035e62085ab0c30",
-              "request_verifying_key_sha256": "2f0d787b32ee7e153dda038443eef4463dd59accd1d27eb751061b6a053aef81",
-              "request_vk_keccak256": "0x4d6c1a19dafd1d93488bf60059ab458f4aa1849a405eb0b6e13fd7f3d575b872",
-              "withdrawal_vk_keccak256": "0x293e7d3c553b79f9389f4448a8c50e79aef637161ded055d541988a0135ec5dd",
-              "vault_runtime_codehash": "0x4055fae40dd7acae941c3745f89d70086874174c4201fd09ec4ff7c3d9e584ba",
-              "proof_adapter_address": "0x1cb37128e337770969a7d526ceed129a3369e5d5",
-              "adapter_runtime_codehash": "0x2abf1afd7afbdf1dc659d2e322dd2e0e1cec9a3e89ca6b4734b5d22743b85c72",
-              "poseidon_library_address": "0xd0bfa3cfa6e86b42741c9e948e9d0aad4a18564f",
-              "poseidon_runtime_codehash": "0x2277ab8f8a65631afa14ce275a00d11cb5599d9ff5f4c85c8b1c750146ae6056",
+              "request_proving_key_sha256": "7dbfde825f30f2467d1963e4f89bf807497895f499b8a9d6fc7aa6ff8844feba",
+              "withdrawal_proving_key_sha256": "43e327f74da63dbb06e09071d07863b23d4d2e1ebc5bf9516034c6cd9b2e9ab1",
+              "request_verifying_key_sha256": "11d68d68aff6a234763343a4d48918c29bf566c38d2487ac021b24e634362caf",
+              "request_vk_keccak256": "0x346b3c1414685205ebe8f7d6a1533cc2936be5f7922e90b24bf46d556d8a3790",
+              "withdrawal_vk_keccak256": "0xfe768c9fed820772e0ccc6015a82b6d5387183d1241e8b1d6361d865f30f2ae1",
+              "vault_runtime_codehash": "0xc5d6d65c2603257c4bc50767a14d6769d3da897b767a7f77f06d044ae95286e0",
+              "proof_adapter_address": "0x61463b24f4ae8d6c02445c72e1f50b663c1b914c",
+              "adapter_runtime_codehash": "0xc3a33d577292faa5717c045a891e590335c747b7fdebd21ae08ec9e6aed64651",
+              "poseidon_library_address": "0xbbf7632c0d556fa8581e1adb61aeaf43c3aff047",
+              "poseidon_runtime_codehash": "0xb0a9ea6ff7e9d2d68ff7dcba6ff573f8b715a4a41f58e49edea88ba86e7b8a55",
               "challenge_period": 43200,
               "note_ttl": 2592000,
               "max_pause_duration": 604800,

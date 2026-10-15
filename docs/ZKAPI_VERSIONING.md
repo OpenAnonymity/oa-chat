@@ -2259,7 +2259,7 @@ of selectors, word counts and rules):
 
 | | `note-bound-v1` | `concession-v1` |
 | --- | --- | --- |
-| deposit | `c588341c`, 34 words | same |
+| deposit | `c588341c`, 34 words | `56d2e1ea`, 2 words (the vault appends the leaf) |
 | mutual close | `7fca9c82`, 56 words | `72cd2e44`, 26 words, words 13 and 14 zero |
 | initiate escape | `9073639b`, 56 words | `a38d62aa`, 26 words, word 13 non-zero and different from the nullifier, word 14 within what the person confirmed ([the rules below](#concession-and-operation-rules-of-the-signer)) |
 | finalize escape | `ff8f5585`, 1 word | same |
@@ -3581,7 +3581,7 @@ the rehearsal drives is verified only at activation.
 Version 2 is `active` on Sepolia and version 1 `exit-only` there; mainnet is
 unchanged (version 1 `active`, version 2 `pending`).
 
-- **SDK pin.** `zkapi-sdk-v2c` is the commit `3e2ecf1` of the zkapi repository:
+- **SDK pin.** `zkapi-sdk-v2c` is the commit `30ca3b2` of the zkapi repository:
   `4b955d9` plus the deployed Sepolia profile (setup `dev`), the re-synced asset
   manifest and the SDK half of the withdrawal recheck (`prepareWithdrawal` takes
   `expectedNoteId` and `expectedWithdrawalOperationId` and compares them inside

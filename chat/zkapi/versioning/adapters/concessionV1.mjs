@@ -462,10 +462,13 @@ function watchFacts(reading) {
 //   - An escape's conceded amount (concededWord) must equal the amount the
 //     user confirmed in the authorization.
 //
-// The deposit's commitment is word 0 and its amount word 1, as in every family.
+// The deposit's commitment is word 0 and its amount word 1, as in every family
+// (the legacy family follows them with the note's 32 sibling words).
 const callProfile = deepFreeze({
     id: 'concession-v1',
-    deposit: { selector: 'c588341c', words: 34 },
+    // deposit(bytes32 commitment, uint128 amount): the vault appends the leaf
+    // itself (the one-permutation tree revision), so no Merkle path travels.
+    deposit: { selector: '56d2e1ea', words: 2 },
     exits: [
         {
             mode: 'mutual', selector: '72cd2e44', words: 26,
