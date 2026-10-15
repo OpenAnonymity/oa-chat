@@ -3081,6 +3081,34 @@ export default class ChatArea {
     }
 
     /**
+     * The model is thinking again after part of its answer (a tool call in
+     * between). Its settled header goes back to the shimmering "Thinking...";
+     * the next answer words settle it with the new duration.
+     * @param {string} messageId - The message ID
+     */
+    resumeReasoningDisplay(messageId) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.textContent = 'Thinking...';
+        subtitleEl.classList.add('reasoning-subtitle-streaming');
+    }
+
+    /**
+     * The thinking is over: the header takes its duration. Used for wordless
+     * thinking (the header is all there is) and for the header held on
+     * "Thinking..." until the reply completed; a trace's words settle
+     * through settleReasoningDisplay.
+     * @param {string} messageId - The message ID
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleThinkingHeader(messageId, reasoningDuration) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.classList.remove('reasoning-subtitle-streaming');
+        subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
+    }
+
+    /**
      * Updates the reasoning subtitle to show duration when thinking completes.
      * Called when output starts streaming after reasoning finishes.
      * @param {string} messageId - The message ID
@@ -3156,12 +3184,9 @@ export default class ChatArea {
             if (!alreadyUpdated) {
                 // Subtitle hasn't been updated yet, update it now
                 subtitleEl.classList.remove('reasoning-subtitle-streaming');
-                if (reasoningDuration) {
-                    subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
-                } else {
-                    // Fallback if no duration is available
-                    subtitleEl.textContent = 'Reasoning complete';
-                }
+                // One vocabulary for a finished trace: "Thought for Ns", or
+                // "Thought" when no time is known.
+                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
             }
             // If already updated, we skip the re-render to avoid redundancy
         }
