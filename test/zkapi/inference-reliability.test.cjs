@@ -135,7 +135,7 @@ test('reasoning carried only in reasoning_details reaches the trace; a chunk wit
     ({ result } = await reasoningOf(delta + done));
     assert.equal(result.reasoningWithheld, false);
 });
-test('Grok: wordless thinking after part of the answer is reported as resumed and the answer continues on a new paragraph', async () => {
+test('wordless thinking after part of the answer is reported as resumed and the answer continues on a new paragraph', async () => {
     const done = 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n';
     const encrypted = 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"opaque"}]}}]}\n\n';
     const say = text => `data: {"choices":[{"delta":{"content":${JSON.stringify(text)}}}]}\n\n`;
@@ -158,10 +158,10 @@ test('Grok: wordless thinking after part of the answer is reported as resumed an
     ({ content, signals } = await run(encrypted + say('One') + both + say(' line.') + done));
     assert.equal(content, 'One more line.');
     assert.deepEqual(signals, [{ withheld: true }]);
-    // Grok only: another model's stream keeps its previous behaviour.
+    // Every model, not only Grok.
     ({ content, signals } = await run(encrypted + say('I will look it up.') + encrypted + say('A few repos match.') + done, 'openai/gpt-5.5'));
-    assert.equal(content, 'I will look it up.A few repos match.');
-    assert.deepEqual(signals, [{ withheld: true }]);
+    assert.equal(content, 'I will look it up.\n\nA few repos match.');
+    assert.deepEqual(signals, [{ withheld: true }, { withheld: true, resumed: true }]);
 });
 test('connection timeout bounds fetch that ignores abort', async () => {
     await assert.rejects(stream(apiFor(()=>new Promise(()=>{}))),{code:'INFERENCE_CONNECTION_TIMEOUT',retryable:false});

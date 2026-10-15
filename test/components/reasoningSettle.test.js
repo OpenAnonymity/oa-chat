@@ -40,3 +40,9 @@ test('a finished message that streamed after thinking gets its action row (Copy,
     assert.match(chatArea, /if \(isReasoningFinalized && !forceFullRender\) \{[\s\S]*?this\.replaceAssistantActionsRow\(messageEl, message\);/);
     assert.match(chatArea, /replaceAssistantActionsRow\(messageEl, message\) \{[\s\S]*?assistant-actions-placeholder[\s\S]*?row\.replaceWith\(fresh\)/);
 });
+
+test('a Parallel lane settles its trace body at the first answer words but its header stays on Thinking until the lane completes', () => {
+    const council = read('chat/application/councilController.js');
+    assert.match(council, /settleCouncilLaneReasoning\(assistantMessage\.id, laneId, reasoning, duration\);\n(?:\s*\/\/[^\n]*\n)*\s*this\.app\.chatArea\.resumeReasoningDisplay\?\.\(this\.app\.chatArea\.getCouncilLaneReasoningId\(assistantMessage\.id, laneId\)\);/);
+    assert.match(council, /finalizeCouncilLaneReasoning\(\s*assistantMessage\.id,\s*laneId,\s*laneState\.reasoning,\s*laneState\.reasoningDuration\s*\)/, 'the lane header takes its time when the lane completes');
+});

@@ -1654,6 +1654,9 @@ export default class CouncilController {
             if (!assistantMessage?.id || !laneId) return;
             if (this.app.chatArea && this.app.isViewingSession(session.id)) {
                 this.app.chatArea.settleCouncilLaneReasoning(assistantMessage.id, laneId, reasoning, duration);
+                // A model may think again after any line: the lane header stays
+                // on "Thinking..." until the lane completes.
+                this.app.chatArea.resumeReasoningDisplay?.(this.app.chatArea.getCouncilLaneReasoningId(assistantMessage.id, laneId));
             }
         };
 

@@ -342,7 +342,7 @@ test('a resumed signal for a trace with words reopens it; the next words settle 
     const resumed = names.indexOf('resumeReasoningDisplay');
     assert.ok(resumed > names.indexOf('settleReasoningDisplay'), 'reopened after the first settle');
     assert.ok(names.indexOf('settleReasoningDisplay', resumed) > resumed, 'settled again at the next words');
-    assert.equal(names.includes('settleThinkingHeader'), false);
+    assert.equal(names.filter(name => name === 'settleThinkingHeader').length, 1, 'the header takes its time once, at the end');
 });
 
 // Grok sends its reasoning in one burst right before the answer; the thinking
@@ -430,7 +430,7 @@ test('Grok with reasoning words: the trace body settles at the first line but th
     assert.ok(names.indexOf('settleThinkingHeader') > names.indexOf('resumeReasoningDisplay'));
 });
 
-test('other models still settle the header at the first answer words', async t => {
+test('every model, not only Grok: the header stays on Thinking while the answer streams', async t => {
     const restore = installBrowser();
     const { app, paints } = streamHarness(async (...args) => {
         const [chunk, reasoning] = [args[3], args[9]];
@@ -441,7 +441,7 @@ test('other models still settle the header at the first answer words', async t =
     t.after(restore);
     await app.sendMessage();
     const names = paints.map(call => call.name);
-    assert.ok(names.includes('settleReasoningDisplay'));
-    assert.equal(names.includes('resumeReasoningDisplay'), false);
-    assert.equal(names.includes('settleThinkingHeader'), false);
+    assert.equal(names[names.indexOf('settleReasoningDisplay') + 1], 'resumeReasoningDisplay');
+    assert.ok(names.indexOf('settleThinkingHeader') > names.indexOf('resumeReasoningDisplay'));
+    assert.ok(names.indexOf('settleThinkingHeader') < names.indexOf('finalizeStreamingMessage'));
 });
