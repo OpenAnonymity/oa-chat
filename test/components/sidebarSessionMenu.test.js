@@ -64,7 +64,7 @@ test('keyboard menu opening focuses the first action; pointer opening preserves 
 test('hiding the sidebar closes its detached menu before the sidebar becomes inert', async () => {
     const { readFile } = await import('node:fs/promises');
     const { runInNewContext } = await import('node:vm');
-    const source = await readFile(new URL('../../chat/app.js', import.meta.url), 'utf8');
+    const source = await readFile('chat/app.js', 'utf8');
     const method = source.slice(source.indexOf('    hideSidebar(options = {}) {'), source.indexOf('    showSidebar(options = {}) {'));
     const order = [];
     const app = { sidebar: { closeAllMenus: () => order.push('close') }, elements: { sidebar: {
