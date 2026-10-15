@@ -1,5 +1,5 @@
 import { parseRequestFailureType } from '../../chat/services/requestDiagnostics.js';
-import { isDiagnosticName, normalizeDiagnostic, normalizeBreadcrumb, bucketCount } from '../../chat/services/diagnostics.js';
+import { isDiagnosticName, normalizeDiagnostic, normalizeBreadcrumb, bucketCount, trailToBreadcrumbs } from '../../chat/services/diagnostics.js';
 
 const ERROR_TYPES = new Set(['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'URIError', 'EvalError', 'AggregateError']);
 
@@ -29,13 +29,12 @@ export function sanitizeBreadcrumbs(breadcrumbs) {
     return (Array.isArray(breadcrumbs) ? breadcrumbs : []).flatMap(crumb => {
         const category = typeof crumb?.category === 'string' && crumb.category.startsWith('oa.') ? crumb.category.slice(3) : null;
         const normalized = normalizeBreadcrumb({ category, code: crumb?.message, ...(crumb?.data && typeof crumb.data === 'object' ? {
-            status: crumb.data.status, errorCode: crumb.data.error_code, count: crumb.data.count, aborted: crumb.data.aborted
+            status: crumb.data.status, errorCode: crumb.data.error_code, count: crumb.data.count, aborted: crumb.data.aborted, elapsedMs: crumb.data.elapsed_ms
         } : {}) });
         if (!normalized) return [];
         const { category: cat, code, ...data } = normalized;
         const out = { category: `oa.${cat}`, message: code, level: 'info', type: 'default' };
-        if (Number.isFinite(crumb.timestamp) && crumb.timestamp > 0) out.timestamp = crumb.timestamp;
-        const entries = Object.entries({ status: data.status, error_code: data.errorCode, count: data.count, aborted: data.aborted })
+        const entries = Object.entries({ status: data.status, error_code: data.errorCode, count: data.count, aborted: data.aborted, elapsed_ms: data.elapsedMs })
             .filter(([, value]) => value !== undefined);
         if (entries.length) out.data = Object.fromEntries(entries);
         return [out];
@@ -123,7 +122,7 @@ export function collectLiveTags({ document, navigator, window } = globalThis) {
     const tags = {};
     try {
         tags['oa.mode'] = document?.documentElement?.classList?.contains('zkapi-mode') ? 'zkapi' : 'ticket';
-        tags['oa.surface'] = window?.oaDesktopReady === true ? 'desktop' : 'web';
+        tags['oa.surface'] = window?.electronAPI?.isElectron === true ? 'desktop' : 'web';
         tags['oa.visibility'] = document?.visibilityState === 'hidden' ? 'hidden' : 'visible';
         tags['oa.online'] = navigator?.onLine === false ? 'offline' : 'online';
     } catch { /* A tag is never worth an error. */ }
@@ -150,17 +149,19 @@ export function privacyOptions(config) {
         tracePropagationTargets: [],
         replaysSessionSampleRate: 0,
         replaysOnErrorSampleRate: 0,
-        // Only the client's own trail (scripts/sentry/browser.mjs adds it
-        // under oa.*); the SDK's own breadcrumbs (console, fetch, DOM
-        // clicks) are never kept, and beforeSend rebuilds the trail anyway.
-        maxBreadcrumbs: MAX_BREADCRUMBS,
-        beforeBreadcrumb: crumb => (typeof crumb?.category === 'string' && crumb.category.startsWith('oa.') ? crumb : null),
+        // Never collect a global trail. Explicit per-request steps are rebuilt
+        // in beforeSend; console, fetch and UI breadcrumbs remain disabled.
+        maxBreadcrumbs: 0,
+        beforeBreadcrumb: () => null,
         beforeSendLog: () => null,
         beforeSendMetric: () => null,
         beforeSendTransaction: () => null,
         transportOptions: { fetchOptions: { credentials: 'omit', referrerPolicy: 'no-referrer' } },
         beforeSend(event, hint) {
             if (hint) hint.attachments = [];
+            if (parseRequestFailureType(hint?.originalException?.name)) {
+                event = { ...event, breadcrumbs: trailToBreadcrumbs(hint.originalException.oaTrail) };
+            }
             return sanitizeErrorEvent(event, config);
         }
     };

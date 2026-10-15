@@ -1,6 +1,6 @@
 // Client recovery policy, not provider guarantees. Heartbeats prove transport
 // activity, not generation progress. All state stays in this browser.
-import { reportDiagnostic } from '../diagnostics.js';
+import { reportDiagnostic, createDiagnosticTrail } from '../diagnostics.js';
 
 export const INFERENCE_TIMING = Object.freeze({
     // idleMs: no byte at all, heartbeats included, for this long means the
@@ -40,6 +40,9 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
     const policy = { ...INFERENCE_TIMING, ...timing };
     const controller = new AbortController();
     const started = now();
+    const diagnosticTrail = createDiagnosticTrail('stream', { now });
+    diagnosticTrail.add('started');
+    let firstOutput = false;
     let activityAt = started, outputAt = started, opened = false, health = null;
     // Set once the provider has confirmed completion (a finish reason). From
     // then on the connection is only kept for its tail (usage, [DONE]); a
@@ -70,11 +73,12 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
             error = inferenceError('INFERENCE_OUTPUT_TIMEOUT', 'The connection stayed open but no model output arrived for 10 minutes. Please retry.');
         }
         if (error) {
+            diagnosticTrail.add('timeout');
             reportDiagnostic('stream.timeout', {
                 stage: error.code === 'INFERENCE_CONNECTION_TIMEOUT' ? 'connection'
                     : error.code === 'INFERENCE_IDLE_TIMEOUT' ? 'idle' : 'output',
                 seconds: Math.round(elapsed / 1000)
-            });
+            }, diagnosticTrail.snapshot());
             controller.abort(error);
         } else if (silence >= policy.warningMs && policy.warningMs < policy.idleMs) {
             publish({ kind: 'silence', message: 'Taking longer than usual. Still waiting for a response.' });
@@ -87,11 +91,12 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
         get settled() { return finishedAt === null ? null : settled; },
         tailExpired,
         wait: operation => waitForSignal(operation, controller.signal),
-        opened() { opened = true; activityAt = now(); outputAt = now(); publish(null); },
+        opened() { diagnosticTrail.add('opened'); opened = true; activityAt = now(); outputAt = now(); publish(null); },
         activity() { activityAt = now(); publish(null); },
         // Output after a finish reason means the finish was not final: the
         // tail is disarmed until the provider confirms completion again.
         output() {
+            if (!firstOutput) { diagnosticTrail.add('first_output'); firstOutput = true; }
             outputAt = now(); activityAt = outputAt;
             if (finishedAt !== null) { finishedAt = null; resetTail(); }
             publish(null);

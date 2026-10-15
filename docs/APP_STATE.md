@@ -1,20 +1,31 @@
-## October 14, 2026 — diagnostics that can find a bug, same data boundary (local)
+## October 15, 2026 — staging menu and scoped diagnostics candidate
 
-Sentry reported one event per category per page with no context: enough to
-see that something failed, not why. Reports now carry a trail (the Activity
-Timeline reduced to category, step name, HTTP status and the org's structured
-error code, last 40, never host/params/headers/bodies), four fixed-value tags
-(`oa.mode`, `oa.surface`, `oa.visibility`, `oa.online`), and catalogued
-incidents raised by the client itself — `access.sweep` (already-used tickets
-set aside, with bucketed counts), `access.sweep_stalled`, `stream.timeout`,
-`storage.failed`, `sync.failed` — each at most once a minute per name, ten per
-name and sixty per page. Everything is drawn from a finite vocabulary in
-`chat/services/diagnostics.js` and rebuilt by `scripts/sentry/privacy.mjs`
-before sending; free text, URLs, identifiers and model names have no field to
-travel in. Application code never imports the SDK (DOM events bridge the two),
-so unconfigured builds send nothing. No success events, timings or identities.
-Details and the catalogue: [SENTRY.md](SENTRY.md#diagnostics-and-the-trail--2026-10-14).
+The row menu is portaled outside the scrolling list, opens below when it fits,
+flips above near the bottom, and scrolls on the roomier side in short windows.
+Keyboard activation focuses its first action; Escape restores the trigger.
+Outside click/focus, list scroll, window resize, keyboard shortcuts and hiding
+the sidebar close it. The deletion VM test now supports the named placement
+helper export. Test top/bottom rows and Star, Rename, Delete in a browser.
 
+Diagnostics add four fixed-value tags and catalogued incidents, at most once
+per minute per name, ten per name and sixty per page. The existing handled
+request-error reporter retains its separate twenty-category per-page cap.
+The desktop tag requires the actual Electron bridge, not app readiness.
+
+The selected privacy boundary is option (a): no global Activity Timeline trail.
+Each failed access/verification/completion observation or stream watchdog owns
+its own buffer. Steps use fixed names and relative milliseconds rounded to 100ms,
+up to forty entries. There are no shared current-session lookups or transmitted
+request/turn IDs. Unscoped incidents and uncaught exceptions have no trail.
+A trail describes only the failing operation within the turn, not every earlier
+operation in that turn. The real SDK envelope tests cover both diagnostics and
+captureException; the latter must attach its trail through beforeSend's hint,
+because captureException does not accept a top-level breadcrumbs context.
+Newer ticket removal counts, shortage copy and 45-second idle policy are retained.
+See [SENTRY.md](SENTRY.md#diagnostics-and-the-trail--2026-10-14).
+
+Source-map uploads, server instrumentation and hosted Sentry IP/geography
+settings are separate work; none is configured by this client change.
 
 ## October 14, 2026 — compact spent-ticket activity and steady relay toggle
 

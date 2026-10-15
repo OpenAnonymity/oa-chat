@@ -16,7 +16,7 @@ const frame = { filename: `${config.origin}/assets/app-ABC.js`, lineno: 42, coln
 function crumbs() {
     return [
         { category: 'oa.access', message: 'request_key', level: 'info', timestamp: 1700000000.5, data: { status: 401, error_code: 'TICKET_ALREADY_SPENT', url: privateText } },
-        { category: 'oa.access', message: 'request_key', level: 'info', timestamp: 1700000001, data: { status: 200 } },
+        { category: 'oa.access', message: 'request_key', level: 'info', data: { status: 200 } },
         { category: 'oa.stream', message: 'completion', data: { status: 0, aborted: true, body: privateText } },
         { category: 'console', message: privateText, data: { arguments: [privateText] } },
         { category: 'fetch', message: privateText, data: { url: privateText } },
@@ -29,8 +29,8 @@ function crumbs() {
 test('breadcrumbs survive only as category, step, status, org code and bucketed count', () => {
     const kept = sanitizeBreadcrumbs(crumbs());
     assert.deepEqual(kept, [
-        { category: 'oa.access', message: 'request_key', level: 'info', type: 'default', timestamp: 1700000000.5, data: { status: 401, error_code: 'TICKET_ALREADY_SPENT' } },
-        { category: 'oa.access', message: 'request_key', level: 'info', type: 'default', timestamp: 1700000001, data: { status: 200 } },
+        { category: 'oa.access', message: 'request_key', level: 'info', type: 'default', data: { status: 401, error_code: 'TICKET_ALREADY_SPENT' } },
+        { category: 'oa.access', message: 'request_key', level: 'info', type: 'default', data: { status: 200 } },
         { category: 'oa.stream', message: 'completion', level: 'info', type: 'default', data: { status: 0, aborted: true } },
         { category: 'oa.tickets', message: 'split', level: 'info', type: 'default', data: { count: 5 } }
     ]);
@@ -51,10 +51,10 @@ test('live tags come from the page and only ever take catalogued values', () => 
     const page = {
         document: { documentElement: { classList: { contains: name => name === 'zkapi-mode' } }, visibilityState: 'hidden' },
         navigator: { onLine: false },
-        window: { oaDesktopReady: true }
+        window: { electronAPI: { isElectron: true } }
     };
     assert.deepEqual(collectLiveTags(page), { 'oa.mode': 'zkapi', 'oa.surface': 'desktop', 'oa.visibility': 'hidden', 'oa.online': 'offline' });
-    assert.deepEqual(collectLiveTags({ document: {}, navigator: {}, window: {} }), { 'oa.mode': 'ticket', 'oa.surface': 'web', 'oa.visibility': 'visible', 'oa.online': 'online' });
+    assert.deepEqual(collectLiveTags({ document: {}, navigator: {}, window: { oaDesktopReady: true } }), { 'oa.mode': 'ticket', 'oa.surface': 'web', 'oa.visibility': 'visible', 'oa.online': 'online' });
     assert.deepEqual(collectLiveTags({ document: { get documentElement() { throw new Error(privateText); } } }), {});
     for (const [key, value] of Object.entries(collectLiveTags(page))) assert.ok(TAGS[key].includes(value));
 });
@@ -106,11 +106,20 @@ test('an exception event carries the trail and tags, nothing else new', () => {
 
 test('the SDK keeps only the client\'s own breadcrumbs', () => {
     const options = privacyOptions(config);
-    assert.equal(options.maxBreadcrumbs, 40);
-    assert.deepEqual(options.beforeBreadcrumb({ category: 'oa.access', message: 'request_key' }), { category: 'oa.access', message: 'request_key' });
+    assert.equal(options.maxBreadcrumbs, 0);
+    assert.equal(options.beforeBreadcrumb({ category: 'oa.access', message: 'request_key' }), null);
     for (const crumb of [{ category: 'console', message: privateText }, { category: 'fetch' }, { category: 'xhr' }, { category: 'ui.click' }, { message: privateText }, null]) {
         assert.equal(options.beforeBreadcrumb(crumb), null);
     }
     assert.equal(options.defaultIntegrations, false);
     assert.equal(options.tracesSampleRate, 0);
+});
+
+
+test('trail sanitizer drops absolute times, identifiers and uncatalogued lowercase text', () => {
+    const trail = sanitizeBreadcrumbs([
+        { category: 'oa.stream', message: 'started', timestamp: 1700000000, data: { elapsed_ms: 123, sessionId: privateText } },
+        { category: 'oa.stream', message: 'private_user_prompt', data: { elapsed_ms: 999 } }
+    ]);
+    assert.deepEqual(trail, [{ category: 'oa.stream', message: 'started', level: 'info', type: 'default', data: { elapsed_ms: 100 } }]);
 });

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
     DIAGNOSTIC_EVENT, BREADCRUMB_EVENT, DIAGNOSTIC_CATALOG,
     bucketCount, normalizeDiagnostic, normalizeBreadcrumb, breadcrumbFromLogEntry,
-    createDiagnosticsReporter, requestFailureReason, isDiagnosticName
+    createDiagnosticsReporter, requestFailureReason, isDiagnosticName, createDiagnosticTrail
 } from '../../chat/services/diagnostics.js';
 
 const privateText = 'PRIVATE_PROMPT_KEY_TICKET_EMAIL';
@@ -81,8 +81,8 @@ test('the reporter sends catalogued events, coalesces repeats and never throws',
     clock += 61_000;
     assert.equal(reporter.report('access.sweep', { skipped: 9, recovered: false }), true);
     assert.deepEqual(sink.events.map(event => event.type), [DIAGNOSTIC_EVENT, DIAGNOSTIC_EVENT]);
-    assert.deepEqual(sink.events[0].detail, { name: 'access.sweep', fields: { skipped: 10, recovered: true, tier: 1 }, repeats: 0 });
-    assert.deepEqual(sink.events[1].detail, { name: 'access.sweep', fields: { skipped: 10, recovered: false }, repeats: 2 });
+    assert.deepEqual(sink.events[0].detail, { name: 'access.sweep', fields: { skipped: 10, recovered: true, tier: 1 }, repeats: 0, trail: [] });
+    assert.deepEqual(sink.events[1].detail, { name: 'access.sweep', fields: { skipped: 10, recovered: false }, repeats: 2, trail: [] });
     assert.equal(reporter.report(privateText, { skipped: 1 }), false);
     assert.equal(reporter.report('access.sweep', null), false);
     assert.equal(reporter.breadcrumb({ category: 'access', code: 'request_key', status: 401 }), true);
@@ -127,4 +127,27 @@ test('request failures map to finite reasons; the message is never carried', () 
     assert.equal(requestFailureReason(new TypeError(`${privateText} is not a function`)), 'unexpected');
     assert.equal(requestFailureReason({ code: 'VERIFICATION_REJECTED' }), 'rejected');
     assert.equal(requestFailureReason(null), 'unexpected');
+});
+
+
+test('concurrent request trails remain isolated, bounded, and contain only relative timing', () => {
+    let clock = 1000000000;
+    const a = createDiagnosticTrail('access', { now: () => clock });
+    a.add('started');
+    clock += 225;
+    const b = createDiagnosticTrail('stream', { now: () => clock });
+    b.add('opened');
+    clock += 100;
+    a.add('failed');
+    a.add('private_user_prompt');
+    assert.deepEqual(a.snapshot(), [
+        { category: 'access', code: 'started', elapsedMs: 0 },
+        { category: 'access', code: 'failed', elapsedMs: 300 }
+    ]);
+    assert.deepEqual(b.snapshot(), [{ category: 'stream', code: 'opened', elapsedMs: 0 }]);
+    a.snapshot()[0].code = privateText;
+    assert.equal(a.snapshot()[0].code, 'started');
+    for (let i = 0; i < 60; i++) a.add('request_key');
+    assert.equal(a.snapshot().length, 40);
+    assert.equal(normalizeBreadcrumb({ category: 'access', code: 'private_user_prompt' }), null);
 });

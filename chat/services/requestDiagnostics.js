@@ -1,3 +1,4 @@
+import { normalizeTrail } from './diagnostics.js';
 import { PROVIDER_ERROR_STATUSES, providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
 
 export const REQUEST_FAILURE_EVENT = 'oa:request-failure';
@@ -16,7 +17,7 @@ export function parseRequestFailureType(type) {
 
 export function createRequestFailureReporter(target) {
     const reported = new Set();
-    return (phase, error, signal) => {
+    return (phase, error, signal, trail = []) => {
         try {
             const eventTarget = target ?? globalThis.window;
             if (!PHASES.has(phase) || !eventTarget?.dispatchEvent || signal?.aborted
@@ -38,6 +39,7 @@ export function createRequestFailureReporter(target) {
             reported.add(type);
             const diagnostic = new Error('Request failed (details withheld)');
             diagnostic.name = type;
+            diagnostic.oaTrail = normalizeTrail(trail);
             eventTarget.dispatchEvent(new CustomEvent(REQUEST_FAILURE_EVENT, { detail: diagnostic }));
         } catch {
             // Diagnostics cannot affect completion, cancellation, or recovery.
