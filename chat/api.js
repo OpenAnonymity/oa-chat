@@ -194,11 +194,11 @@ export class OpenRouterAPI {
         return this.withRequestAccess(token, {
             signal: abortController?.signal,
             requestTiming,
-            onProgress: progress => {
+            onProgress: requestTiming ? progress => {
                 if (progress?.phase === 'verifying') requestTiming?.begin('verification_ms');
                 if (progress?.phase === 'ready') requestTiming?.end('verification_ms');
                 onAccessProgress?.(progress);
-            },
+            } : onAccessProgress,
             modelId,
             reasoningEnabled
         }, request => {
