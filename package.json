@@ -43,6 +43,6 @@
     "ethers": "6.17.0",
     "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0",
-    "zkapi-sdk-v2c": "github:OpenAnonymity/zkapi#3e2ecf1cde7cad5d202c005910e509a399c052bf"
+    "zkapi-sdk-v2c": "github:OpenAnonymity/zkapi#7320d5e2d93b81d8bc34414872261db2cb5af429"
   }
 }
