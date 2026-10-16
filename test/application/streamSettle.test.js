@@ -371,7 +371,10 @@ test('a stopped reply keeps its thinking time, so it reads "Thought for …" aft
     const { app, assistant } = streamHarness(async (...args) => {
         const [chunk, abortController, opened, reasoning] = [args[3], args[7], args[8], args[9]];
         await opened();
-        await new Promise(resolve => setTimeout(resolve, 20));
+        // The duration is measured with Date.now(), and a 20 ms timer can fire
+        // a millisecond early against it, so wait on the same clock.
+        const started = Date.now();
+        while (Date.now() - started < 25) await new Promise(resolve => setTimeout(resolve, 5));
         await reasoning('Working it out.');
         await chunk('Partial');
         setTimeout(() => app.stopSessionStreaming('one'), 5);
