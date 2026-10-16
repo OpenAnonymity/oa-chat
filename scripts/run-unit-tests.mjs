@@ -66,6 +66,22 @@ await esbuild.build({
 });
 
 const bundledTests = await collectTests(outDir);
+// These async startup tests exercise real event subscribers while replacing
+// browser globals. Other suites install globals during module loading, which
+// can race an awaited startup response even with test concurrency set to one.
+const isolatedTests = bundledTests.filter(file => file.endsWith('/startupBillingReadiness.test.mjs'));
+const sharedTests = bundledTests.filter(file => !isolatedTests.includes(file));
+if (isolatedTests.length) {
+    const isolatedCode = await new Promise(resolve => {
+        const isolated = spawn(process.execPath, ['--test', '--test-force-exit', '--test-concurrency=1', ...isolatedTests], { stdio: 'inherit' });
+        isolated.on('error', error => { console.error(error); resolve(1); });
+        isolated.on('exit', (code, signal) => resolve(signal ? 1 : code ?? 1));
+    });
+    if (isolatedCode !== 0) {
+        await fs.rm(outDir, { recursive: true, force: true });
+        process.exit(isolatedCode);
+    }
+}
 // These bundled tests share browser/global shims and a single temporary output
 // directory. Node 24's isolated workers can corrupt verifier-suite IPC even at
 // concurrency one, so keep the repository test group serial and in-process.
@@ -74,7 +90,7 @@ const child = spawn(process.execPath, [
     '--test-force-exit',
     '--test-concurrency=1',
     '--test-isolation=none',
-    ...bundledTests
+    ...sharedTests
 ], {
     stdio: 'inherit'
 });
