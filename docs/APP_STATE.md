@@ -54,7 +54,7 @@ provider-verification patch. Unit tests with boot import seams and artifact
 checks did not exercise the real SDK configuration call.
 
 `provider-verification-v2c` ports the existing host policy to the pinned
-`30ca3b2b` successor SDK, with exact before/after file hashes. It accepts and
+`3e1f8f38` successor SDK, with exact before/after file hashes. It accepts and
 validates both callbacks, runs verification only after native quote, cap,
 origin and evidence checks, preserves safe proof metadata, checks cancellation,
 and rechecks cached leases before incrementing their in-flight count. No wallet

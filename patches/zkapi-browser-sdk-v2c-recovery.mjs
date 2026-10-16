@@ -4,6 +4,6 @@
 // inside the wallet lock), so no file is rewritten. The entry still binds the
 // name to this one revision: any other SDK commit is refused until reviewed.
 export default {
-    revision: '30ca3b2b3540a9fbea297f57e329a262cb9d5adf',
+    revision: '3e1f8f38e2ffee1fdfda69673cfb19d953895f8d',
     files: []
 };

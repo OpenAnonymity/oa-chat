@@ -66,8 +66,8 @@
       "vaultRevision": 3,
       "sdk": {
         "alias": "zkapi-sdk-v2c",
-        "source": "github:OpenAnonymity/zkapi#30ca3b2b3540a9fbea297f57e329a262cb9d5adf",
-        "revision": "30ca3b2b3540a9fbea297f57e329a262cb9d5adf",
+        "source": "github:OpenAnonymity/zkapi#3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
+        "revision": "3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
         "storeSha256": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
         "patches": [
           "wallet-recovery-v2c",
@@ -88,12 +88,12 @@
       },
       "gate": {
         "recoveryReview": {
-          "revision": "30ca3b2b3540a9fbea297f57e329a262cb9d5adf",
+          "revision": "3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
           "verdict": "not_required",
           "patch": null
         },
         "protocolWiring": "done",
-        "manifestSha256": "35c2eb3f3a3a46e73cc608fd4f90c71f3f7ff5cc420f49a277d1ca1978be30d1"
+        "manifestSha256": "24d65c82e109710fbbf7c89526e5b96810541c294cd270d228fc88537c8dbc07"
       },
       "networks": {
         "mainnet": {
@@ -112,10 +112,10 @@
             ],
             "trusted_deployment": {
               "deployment_status": "deployed",
-              "deployment_id": "zkapi-native-eth-sepolia-concession-v1-r2",
+              "deployment_id": "zkapi-native-eth-sepolia-concession-v1-r3",
               "chain_id": 11155111,
-              "contract_address": "0xb07fafa8d018878fb9a7637c10df25adcb9e20e8",
-              "deploy_block": 11923682,
+              "contract_address": "0x1670d773eccd74a13d9b3faa68a5a0bae8eee292",
+              "deploy_block": 11923849,
               "billing_token_address": null,
               "protocol_server_url": "https://zkapi-sepolia.openanonymity.ai/v0.2",
               "indexer_url": "https://zkapi-sepolia.openanonymity.ai/v0.2",
@@ -142,10 +142,10 @@
               "request_verifying_key_sha256": "11d68d68aff6a234763343a4d48918c29bf566c38d2487ac021b24e634362caf",
               "request_vk_keccak256": "0x346b3c1414685205ebe8f7d6a1533cc2936be5f7922e90b24bf46d556d8a3790",
               "withdrawal_vk_keccak256": "0xfe768c9fed820772e0ccc6015a82b6d5387183d1241e8b1d6361d865f30f2ae1",
-              "vault_runtime_codehash": "0xc5d6d65c2603257c4bc50767a14d6769d3da897b767a7f77f06d044ae95286e0",
-              "proof_adapter_address": "0x61463b24f4ae8d6c02445c72e1f50b663c1b914c",
+              "vault_runtime_codehash": "0x7ec9f484588eb9060678ff39117e9a852e6d1db41b02445d1835d8f2db084412",
+              "proof_adapter_address": "0x38cbdb50626348f310202a9dbcf6ad4e545d39fb",
               "adapter_runtime_codehash": "0xc3a33d577292faa5717c045a891e590335c747b7fdebd21ae08ec9e6aed64651",
-              "poseidon_library_address": "0xbbf7632c0d556fa8581e1adb61aeaf43c3aff047",
+              "poseidon_library_address": "0xde1c0a0d4b9b3f8b5d5c5f91aacbdc799ae81965",
               "poseidon_runtime_codehash": "0xb0a9ea6ff7e9d2d68ff7dcba6ff573f8b715a4a41f58e49edea88ba86e7b8a55",
               "challenge_period": 43200,
               "note_ttl": 2592000,
