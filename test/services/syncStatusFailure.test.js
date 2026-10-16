@@ -9,7 +9,7 @@ function fixture(t, fetch) {
     const originalGet = chatDB.getSetting;
     t.after(() => { sessionService.fetch = originalFetch; chatDB.getSetting = originalGet; });
     sessionService.fetch = fetch;
-    chatDB.getSetting = async () => 10;
+    chatDB.getSetting = async key => key === 'sync-schema-version' ? 3 : 10;
     const service = new SyncService();
     service.isEnabled = () => true;
     service.isAccountScopeActive = async () => true;

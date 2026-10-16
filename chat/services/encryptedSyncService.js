@@ -682,9 +682,13 @@ export class SyncService {
                 throw new Error('Invalid sync status response');
             }
             const localLastSync = await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
+            const localSchemaVersion = Number(await chatDB.getSetting(SYNC_SCHEMA_VERSION_KEY)) || 0;
             if (!this.credentialsAreCurrent(credentialGeneration)) return null;
 
-            const hasChanges = serverLastSync > localLastSync;
+            // _pull must replay historical removals/invalidation records when
+            // upgrading the sync schema. An equal timestamp alone cannot
+            // establish wallet readiness before that replay has completed.
+            const hasChanges = localSchemaVersion < CURRENT_SYNC_SCHEMA_VERSION || serverLastSync > localLastSync;
 
             // If no changes, we're confirmed in sync - update lastSyncTime
             if (!hasChanges) {
@@ -1521,15 +1525,29 @@ export class SyncService {
         this.statusCheckTimer = setInterval(doStatusCheck, statusCheckInterval);
         this.fullSyncTimer = setInterval(doFullSync, fullSyncInterval);
 
-        // Sync when tab becomes visible
+        // A restored wallet can already match the server even when a full
+        // sync is slow or fails. Confirm that through the existing guarded
+        // status path immediately, rather than leaving billing locked until
+        // the first five-minute poll. Never infer readiness from a failed or
+        // newer-server result; normal full sync still runs independently.
+        let startupStatusPending = true;
+        const checkStartupStatus = () => {
+            if (!startupStatusPending || document.visibilityState !== 'visible' || !this.isEnabled()) return;
+            startupStatusPending = false;
+            void doStatusCheck();
+        };
+
+        // A hidden startup defers its one initial status check until visible.
         this.visibilityHandler = () => {
             if (document.visibilityState === 'visible' && this.isEnabled()) {
+                checkStartupStatus();
                 doFullSync();
             }
         };
         document.addEventListener('visibilitychange', this.visibilityHandler);
 
         // Reconcile local deferred spends as well as remote changes on resume.
+        checkStartupStatus();
         doFullSync();
     }
 

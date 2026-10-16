@@ -1,5 +1,23 @@
 ## October 16, 2026 — desktop 0.1.40 integration
 
+
+## October 16, 2026 — immediate startup ticket status check
+
+A restored desktop account could show billing details but keep every billing
+action disabled until the first five-minute sync status poll. The existing
+`status_checked` event can establish ticket readiness when the local sync
+checkpoint matches the server, independently of a slow or failed full sync.
+Run that guarded check immediately at visible startup (or once on the first
+visibility transition after a hidden startup). Keep the 30-second full-sync
+cadence and its immediate run, so pending local spends still upload. An old sync schema must replay historical ticket removals/invalidation records
+before status can establish readiness, even when timestamps match. Newer
+remote data, invalid/failed status responses, or changed credentials never
+establish readiness through this check. Account-scope/session guards remain.
+No inference telemetry or new payload is introduced; this advances the existing
+authenticated status request to startup. It does not prove the cause of a failed
+full sync or bypass a genuine sync error. Commercial billing explains its wait
+while the account is not yet ready.
+
 Merged production client 196d8f50 with the released desktop client 6037ae31.
 The production reasoning/stall/menu/search/Sentry fixes are retained alongside
 native asset compatibility, late-callback retirement, partial-row finalization,
