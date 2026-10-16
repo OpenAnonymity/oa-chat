@@ -1,3 +1,14 @@
+## October 16, 2026 — live reply restoration through the component interface
+
+The signed desktop acceptance run found that returning to a stalled single chat
+lost “Still working…” even though the controller still held its active signal.
+ChatArea receives the restricted component facade, not ChatApp itself. Expose
+`getStreamingReplyDisplay` and `restoreStreamingReplyDisplays` through that facade
+so rerendering restores both current reasoning and the stalled-answer line.
+Tests that instantiate ChatArea with ChatApp directly cannot verify this boundary.
+The fix adds no storage, network traffic or telemetry. The 0.1.42 artifact is
+superseded; a newly built and signed artifact needs its own acceptance evidence.
+
 ## October 16, 2026 — desktop 0.1.40 integration
 
 

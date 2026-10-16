@@ -250,6 +250,8 @@ const COMPONENT_APP_KEYS = new Set([
     'getFallbackModelEntry',
     'getFilteredSessions',
     'getMessageTemplateOptions',
+    'getStreamingReplyDisplay',
+    'restoreStreamingReplyDisplays',
     'hideSidebar',
     'getPromptSlideUpMessageIdForSession',
     'getPendingCouncilConfig',

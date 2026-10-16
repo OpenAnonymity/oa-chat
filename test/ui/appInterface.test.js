@@ -392,3 +392,34 @@ test('component app facade passes Account routing calls through to the app', () 
     facade.showSidebar?.({ persist: false });
     assert.deepEqual(calls, ['first-account', 'logged-out', 'sidebar:{"persist":false}']);
 });
+
+
+test('component facade preserves live reply state and restoration across chat switches', () => {
+    const app = {
+        state: { currentSessionId: 'chat-a' },
+        live: { messageId: 'reply-a', sessionId: 'chat-a', reasoning: 'Resumed reasoning', working: true },
+        restored: [],
+        getStreamingReplyDisplay(messageId, sessionId) {
+            if (this.live?.messageId !== messageId || this.live.sessionId !== sessionId) return null;
+            return { reasoning: this.live.reasoning };
+        },
+        restoreStreamingReplyDisplays(sessionId) {
+            if (this.state.currentSessionId === sessionId && this.live?.sessionId === sessionId && this.live.working) {
+                this.restored.push(this.live.messageId);
+            }
+        }
+    };
+    const component = createComponentAppFacade(app);
+    assert.deepEqual(component.getStreamingReplyDisplay('reply-a', 'chat-a'), { reasoning: 'Resumed reasoning' });
+    assert.equal(component.getStreamingReplyDisplay('reply-a', 'chat-b'), null);
+    app.state.currentSessionId = 'chat-b';
+    component.restoreStreamingReplyDisplays('chat-a');
+    assert.deepEqual(app.restored, []);
+    app.state.currentSessionId = 'chat-a';
+    component.restoreStreamingReplyDisplays('chat-a');
+    assert.deepEqual(app.restored, ['reply-a']);
+    app.live = null;
+    assert.equal(component.getStreamingReplyDisplay('reply-a', 'chat-a'), null);
+    component.restoreStreamingReplyDisplays('chat-a');
+    assert.deepEqual(app.restored, ['reply-a']);
+});
