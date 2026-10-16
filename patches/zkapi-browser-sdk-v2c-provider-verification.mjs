@@ -2,7 +2,7 @@
 // All native quote, lease, evidence and origin checks remain before the hook.
 export default {
     "name": "provider-verification-v2c",
-    "revision": "3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
+    "revision": "67e505c1788d636da07c7ac1a7f65b30fad1fe15",
     "files": [
         {
             "file": "sdk/configure.js",

@@ -3581,7 +3581,7 @@ the rehearsal drives is verified only at activation.
 Version 2 is `active` on Sepolia and version 1 `exit-only` there; mainnet is
 unchanged (version 1 `active`, version 2 `pending`).
 
-- **SDK pin.** `zkapi-sdk-v2c` is the commit `3e1f8f3` of the zkapi repository:
+- **SDK pin.** `zkapi-sdk-v2c` is the commit `67e505c` of the zkapi repository:
   `4b955d9` plus the deployed Sepolia profile (setup `dev`), the re-synced asset
   manifest and the SDK half of the withdrawal recheck (`prepareWithdrawal` takes
   `expectedNoteId` and `expectedWithdrawalOperationId` and compares them inside

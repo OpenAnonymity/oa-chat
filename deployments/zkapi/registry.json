@@ -66,8 +66,8 @@
       "vaultRevision": 3,
       "sdk": {
         "alias": "zkapi-sdk-v2c",
-        "source": "github:OpenAnonymity/zkapi#3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
-        "revision": "3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
+        "source": "github:OpenAnonymity/zkapi#67e505c1788d636da07c7ac1a7f65b30fad1fe15",
+        "revision": "67e505c1788d636da07c7ac1a7f65b30fad1fe15",
         "storeSha256": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
         "patches": [
           "wallet-recovery-v2c",
@@ -88,7 +88,7 @@
       },
       "gate": {
         "recoveryReview": {
-          "revision": "3e1f8f38e2ffee1fdfda69673cfb19d953895f8d",
+          "revision": "67e505c1788d636da07c7ac1a7f65b30fad1fe15",
           "verdict": "not_required",
           "patch": null
         },
