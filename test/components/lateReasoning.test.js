@@ -14,6 +14,7 @@ for (const [index, match] of callbacks.entries()) {
         const saved = [], rendered = [], appended = [];
         const context = vm.createContext({
             stopped: false, turnStopped() { return context.stopped; },
+            stillWorking: { clear() {} }, streamOpenedAt: null,
             firstChunkReceived, reasoningStartTime: null, reasoningEndTime: 123,
             firstContentChunk: false, streamedReasoning: '', streamedContent: 'Partial answer.',
             streamingMessage: { id: 'test', content: '', streamingReasoning: false },

@@ -1,3 +1,136 @@
+## October 16, 2026 — desktop 0.1.40 integration
+
+Merged production client 196d8f50 with the released desktop client 6037ae31.
+The production reasoning/stall/menu/search/Sentry fixes are retained alongside
+native asset compatibility, late-callback retirement, partial-row finalization,
+and reasoning persistence across chat switches. Stream callbacks use both the
+retired-attempt flag and AbortSignal; the stall timer is created after that guard.
+Late trace insertion uses the production model-header anchor for textless output
+as well as text. Both sets of timeout and resumed-thinking regressions remain.
+Staging request-timing instrumentation is excluded from source and ancestry.
+This is a local source candidate; signed-package acceptance is recorded separately.
+
+## October 15, 2026 — late reasoning stays below the model header
+
+Live insertion of first visible or withheld reasoning now anchors after the model
+header (and any standalone access trace), matching restored-message order. The
+previous group-level prepend put Thinking/Thought above the model name. The
+anchor works without a text bubble, including image-only replies; hidden-to-visible
+replacement keeps a single trace. Parallel lane bodies keep their existing order.
+The browser regression fixture checks DOM order and rendered geometry for live,
+settled, restored and hidden-to-visible reasoning, alongside stall behavior.
+
+## October 15, 2026 — isolated production candidate
+
+This candidate starts at the live production client `e6f55300`. It selectively
+includes the sidebar menu and filtered deletion repairs, resumed thinking and
+one-second stalled-text feedback, operation-scoped Sentry diagnostics, and the
+Security Details / sync-status repairs. It excludes the staging request-timing
+experiment entirely, including its recorder, hooks, uploader, configuration and
+commits. The production zkAPI SDK and payment configuration remain at the base.
+Do not merge the experiment-bearing staging branch into this candidate.
+
+Earlier dated entries describe their historical staging/local status. They do
+not establish production deployment or acceptance for this candidate. Hosted
+Sentry IP/geography scrubbing and exact-candidate device/live coverage remain
+release gates; the final preparation record is maintained outside this checkout.
+
+## October 15, 2026 — Sentry client repairs for staging
+
+Security Details now tolerates a failed native version getter. Sync status checks
+use the existing five-second background request policy, preserve unknown/error
+results rather than reporting up-to-date, validate the server timestamp, and
+ignore stale-account responses. Existing Sentry status diagnostics are retained.
+See [investigation and verification](SENTRY_TRIAGE_20261015.md). No ticket merge,
+redemption, provider retry, encryption or request-timing behavior changed.
+
+## October 15, 2026 — deleted chats leave filtered sidebar results
+
+Live staging QA found that Delete succeeded in IndexedDB but left its row in
+an active sidebar search until the query changed or the page reloaded. Search
+merges a separate result cache with the paged session list; deleting only from
+the latter resurrected the visible row. Successful deletion now prunes both
+lists and records the completed-deletion ID before rendering. Searches exclude
+those IDs both while scanning and before publishing/caching their results, so
+an older snapshot or an awaited index refresh cannot restore a deleted row.
+Storage failures retain the existing row. Controller regressions cover text
+and starred filters, stale reads, deletion during indexing, and failed writes.
+This fix adds no network calls, persisted data, or telemetry. Local candidate;
+live staging needs rechecking after deployment.
+
+## October 15, 2026 — one-second stalled-text feedback
+
+The staging candidate now includes `e05aba3a` and supersedes the earlier
+"Thinking until the end" choice below. The header shows "Thinking..." only during
+reasoning, settles to "Thought for Ns" at answer text, and reopens if thinking
+resumes. Existing paragraph boundaries and measured durations are preserved.
+Single replies and Parallel lanes show "Still working…" after one second without
+new answer text while the stream remains open and is not reasoning. Text,
+reasoning, completion, failure and Stop clear it, using the existing lane fade.
+
+Integration handles visible or withheld reasoning that first starts after answer
+text, including Parallel/synthesis headers. Hidden-to-visible lane reasoning
+replaces its header rather than duplicating IDs. A small per-turn in-memory map
+restores a single reply's live reasoning flags and stalled line when switching
+back to its chat; it is removed on every terminal path. It adds no storage,
+network requests or telemetry. Only disclosed reasoning is rendered.
+
+The browser fixture `test/fixtures/stall-browser.html` exercises actual ChatApp
+signals, ChatArea DOM methods, message templates and shipped CSS with synthetic
+text and no wallet or provider calls. Bundle `test/fixtures/stall-browser.js` to
+`local/stall-browser.js` with esbuild (browser ESM), serve the repository, then
+click "Run streaming checks". Controller tests use fake clocks for exact timing,
+short pauses, Stop, completion, hidden thinking and navigation restoration.
+
+## October 15, 2026 — earlier thinking header choice (superseded above)
+
+The candidate includes the complete `79e33389` branch alongside the menu and
+scoped diagnostics fixes. The chosen behavior applies to all models: an existing
+reasoning header says "Thinking..." throughout the reply, then "Thought for Ns"
+when it completes. Reasoning text still settles when answer text starts; only
+the header remains active. No alternative header designs are pending.
+
+Duration starts when the stream opens and ends at the last thinking stretch,
+rather than measuring only a provider's late reasoning burst or the whole reply.
+Resumed withheld reasoning updates that duration and preserves paragraph breaks
+between answer segments. Interrupted single-model replies retain their measured
+duration when saved and reloaded. Council text-reasoning headers likewise stay
+active until their lane completes. This does not add provider reasoning that was
+never disclosed, or introduce any additional telemetry.
+
+Integration review also keeps the fixed header during live heading updates and
+session restoration (provider headings remain in the trace body), and corrects
+Stop during resumed thinking to persist the latest duration rather than the
+first segment's time. Deterministic tests cover text and withheld reasoning.
+
+## October 15, 2026 — staging menu and scoped diagnostics candidate
+
+The row menu is portaled outside the scrolling list, opens below when it fits,
+flips above near the bottom, and scrolls on the roomier side in short windows.
+Keyboard activation focuses its first action; Escape restores the trigger.
+Outside click/focus, list scroll, window resize, keyboard shortcuts and hiding
+the sidebar close it. The deletion VM test now supports the named placement
+helper export. Test top/bottom rows and Star, Rename, Delete in a browser.
+
+Diagnostics add four fixed-value tags and catalogued incidents, at most once
+per minute per name, ten per name and sixty per page. The existing handled
+request-error reporter retains its separate twenty-category per-page cap.
+The desktop tag requires the actual Electron bridge, not app readiness.
+
+The selected privacy boundary is option (a): no global Activity Timeline trail.
+Each failed access/verification/completion observation or stream watchdog owns
+its own buffer. Steps use fixed names and relative milliseconds rounded to 100ms,
+up to forty entries. There are no shared current-session lookups or transmitted
+request/turn IDs. Unscoped incidents and uncaught exceptions have no trail.
+A trail describes only the failing operation within the turn, not every earlier
+operation in that turn. The real SDK envelope tests cover both diagnostics and
+captureException; the latter must attach its trail through beforeSend's hint,
+because captureException does not accept a top-level breadcrumbs context.
+Newer ticket removal counts, shortage copy and 45-second idle policy are retained.
+See [SENTRY.md](SENTRY.md#diagnostics-and-the-trail--2026-10-14).
+
+Source-map uploads, server instrumentation and hosted Sentry IP/geography
+settings are separate work; none is configured by this client change.
 ## October 14, 2026 — desktop billing frontend integration (local)
 
 The desktop candidate now builds on the October 14 web client including the

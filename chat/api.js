@@ -1069,11 +1069,21 @@ export class OpenRouterAPI {
                 const reasoningDelta = parsed.choices?.[0]?.delta;
                 const reasoningString = typeof reasoningDelta?.reasoning === 'string' ? reasoningDelta.reasoning : '';
                 const detailReasoning = reasoningString ? '' : reasoningTextFromDetails(reasoningDelta?.reasoning_details);
-                if (!reasoningWithheld && hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
+                if (hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
+                    const firstWithheld = !reasoningWithheld;
                     reasoningWithheld = true;
-                    // The model is thinking but the words are not shared by the provider: tell
-                    // the UI once, so it can say "Thinking..." and time the trace.
-                    if (!accumulatedReasoning && onReasoningChunk) await onReasoningChunk('', { withheld: true });
+                    if (lastDeltaKind === 'content' && !reasoningString && !detailReasoning && !reasoningDelta?.content) {
+                        // Wordless thinking after part of the answer (the model
+                        // searched or called a tool and is thinking again): the
+                        // answer is not finished, and the next words start a new
+                        // paragraph.
+                        lastDeltaKind = 'reasoning';
+                        if (onReasoningChunk) await onReasoningChunk('', { withheld: true, resumed: true });
+                    } else if (firstWithheld && !accumulatedReasoning && onReasoningChunk) {
+                        // The model is thinking but the words are not shared by the provider: tell
+                        // the UI once, so it can say "Thinking..." and time the trace.
+                        await onReasoningChunk('', { withheld: true });
+                    }
                 }
                 if (parsed.type === 'response.reasoning.delta' ||
                     parsed.reasoning_delta ||

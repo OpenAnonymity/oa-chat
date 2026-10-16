@@ -116,7 +116,14 @@ class TLSSecurityModal {
         const status = this.services.networkProxy.getStatus();
         const tlsInfo = this.services.networkProxy.getTlsInfo();
         const isEncrypted = status.enabled && status.usingProxy;
-        const libcurl = window.libcurl;
+        let libcurlVersion = 'Unknown';
+        try {
+            // This getter calls into WASM and can throw after a runtime failure.
+            // Optional version metadata must not prevent opening the dialog.
+            libcurlVersion = window.libcurl?.version?.lib || 'Unknown';
+        } catch {
+            // Keep the connection details and close controls available.
+        }
 
         const tlsTargetName = this.services.inference.getTlsDisplayName();
         this.overlay.innerHTML = `
@@ -162,7 +169,7 @@ class TLSSecurityModal {
                             </div>
                             <div class="flex justify-between items-start">
                                 <span class="text-xs text-muted-foreground">Version</span>
-                                <span class="text-xs font-mono text-foreground">${libcurl?.version?.lib || 'Unknown'}</span>
+                                <span class="text-xs font-mono text-foreground">${libcurlVersion}</span>
                             </div>
                             ${this.renderWasmIntegrity()}
                         </div>

@@ -2,7 +2,6 @@
  * Network Logger Service
  * Tracks and stores network requests for debugging and monitoring
  */
-
 import { providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
 
 class NetworkLogger {

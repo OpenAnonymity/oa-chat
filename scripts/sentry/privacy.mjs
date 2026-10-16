@@ -1,11 +1,82 @@
 import { parseRequestFailureType } from '../../chat/services/requestDiagnostics.js';
+import { isDiagnosticName, normalizeDiagnostic, normalizeBreadcrumb, bucketCount, trailToBreadcrumbs } from '../../chat/services/diagnostics.js';
 
 const ERROR_TYPES = new Set(['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'URIError', 'EvalError', 'AggregateError']);
 
+// The few tags an event may carry, each with every value it may take.
+// They answer "which build, which mode, was the page even visible", which is
+// where most bug reports start; none of them narrows down a person.
+export const TAGS = Object.freeze({
+    'oa.mode': ['ticket', 'zkapi'],
+    'oa.surface': ['web', 'desktop'],
+    'oa.visibility': ['visible', 'hidden'],
+    'oa.online': ['online', 'offline']
+});
+const DIAGNOSTIC_MESSAGE = /^OADiag_([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)$/;
+const MAX_BREADCRUMBS = 40;
+
+export function sanitizeTags(tags) {
+    const out = {};
+    for (const [key, values] of Object.entries(TAGS)) {
+        const value = tags?.[key];
+        if (values.includes(value)) out[key] = value;
+    }
+    return out;
+}
+
+/** The trail, rebuilt from the client's own vocabulary; nothing else survives. */
+export function sanitizeBreadcrumbs(breadcrumbs) {
+    return (Array.isArray(breadcrumbs) ? breadcrumbs : []).flatMap(crumb => {
+        const category = typeof crumb?.category === 'string' && crumb.category.startsWith('oa.') ? crumb.category.slice(3) : null;
+        const normalized = normalizeBreadcrumb({ category, code: crumb?.message, ...(crumb?.data && typeof crumb.data === 'object' ? {
+            status: crumb.data.status, errorCode: crumb.data.error_code, count: crumb.data.count, aborted: crumb.data.aborted, elapsedMs: crumb.data.elapsed_ms
+        } : {}) });
+        if (!normalized) return [];
+        const { category: cat, code, ...data } = normalized;
+        const out = { category: `oa.${cat}`, message: code, level: 'info', type: 'default' };
+        const entries = Object.entries({ status: data.status, error_code: data.errorCode, count: data.count, aborted: data.aborted, elapsed_ms: data.elapsedMs })
+            .filter(([, value]) => value !== undefined);
+        if (entries.length) out.data = Object.fromEntries(entries);
+        return [out];
+    }).slice(-MAX_BREADCRUMBS);
+}
+
+function common(event, { environment, release }) {
+    return {
+        ...(typeof event.event_id === 'string' && /^[a-f0-9]{32}$/.test(event.event_id) ? { event_id: event.event_id } : {}),
+        platform: 'javascript',
+        environment,
+        ...(release ? { release } : {}),
+        ...(Number.isFinite(event.timestamp) && event.timestamp > 0 ? { timestamp: event.timestamp } : {})
+    };
+}
+
 // Reconstruct the event from a small allowlist. Error text can contain prompts,
 // provider responses or credentials, so pattern-based redaction is insufficient.
-export function sanitizeErrorEvent(event, { origin, scriptPaths, environment, release }) {
+export function sanitizeErrorEvent(event, { origin, scriptPaths, environment, release, liveTags = null }) {
     if (event.type) return null;
+    const tags = sanitizeTags({ ...(typeof liveTags === 'function' ? liveTags() : null), ...(event.tags || {}) });
+    const breadcrumbs = sanitizeBreadcrumbs(event.breadcrumbs);
+    const trail = { ...(Object.keys(tags).length ? { tags } : {}), ...(breadcrumbs.length ? { breadcrumbs } : {}) };
+
+    // A diagnostic: a catalogued name with catalogued fields, nothing free.
+    const diagnostic = typeof event.message === 'string' ? DIAGNOSTIC_MESSAGE.exec(event.message) : null;
+    if (diagnostic) {
+        const name = diagnostic[1];
+        if (!isDiagnosticName(name)) return null;
+        const fields = normalizeDiagnostic(name, event.contexts?.oa) || {};
+        const repeats = bucketCount(event.contexts?.oa?.repeats);
+        return {
+            ...common(event, { environment, release }),
+            level: event.level === 'error' ? 'error' : 'warning',
+            message: event.message,
+            logger: 'oa.diagnostics',
+            contexts: { oa: { ...fields, repeats: repeats === Infinity ? 1000 : repeats } },
+            fingerprint: [event.message],
+            ...trail
+        };
+    }
+
     const allowedPaths = new Set(scriptPaths);
     const values = (event.exception?.values || []).slice(-5).flatMap(exception => {
         const frames = (exception.stacktrace?.frames || []).flatMap(frame => {
@@ -38,14 +109,24 @@ export function sanitizeErrorEvent(event, { origin, scriptPaths, environment, re
     if (!values.length) return null;
     const failureType = values.find(value => parseRequestFailureType(value.type))?.type;
     return {
-        ...(typeof event.event_id === 'string' && /^[a-f0-9]{32}$/.test(event.event_id) ? { event_id: event.event_id } : {}),
-        platform: 'javascript',
+        ...common(event, { environment, release }),
         level: 'error',
-        environment,
-        ...(release ? { release } : {}),
         exception: { values },
-        ...(failureType ? { fingerprint: [failureType] } : {})
+        ...(failureType ? { fingerprint: [failureType] } : {}),
+        ...trail
     };
+}
+
+/** Tags read at send time from the page itself; each value is from TAGS. */
+export function collectLiveTags({ document, navigator, window } = globalThis) {
+    const tags = {};
+    try {
+        tags['oa.mode'] = document?.documentElement?.classList?.contains('zkapi-mode') ? 'zkapi' : 'ticket';
+        tags['oa.surface'] = window?.electronAPI?.isElectron === true ? 'desktop' : 'web';
+        tags['oa.visibility'] = document?.visibilityState === 'hidden' ? 'hidden' : 'visible';
+        tags['oa.online'] = navigator?.onLine === false ? 'offline' : 'online';
+    } catch { /* A tag is never worth an error. */ }
+    return tags;
 }
 
 export function privacyOptions(config) {
@@ -68,6 +149,8 @@ export function privacyOptions(config) {
         tracePropagationTargets: [],
         replaysSessionSampleRate: 0,
         replaysOnErrorSampleRate: 0,
+        // Never collect a global trail. Explicit per-request steps are rebuilt
+        // in beforeSend; console, fetch and UI breadcrumbs remain disabled.
         maxBreadcrumbs: 0,
         beforeBreadcrumb: () => null,
         beforeSendLog: () => null,
@@ -76,6 +159,9 @@ export function privacyOptions(config) {
         transportOptions: { fetchOptions: { credentials: 'omit', referrerPolicy: 'no-referrer' } },
         beforeSend(event, hint) {
             if (hint) hint.attachments = [];
+            if (parseRequestFailureType(hint?.originalException?.name)) {
+                event = { ...event, breadcrumbs: trailToBreadcrumbs(hint.originalException.oaTrail) };
+            }
             return sanitizeErrorEvent(event, config);
         }
     };

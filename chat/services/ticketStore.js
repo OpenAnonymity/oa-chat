@@ -4,6 +4,7 @@
  */
 
 import storageEvents from './storageEvents.js';
+import { reportDiagnostic } from './diagnostics.js';
 import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
 import { PREF_KEYS } from './preferencesStore.js';
@@ -507,6 +508,7 @@ export class TicketStore {
                 persisted = true;
             } catch (error) {
                 console.warn('Failed to persist tickets:', error);
+                reportDiagnostic('storage.failed', { store: 'tickets', op: 'write' });
                 if (options.requireDurable) throw error;
             }
         }

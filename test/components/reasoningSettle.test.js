@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Providers may interleave answer and reasoning segments. Each answer segment
-// settles the current trace; new reasoning reopens it, duplicate flushes do not.
+// First answer text settles each thinking phase. A later reasoning phase can
+// reopen it; stale duplicate tail chunks cannot. Source checks complement the
+// controller tests and the real DOM fixture in test/fixtures/stall-browser.html.
 const read = relative => fs.readFileSync(path.join(process.cwd(), relative), 'utf8');
 
 test('the first content chunk settles the reasoning trace on every streaming path', () => {
@@ -37,4 +38,14 @@ test('a finished message that streamed after thinking gets its action row (Copy,
     const chatArea = read('chat/components/ChatArea.js');
     assert.match(chatArea, /if \(isReasoningFinalized && !forceFullRender\) \{[\s\S]*?this\.replaceAssistantActionsRow\(messageEl, message\);/);
     assert.match(chatArea, /replaceAssistantActionsRow\(messageEl, message\) \{[\s\S]*?assistant-actions-placeholder[\s\S]*?row\.replaceWith\(fresh\)/);
+});
+
+test('Parallel lanes and single replies share the 1 s "Still working…" delay, and a lane header settles at its first answer words', () => {
+    const council = read('chat/application/councilController.js');
+    const app = read('chat/app.js');
+    assert.match(read('chat/services/streamSegments.js'), /export const STILL_WORKING_DELAY_MS = 1000;/);
+    assert.match(council, /import \{ STILL_WORKING_DELAY_MS \} from '\.\.\/services\/streamSegments\.js';/);
+    assert.doesNotMatch(council, /const STILL_WORKING_DELAY_MS =/);
+    assert.match(app, /import \{ STILL_WORKING_DELAY_MS \} from '\.\/services\/streamSegments\.js';/);
+    assert.doesNotMatch(council, /resumeReasoningDisplay/);
 });

@@ -2281,6 +2281,52 @@ test('a lane that goes quiet after output says it is still working until the str
     assert.deepEqual(workingCalls, [true, false]);
 });
 
+test('a lane clears its stall line for hidden reasoning and includes later reasoning in its final duration', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let now = 1000;
+    t.mock.method(Date, 'now', () => now);
+    const working = [], headers = [];
+    const laneState = { status: 'pending', response: '' };
+    const controller = createController({ inferenceService: {
+        streamCompletion: async (...args) => {
+            const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
+            opened();
+            chunk('A preamble.');
+            t.mock.timers.tick(1000);
+            assert.equal(laneState.stillWorking, true);
+            now = 1100;
+            reasoning('', { withheld: true });
+            assert.equal(laneState.stillWorking, false);
+            assert.equal(laneState.streamingReasoning, true);
+            t.mock.timers.tick(1000);
+            assert.deepEqual(working, [true, false]);
+            now = 2100;
+            chunk(' The answer.');
+            assert.equal(laneState.streamingReasoning, false);
+            now = 2300;
+            reasoning('One more check.');
+            now = 2400;
+            return { totalTokens: 1, promptTokens: 1, completionTokens: 1 };
+        }
+    } });
+    Object.assign(controller.app, { isViewingSession: () => true, chatArea: {
+        updateCouncilLaneContent() {}, updateCouncilLaneReasoning() {}, finalizeCouncilLaneReasoning() {},
+        setCouncilLaneWorking: (_id, _lane, value) => working.push(value),
+        updateWithheldReasoning: (...args) => headers.push(args)
+    } });
+    await controller.sendLaneCompletion({
+        session: { id: 'session-1', councilAccess: { secondary: { apiKey: 'k', apiKeyInfo: {},
+            expiresAt: new Date(60000).toISOString() } } },
+        entry: { laneId: 'secondary', id: 'test/model', name: 'Model' },
+        sanitizedMessages: [{ role: 'user', content: 'test' }], searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: { assistantMessage: { id: 'assistant-1' }, laneState, persistProgress() {} }
+    });
+    assert.deepEqual(headers.map(call => call[1]), [true, false]);
+    assert.equal(laneState.reasoningDuration, 1400);
+    assert.equal(laneState.streamingReasoning, false);
+});
+
 test('an image-only lane counts as an answer and reaches Council as a described response', async () => {
     const synthesisCalls = [];
     const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };

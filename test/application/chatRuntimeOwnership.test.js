@@ -158,6 +158,87 @@ describe('production ChatApp runtime ownership', () => {
         return app;
     }
 
+    function searchDeletionHarness() {
+        const app = searchHarness();
+        const sessions = ['one', 'two'].map(id => ({
+            id, title: 'needle', conversationSearchText: '', starred: true, updatedAt: Date.now()
+        }));
+        app.state.sessions = [...sessions];
+        app.state.sessionsById = new Map(sessions.map(session => [session.id, session]));
+        app.state.currentSessionId = 'two';
+        app.state.sessionSearchResults = [...sessions];
+        app.state.sessionSearchResultsKey = app.getSessionResultsKey();
+        app.sessionScrollPositions = new Map();
+        app.sessionPromptScrollAnchors = new Map();
+        app.clearChatbarStateForSession = () => {};
+        app.cacheSessions = rows => rows.forEach(row => app.state.sessionsById.set(row.id, row));
+        return app;
+    }
+
+    for (const criteria of ['query', 'starred']) {
+        test(`deleting a chat removes it from cached ${criteria} results before rendering`, async t => {
+            const app = searchDeletionHarness();
+            if (criteria === 'starred') {
+                app.sessionSearchQuery = '';
+                app.sessionFilters.starredOnly = true;
+                app.state.sessionSearchResultsKey = app.getSessionResultsKey();
+            }
+            t.mock.method(chatDB, 'deleteSessionWithMessages', async () => {});
+            let rendered;
+            app.renderSessions = () => { rendered = app.getFilteredSessions().map(row => row.id); };
+            await app.deleteIdleSession('one');
+            assert.deepEqual(rendered, ['two']);
+            assert.equal(app.state.currentSessionId, 'two');
+        });
+    }
+
+    test('a search snapshot from before deletion cannot restore the deleted chat', async t => {
+        const app = searchDeletionHarness();
+        const snapshot = [...app.state.sessions];
+        const pending = deferred();
+        t.mock.method(chatDB, 'getAllSessions', () => pending.promise);
+        t.mock.method(chatDB, 'deleteSessionWithMessages', async () => {});
+        const searching = app.updateSessionSearchResults();
+        await app.deleteIdleSession('one');
+        pending.resolve(snapshot);
+        await searching;
+        assert.deepEqual(app.getFilteredSessions().map(row => row.id), ['two']);
+        assert.equal(app.state.sessionsById.has('one'), false);
+        assert.equal(app.state.sessionSearchPending, false);
+    });
+
+    test('failed storage deletion preserves searchable results', async t => {
+        const app = searchDeletionHarness();
+        t.mock.method(chatDB, 'deleteSessionWithMessages', async () => { throw new Error('storage failed'); });
+        await assert.rejects(app.deleteIdleSession('one'), /storage failed/);
+        assert.deepEqual(app.getFilteredSessions().map(row => row.id), ['one', 'two']);
+        assert.equal(app.deletedSessionIds.has('one'), false);
+    });
+
+    test('deletion during lazy indexing removes a match already collected by the search', async t => {
+        const app = searchDeletionHarness();
+        const pending = deferred();
+        const indexing = deferred();
+        const snapshot = [
+            { ...app.state.sessions[0], updatedAt: 2 },
+            { ...app.state.sessions[1], title: 'other', conversationSearchText: undefined, updatedAt: 1 }
+        ];
+        t.mock.method(chatDB, 'getAllSessions', async () => snapshot);
+        t.mock.method(chatDB, 'deleteSessionWithMessages', async () => {});
+        app.refreshSessionConversationSearchText = async session => {
+            indexing.resolve();
+            await pending.promise;
+            session.conversationSearchText = 'needle';
+        };
+        const searching = app.updateSessionSearchResults();
+        await indexing.promise;
+        await app.deleteIdleSession('one');
+        pending.resolve();
+        await searching;
+        assert.deepEqual(app.getFilteredSessions().map(row => row.id), ['two']);
+        assert.equal(app.state.sessionsById.has('one'), false);
+    });
+
     test('long indexed history yields to input and returns ordered matches', async t => {
         const app = searchHarness();
         const sessions = Array.from({ length: 350 }, (_, i) => ({

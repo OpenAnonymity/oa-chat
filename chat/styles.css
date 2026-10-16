@@ -773,6 +773,33 @@ html.switching-theme *::after {
     padding: 0;
 }
 
+/* An open row menu is shown at body level (Sidebar.openSessionMenu) so the
+   scrolling list can't clip it; the sidebar sets top/left and, when the
+   window is too short for it, max-height. */
+.session-menu.session-menu--floating {
+    position: fixed;
+    right: auto;
+    z-index: 10005;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* Stacked items: with no narrow sidebar to wrap them, inline-block buttons
+   would size the menu to one long row. */
+.session-menu--floating > button {
+    display: block;
+}
+
+/* Keep the row lit and its buttons visible while its menu is open,
+   even after the pointer moves onto the menu. */
+.chat-session[data-menu-open] {
+    background-color: hsl(var(--color-hover));
+}
+.chat-session[data-menu-open] .session-menu-btn,
+.chat-session[data-menu-open] .session-star-btn {
+    opacity: 1;
+}
+
 .chat-session .session-menu-btn svg {
     width: 1rem;
     height: 1rem;
@@ -1556,7 +1583,8 @@ a.quick-ask-source:focus-visible {
 
 /* Output already shown, model not finished: same shimmer as the pending
    line, aligned to the response text. */
-.council-lane-working {
+.council-lane-working,
+.message-still-working {
     padding: 0 1rem 0.5rem;
     line-height: 1.25;
 }

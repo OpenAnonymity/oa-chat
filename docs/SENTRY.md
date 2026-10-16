@@ -135,6 +135,72 @@ transport privacy options, and conditional self-hosted bundling.
 
 Official reference: <https://docs.sentry.io/platforms/javascript/configuration/options/>.
 
+## Diagnostics and the trail — 2026-10-14
+
+The first integration answered "did something throw, and where": one event per
+category per page, no context. That is enough to notice an outage and not
+enough to find a bug. This extension adds three things, all drawn from the
+same finite-vocabulary model, so the data boundary stays the one described
+above — nothing free-form, nothing from a prompt, a response, a URL, a ticket
+or an account can get in, because there is no field that would carry it.
+
+**The trail (option a).** Each failing request observation owns a local buffer,
+with `started` and `failed` steps. The stream watchdog additionally records
+`opened`, `first_output` and `timeout`. Reports contain only the failing operation
+within the turn; they do not reconstruct the entire turn or use the Activity
+Timeline. Concurrent requests never share a buffer. Unscoped background incidents
+and uncaught exceptions have no trail. There are no request/turn/session identifiers.
+Relative milliseconds are rounded to 100ms and bounded to one hour; absolute
+breadcrumb timestamps are removed. Each buffer retains at most forty steps.
+All step names are an explicit catalogue, not merely strings matching a pattern.
+The SDK's global breadcrumbs are disabled (`maxBreadcrumbs: 0`), and the outgoing
+sanitizer reconstructs the explicit request trail. Request exceptions attach it
+through `beforeSend`'s original synthetic error hint; diagnostics use explicit
+breadcrumbs in their event. No original exception or request data is retained.
+
+**Tags.** Four, each with fixed values (`TAGS` in `scripts/sentry/privacy.mjs`):
+`oa.mode` (ticket | zkapi), `oa.surface` (web | desktop), `oa.visibility`
+(visible | hidden), `oa.online` (online | offline). They are read from the page
+when the event is sent (`collectLiveTags`) and filter dashboards and alerts;
+these tags are coarse operational context. Model names, providers, stations and
+destinations remain excluded.
+
+**Diagnostics.** A catalogued incident that is not an exception:
+`reportDiagnostic(name, fields)` where `name` and every field are listed in
+`DIAGNOSTIC_CATALOG` (`chat/services/diagnostics.js`). Enum fields take only
+listed values, counts are reported as the top of a coarse bucket
+(1, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000), booleans are booleans; anything
+else is dropped before it leaves the module. The reporter sends an event at most
+once a minute per name (later occurrences in that minute ride along as
+`repeats` on the next one), ten per name and sixty per page. Each arrives as a
+`warning`-level message event `OADiag_<name>` with the fields under
+`contexts.oa`, fingerprinted by name, so Sentry groups by incident type and
+alert rules can be set per name. The catalogue today:
+
+| name | fields | raised when |
+| --- | --- | --- |
+| `access.sweep` | skipped, recovered, tier | key acquisition set aside tickets the org had already seen |
+| `access.sweep_stalled` | tier | a refusal did not shrink the wallet; the sweep stopped |
+| `stream.timeout` | stage (connection, idle, output), seconds | the request watchdog gave up |
+| `storage.failed` | store, op | a local store did not confirm a write (tickets, pending turn) |
+| `sync.failed` | reason, stage | encrypted wallet sync or its status check failed |
+
+Adding one: add the name and its fields to `DIAGNOSTIC_CATALOG` first, then
+call `reportDiagnostic` at the site. An unknown name or field is silently
+dropped, so a call without a catalogue entry sends nothing. Application code
+never imports the SDK: diagnostics travel as DOM events
+(`oa:diagnostic`, `oa:request-failure`) that `scripts/sentry/browser.mjs` listens
+for, and an unconfigured build has nothing listening.
+
+What this still does not do, on purpose: no success events (request volume per
+address would be usage tracking), no successful-request reports, no absolute trail timing, no session or user
+identity, no model or provider names, no error text. The transport caveat is
+unchanged: Sentry sees the sender's IP, so the hosted project still needs the
+IP-storage and `$user.geo.**` scrubbing rules above.
+
+Checks: `node --test test/services/diagnostics.test.js test/sentryDiagnostics.test.mjs`
+(no SDK needed) and `test/sentry.test.mjs` for the real envelope.
+
 ## Setup verification — 2026-10-12
 
 - Sentry accepted synthetic event `fcab9a22bc35464d9598ce4a8e58e5fb` with HTTP 200
@@ -148,3 +214,11 @@ Official reference: <https://docs.sentry.io/platforms/javascript/configuration/o
   entry with both global error handlers, verifying sanitized envelopes.
 - Changes remain local on `codex/sentry-setup-20261012`. No hosting configuration,
   project platform setting, IP-storage setting, or deployed application changed.
+
+### Staging release boundaries (2026-10-15)
+
+This candidate adds browser diagnostics only. Source-map upload tooling/tokens,
+server-side Sentry and Sentry project administration are not changed. Before
+promoting additional telemetry to production, an administrator must verify
+IP-storage prevention and `$user.geo.**` scrubbing in the hosted project. Local
+sanitizer tests do not establish those hosted settings.

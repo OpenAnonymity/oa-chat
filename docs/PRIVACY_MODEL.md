@@ -2,10 +2,15 @@
 
 ## Optional error reporting
 
-Builds with `SENTRY_DSN` explicitly set send limited uncaught JavaScript errors
-and bounded, explicitly instrumented request failures to Sentry. Reports contain fixed error categories, allowlisted request phases/statuses
-and generated code locations,
-not exception text, chats, credentials, account identifiers or activity histories.
+Builds with `SENTRY_DSN` explicitly set send limited uncaught JavaScript errors,
+bounded, explicitly instrumented request failures and a short catalogue of
+client incidents (a ticket sweep, a stream timeout, a failed local write or
+sync) to Sentry. Reports contain fixed error categories, allowlisted request
+phases/statuses, bucketed counts, four fixed-value tags (payment mode, surface,
+page visibility, online state), the failing operation's fixed steps and
+relative times (rounded to 100ms), and generated code locations — not
+exception text, chats, credentials, account identifiers, hosts, model names or
+cross-chat activity histories. Unscoped failures carry no trail.
 The direct transport still exposes source IP, browser HTTP metadata and error
 arrival time to Sentry. It is not covered by OA's inference relay or strongest
 metadata-unlinkability claims. Reporting is absent from unconfigured builds.

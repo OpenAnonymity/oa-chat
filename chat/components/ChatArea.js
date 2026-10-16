@@ -1879,6 +1879,10 @@ export default class ChatArea {
             return;
         }
 
+        // Live reasoning state can be newer than the last periodic database save.
+        messages = messages.map(message => ({ ...message,
+            ...this.app.getStreamingReplyDisplay?.(message.id, session.id) }));
+
         // Build HTML for all messages using shared templates
         const helpers = {
             processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
@@ -1978,6 +1982,7 @@ export default class ChatArea {
         this.app.detachStalePromptSlideUpEffect?.();
         const detachedQuickAskWindow = this.detachQuickAskWindowForRender(session.id);
         messagesContainer.innerHTML = messagesHtml;
+        this.app.restoreStreamingReplyDisplays?.(session.id);
         this.restoreQuickAskWindowAfterRender(detachedQuickAskWindow, session.id);
         const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
             session.id,
@@ -2403,6 +2408,59 @@ export default class ChatArea {
         this.app.updateScrollButtonVisibility();
     }
 
+    /** Keep late reasoning in the same position as the full message template. */
+    insertSingleReasoningTrace(messageId, html) {
+        const row = document.querySelector(`[data-message-id="${messageId}"]`);
+        const header = row?.querySelector('[data-assistant-header]');
+        if (!header) return;
+        // A standalone access trace precedes reasoning in the restored template.
+        const accessTrace = header.parentElement.querySelector(':scope > .kept-access-trace');
+        document.getElementById(`reasoning-${messageId}`)?.remove();
+        (accessTrace || header).insertAdjacentHTML('afterend', html);
+    }
+
+    /** A provider may first signal hidden reasoning after its answer has begun. */
+    updateWithheldReasoning(messageId, thinking, duration, laneId = null) {
+        const reasoningId = laneId ? this.getCouncilLaneReasoningId(messageId, laneId) : messageId;
+        if (!document.getElementById(`reasoning-${reasoningId}`)) {
+            const html = buildReasoningTrace('', reasoningId, thinking,
+                null, duration, null, { withheld: true });
+            if (laneId) {
+                const body = this.getCouncilLaneBody(messageId, laneId);
+                if (!body) return;
+                this.removeCouncilLanePending(body);
+                body.insertAdjacentHTML('afterbegin', html);
+            } else {
+                this.insertSingleReasoningTrace(messageId, html);
+            }
+        }
+        if (thinking) this.resumeReasoningDisplay(reasoningId);
+        else this.settleThinkingHeader(reasoningId, duration);
+    }
+
+    /** Shows or clears the "Still working…" line under a single reply whose text has stalled. */
+    setStreamingStillWorking(messageId, working) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return;
+        const existing = messageEl.querySelector('.message-still-working');
+        if (!working) {
+            if (existing) this.dismissCouncilLanePart(existing);
+            return;
+        }
+        if (existing) {
+            if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
+            return;
+        }
+        const bubble = messageEl.querySelector('.message-content')?.closest('.message-assistant');
+        if (!bubble) return;
+        const workingEl = document.createElement('div');
+        workingEl.className = 'message-still-working';
+        workingEl.setAttribute('role', 'status');
+        workingEl.innerHTML = '<span class="pending-response-label pending-response-streaming">Still working…</span>';
+        bubble.insertAdjacentElement('afterend', workingEl);
+        this.revealCouncilLanePart(workingEl);
+    }
+
     /** Shows or clears a lane's "Still working…" line under output that has already arrived. */
     setCouncilLaneWorking(messageId, laneId, working) {
         const bodyEl = this.getCouncilLaneBody(messageId, laneId);
@@ -2491,6 +2549,8 @@ export default class ChatArea {
         );
         const traceEl = traceWrapper.firstElementChild;
         if (!traceEl) return null;
+        // Replace a header-only withheld trace when visible reasoning arrives.
+        document.getElementById(`reasoning-${reasoningId}`)?.remove();
 
         // Thinking always leads the lane, above text, images and status.
         const firstOutputEl = bodyEl.querySelector(':scope > .council-lane-content-shell, :scope > .council-lane-images, :scope > .council-lane-working');
@@ -2736,17 +2796,11 @@ export default class ChatArea {
             this.typewriter.displayedLength = settledLength;
             document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
         }
-        // An answer can arrive before the first reasoning chunk. Add only the
-        // missing trace; replacing the message would disturb its answer and controls.
+        // Some models answer first, then reveal their first reasoning during a tool call.
         if (!document.getElementById(`reasoning-content-${messageId}`)) {
-            const messageEl = this.app.elements.messagesContainer.querySelector(`[data-message-id="${messageId}"]`);
-            const outputEl = messageEl?.querySelector('.message-assistant, .message-assistant-images');
-            if (outputEl) {
-                const wrapper = document.createElement('div');
-                wrapper.innerHTML = buildReasoningTrace('', messageId, true, this.app.processContentWithLatex.bind(this.app));
-                if (wrapper.firstElementChild) outputEl.before(wrapper.firstElementChild);
-            }
+            this.insertSingleReasoningTrace(messageId, buildReasoningTrace(reasoning, messageId, true));
         }
+        this.resumeReasoningDisplay(messageId);
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -3024,33 +3078,8 @@ export default class ChatArea {
         return { summaries, sections };
     }
 
-    /**
-     * Extracts a meaningful subtitle from reasoning content.
-     * Only uses explicit subtitle markers (## headings or **bold** text).
-     * Returns "Thinking..." if no markers are found (e.g., Claude models).
-     * @param {string} reasoning - The reasoning content
-     * @returns {string} The subtitle text
-     */
-    extractReasoningSubtitle(reasoning) {
-        if (!reasoning || reasoning.trim().length === 0) {
-            return 'Thinking...';
-        }
-
-        const MAX_LENGTH = 150;
-        const structure = this.parseReasoningStructure(reasoning);
-
-        // Only use explicit subtitle markers (headings or bold text)
-        // If none found, keep showing "Thinking..." - don't fall back to body text
-        if (structure.summaries.length > 0) {
-            const lastSummary = structure.summaries[structure.summaries.length - 1];
-            const summaryText = lastSummary.text;
-
-            return summaryText.length > MAX_LENGTH
-                ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
-                : summaryText;
-        }
-
-        // No subtitle markers detected - keep default streaming indicator
+    /** Keep the streaming header stable even when reasoning contains headings. */
+    extractReasoningSubtitle() {
         return 'Thinking...';
     }
 
@@ -3089,6 +3118,33 @@ export default class ChatArea {
     settleReasoningDisplay(messageId, reasoning, reasoningDuration) {
         this.settledReasoningIds.set(messageId, reasoning?.length || 0);
         this.finalizeReasoningDisplay(messageId, reasoning, reasoningDuration);
+    }
+
+    /**
+     * The model is thinking again after part of its answer (a tool call in
+     * between). Its settled header goes back to the shimmering "Thinking...";
+     * the next answer words settle it with the new duration.
+     * @param {string} messageId - The message ID
+     */
+    resumeReasoningDisplay(messageId) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.textContent = 'Thinking...';
+        subtitleEl.classList.add('reasoning-subtitle-streaming');
+    }
+
+    /**
+     * The thinking is over: the header takes its duration. Used for wordless
+     * thinking (the header is all there is); a disclosed trace's words
+     * settle through settleReasoningDisplay.
+     * @param {string} messageId - The message ID
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleThinkingHeader(messageId, reasoningDuration) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.classList.remove('reasoning-subtitle-streaming');
+        subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
     }
 
     /**
@@ -3167,12 +3223,9 @@ export default class ChatArea {
             if (!alreadyUpdated) {
                 // Subtitle hasn't been updated yet, update it now
                 subtitleEl.classList.remove('reasoning-subtitle-streaming');
-                if (reasoningDuration) {
-                    subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
-                } else {
-                    // Fallback if no duration is available
-                    subtitleEl.textContent = 'Reasoning complete';
-                }
+                // One vocabulary for a finished trace: "Thought for Ns", or
+                // "Thought" when no time is known.
+                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
             }
             // If already updated, we skip the re-render to avoid redundancy
         }

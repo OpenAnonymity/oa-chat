@@ -436,3 +436,258 @@ test('finalization renders a missing partial row only when its owner explicitly 
     await ChatArea.prototype.finalizeStreamingMessage.call(area, message, { appendIfMissing: true });
     assert.deepEqual(appended, [message]);
 });
+
+// A model that answers in segments (Grok with search: think, a line of answer,
+// a search while it thinks again with its words withheld, the rest) must not
+// look finished after its first line.
+test('wordless thinking after part of the answer shows Thinking again until the answer continues', async t => {
+    const restore = installBrowser();
+    const tick = () => new Promise(resolve => setTimeout(resolve, 15));
+    let duringSearch = null;
+    const { app, assistant, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('', { withheld: true });
+        await tick();
+        await chunk('I will look it up.');
+        await reasoning('', { withheld: true, resumed: true });
+        duringSearch = { record: structuredClone(assistant().at(-1)), calls: paints.map(call => call.name) };
+        await tick();
+        await chunk('\n\nA few repos match.');
+        await chunk(' More.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.ok(duringSearch.calls.includes('resumeReasoningDisplay'), 'the settled header says Thinking... again');
+    const settleCalls = paints.filter(call => call.name === 'settleThinkingHeader');
+    assert.ok(settleCalls.length >= 1 && settleCalls.length <= 2, 'settled at the next words (and confirmed at the end), not on every chunk');
+    assert.ok(paints.findIndex(call => call.name === 'resumeReasoningDisplay')
+        < paints.findIndex(call => call.name === 'settleThinkingHeader'));
+    assert.ok(settleCalls[0].args[1] >= 30, 'the duration runs to the end of the second thinking segment');
+    const settled = assistant().at(-1);
+    assert.equal(settled.content, 'I will look it up.\n\nA few repos match. More.');
+    assert.equal(settled.streamingReasoning, false);
+    assert.equal(settled.reasoningWithheld, true);
+    assert.ok(settled.reasoningDuration >= 30);
+});
+
+test('a resumed signal for a trace with words reopens it; the next words settle it through the usual path', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('Looking at the question.');
+        await chunk('First line.');
+        await reasoning('', { withheld: true, resumed: true });
+        await chunk('\n\nSecond line.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    const names = paints.map(call => call.name);
+    const resumed = names.indexOf('resumeReasoningDisplay');
+    assert.ok(resumed > names.indexOf('settleReasoningDisplay'), 'reopened after the first settle');
+    assert.ok(names.indexOf('settleReasoningDisplay', resumed) > resumed, 'settled again at the next words');
+    assert.equal(names.filter(name => name === 'settleThinkingHeader').length, 1, 'the header takes its time once, at the end');
+});
+
+// Grok sends its reasoning in one burst right before the answer; the thinking
+// happened while the stream was open and quiet. Timed from the first reasoning
+// event it read "Thought" / "Reasoning complete" (0 ms); timed from the open
+// stream it reads like every other model.
+test('thinking is timed from when the stream opens, so a burst of reasoning before the answer still reads "Thought for …"', async t => {
+    const restore = installBrowser();
+    const { app, assistant, paints } = streamHarness(async (...args) => {
+        const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
+        await opened();
+        await new Promise(resolve => setTimeout(resolve, 40));
+        await reasoning('Light has three primaries.');
+        await chunk('Red, green, and blue.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    const settle = paints.find(call => call.name === 'settleReasoningDisplay');
+    assert.ok(settle.args[2] >= 40, `settled with the open-stream time (${settle.args[2]} ms)`);
+    assert.ok(assistant().at(-1).reasoningDuration >= 40);
+});
+
+test('a stopped reply keeps its thinking time, so it reads "Thought for …" after a reload too', async t => {
+    const restore = installBrowser();
+    const { app, assistant } = streamHarness(async (...args) => {
+        const [chunk, abortController, opened, reasoning] = [args[3], args[7], args[8], args[9]];
+        await opened();
+        await new Promise(resolve => setTimeout(resolve, 20));
+        await reasoning('Working it out.');
+        await chunk('Partial');
+        setTimeout(() => app.stopSessionStreaming('one'), 5);
+        return untilStopped(abortController);
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.ok(assistant().at(-1).reasoningDuration >= 20);
+});
+
+for (const withheld of [true, false]) {
+    test(`Stop during resumed ${withheld ? 'withheld' : 'text'} thinking saves the latest duration`, async t => {
+        const restore = installBrowser();
+        t.after(restore);
+        let now = 1000;
+        t.mock.method(Date, 'now', () => now);
+        const { app, assistant } = streamHarness(async (...args) => {
+            const [chunk, abortController, opened, reasoning] = [args[3], args[7], args[8], args[9]];
+            await opened();
+            now = 1020;
+            await reasoning(withheld ? '' : 'First thought.', withheld ? { withheld: true } : undefined);
+            now = 1040;
+            await chunk('Partial answer.');
+            now = 1060;
+            await reasoning(withheld ? '' : 'A second thought.', withheld ? { withheld: true, resumed: true } : undefined);
+            now = 1120;
+            const stopped = untilStopped(abortController);
+            app.stopSessionStreaming('one');
+            return stopped;
+        });
+        await app.sendMessage();
+        const saved = assistant().at(-1);
+        assert.equal(saved.reasoningDuration, 120, 'includes the resumed thinking up to Stop');
+        assert.equal(saved.streamingReasoning, false);
+    });
+}
+
+// The header says Thinking only while thinking events arrive. A reply whose
+// text stalls with the stream still open (keep-alives only) shows a quiet
+// "Still working…" line under the answer after 1 s, gone when text resumes.
+const stillWorkingCalls = paints => paints.filter(call => call.name === 'setStreamingStillWorking').map(call => call.args[1]);
+
+test('returning to a stalled chat restores its line and live reasoning state, and completion releases it', async t => {
+    const restore = installBrowser();
+    t.after(restore);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { app, paints } = streamHarness(async (...args) => {
+        await args[9]('First thought.');
+        await args[3]('First answer.');
+        const [messageId] = app.streamingReplyDisplays.keys();
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, false);
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'other'), null);
+        app.state.currentSessionId = 'other';
+        t.mock.timers.tick(1000);
+        assert.deepEqual(stillWorkingCalls(paints), [], 'no paint in the other chat');
+        app.state.currentSessionId = 'one';
+        app.restoreStreamingReplyDisplays('one');
+        assert.deepEqual(stillWorkingCalls(paints), [true]);
+        await args[9](' More thought.');
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, true);
+        assert.deepEqual(stillWorkingCalls(paints), [true, false]);
+        await args[3](' More answer.');
+        assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, false);
+        return { completionTokens: 9, finishReason: 'stop' };
+    });
+    await app.sendMessage();
+    assert.equal(app.streamingReplyDisplays.size, 0);
+    t.mock.timers.tick(2000);
+    assert.deepEqual(stillWorkingCalls(paints), [true, false]);
+});
+
+test('first hidden reasoning after answer text creates a thinking header and suppresses the stall line', async t => {
+    const restore = installBrowser();
+    t.after(restore);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { app, paints } = streamHarness(async (...args) => {
+        await args[3]('Let me search.');
+        await args[9]('', { withheld: true });
+        t.mock.timers.tick(1000);
+        assert.deepEqual(stillWorkingCalls(paints), []);
+        assert.ok(paints.some(call => call.name === 'updateWithheldReasoning' && call.args[1]));
+        await args[3](' Found it.');
+        return { completionTokens: 9, finishReason: 'stop' };
+    });
+    await app.sendMessage();
+    assert.ok(paints.some(call => call.name === 'settleThinkingHeader'));
+});
+
+test('the header settles at the first answer words for every model', async t => {
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('Looking at the question.');
+        await chunk('Red, green, and blue.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    app.state.models = [{ id: 'x-ai/grok-4.7', name: 'Accepted model' }];
+    t.after(restore);
+    await app.sendMessage();
+    const names = paints.map(call => call.name);
+    assert.ok(names.includes('settleReasoningDisplay'));
+    assert.equal(names.includes('resumeReasoningDisplay'), false, 'no Thinking while text is being written');
+});
+
+test('text that stalls for 1 s shows "Still working…", and it leaves as soon as text resumes', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = installBrowser();
+    let duringStall = null, afterResume = null;
+    const { app, paints } = streamHarness(async (...args) => {
+        const chunk = args[3];
+        await chunk('Here is a quick roundup.');
+        t.mock.timers.tick(1000);
+        duringStall = stillWorkingCalls(paints);
+        await chunk(' More headlines.');
+        afterResume = stillWorkingCalls(paints);
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.deepEqual(duringStall, [true], 'shown once the text had stopped for a second');
+    assert.deepEqual(afterResume, [true, false], 'gone the moment text came back');
+    assert.deepEqual(stillWorkingCalls(paints), [true, false], 'nothing more after the reply ended');
+});
+
+test('a short pause never shows the line, and it never shows after the reply ends', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const chunk = args[3];
+        await chunk('One.');
+        t.mock.timers.tick(999);
+        await chunk(' Two.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    t.mock.timers.tick(1001);
+    assert.deepEqual(stillWorkingCalls(paints), []);
+});
+
+test('thinking during a pause is shown by the header, not the line', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, reasoning] = [args[3], args[9]];
+        await reasoning('', { withheld: true });
+        await chunk('I will look it up.');
+        await reasoning('', { withheld: true, resumed: true });
+        t.mock.timers.tick(1000);
+        await chunk('\n\nA few repos match.');
+        return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
+    });
+    t.after(restore);
+    await app.sendMessage();
+    assert.equal(stillWorkingCalls(paints).includes(true), false);
+    assert.ok(paints.some(call => call.name === 'resumeReasoningDisplay'), 'the header said Thinking during the search');
+});
+
+test('Stop during a stall clears the line', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const restore = installBrowser();
+    const { app, paints } = streamHarness(async (...args) => {
+        const [chunk, abortController] = [args[3], args[7]];
+        await chunk('Partial');
+        const stopped = untilStopped(abortController);
+        t.mock.timers.tick(1000);
+        app.stopSessionStreaming('one');
+        return stopped;
+    });
+    t.after(restore);
+    await app.sendMessage();
+    t.mock.timers.tick(200);
+    assert.deepEqual(stillWorkingCalls(paints), [true, false]);
+});
