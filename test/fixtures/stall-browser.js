@@ -49,12 +49,14 @@ async function run() {
     app.state.currentSessionId = 'one';
     output.textContent = 'Checking one-second pause…';
     render();
+    check(!header(), 'answer with no reasoning invents a thinking header');
     signal = app.createStillWorkingSignal(message, 'one', () => false);
     signal.arm();
     await delay(700);
     check(!line(), 'line appeared before one second');
     await delay(450);
     check(line()?.dataset.reveal === 'shown', 'line missing after one second');
+    check(!header(), 'a text stall invents a thinking header');
     signal.clear();
     area.updateStreamingReasoning(message.id, 'Checking a source after answering.');
     check(header()?.textContent === 'Thinking...', 'first reasoning after text has no header');
@@ -95,6 +97,10 @@ async function run() {
     check(document.getElementById('reasoning-content-synthetic'), 'hidden-to-visible trace missing');
     checkReasoningOrder();
     area.settleReasoningDisplay(message.id, 'Now showing the reasoning.', 3000);
+    area.settleThinkingHeader(message.id, 3000);
+    check(header()?.textContent === 'Thought for 3s', 'visible completion is falsely labelled withheld');
+    area.finalizeReasoningDisplay(message.id, 'Now showing the reasoning.', 3000);
+    check(header()?.textContent === 'Thought for 3s', 'finalized visible trace changed its label');
     // Late headers also work without a text bubble and preserve an access trace.
     area.settledReasoningIds.clear();
     render();

@@ -1,3 +1,28 @@
+## October 17, 2026 — restore earlier reasoning labels, retain stalled-text feedback
+
+The user confirmed restoring the summer rounded-seconds wording. Positive short durations round to seconds
+(`Thought for 0s` / `Thought for 1s`), streaming traces can show the provider's
+latest explicit heading, and restored untimed traces use their heading or
+`Reasoning complete`. Live untimed completion retains its original
+`Reasoning complete` fallback. Provider headings are escaped in HTML templates.
+This supersedes the fixed-header/quiet-label choices documented below; do not
+simplify these labels again as part of unrelated stall work.
+
+No reported reasoning still means no reasoning header. Existing hidden-reasoning
+headers remain non-expandable and use the same rounded time (or `Thought` when
+the duration is unknown). Do not restore the October 9 “not shared by the
+provider” suffix: it was not summer wording and was mistakenly restored in the
+initial local draft. This restores the requested rounding, not the entire summer
+UI. Resumed hidden thinking still says `Thinking...`. Visible words take
+precedence over the withheld flag. Existing duration measurement is unchanged.
+
+Keep the one-second `Still working…` line after answer text stalls in an open
+reply, including replies with no reasoning. Reasoning/text resumption and terminal
+cleanup, chat-switch restoration, and model → reasoning → answer ordering remain.
+No transport, storage, analytics or production/staging experiment code changes.
+These are local source changes; the previously signed desktop 0.1.43 does not
+contain this restoration and must not be presented as the updated release.
+
 ## October 15, 2026 — late reasoning stays below the model header
 
 Live insertion of first visible or withheld reasoning now anchors after the model

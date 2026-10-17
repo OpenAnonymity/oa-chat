@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { buildReasoningTrace } from '../../chat/components/MessageTemplates.js';
 import ChatArea from '../../chat/components/ChatArea.js';
 
-test('provider headings cannot replace Thinking in live or restored streaming headers', () => {
+test('provider headings again label live and restored streaming traces', () => {
     const reasoning = '# Searching the web\n**Comparing results**\nThe answer follows.';
-    assert.equal(ChatArea.prototype.extractReasoningSubtitle(reasoning), 'Thinking...');
+    assert.equal(ChatArea.prototype.extractReasoningSubtitle.call(ChatArea.prototype, reasoning), 'Comparing results');
     const html = buildReasoningTrace(reasoning, 'restored', true, text => text, 2000);
-    assert.match(html, /id="reasoning-subtitle-restored"[^>]*>Thinking\.\.\.<\/span>/);
+    assert.match(html, /id="reasoning-subtitle-restored"[^>]*>Comparing results<\/span>/);
     assert.match(html, /Comparing results/, 'the reasoning body still contains the provider text');
 });
 
@@ -35,10 +35,15 @@ test('words win over the withheld flag', () => {
 });
 
 
-test('brief reasoning never rounds down to Thought for 0s', () => {
-    const html = buildReasoningTrace('', 'brief', false, null, 200, null, { withheld: true });
-    assert.match(html, /Thought for less than 1s/);
-    assert.doesNotMatch(html, /Thought for 0s|not shared by the provider/);
+test('brief reasoning uses the original rounded seconds in live and restored headers', () => {
+    for (const [duration, expected] of [[200, 'Thought for 0s'], [499, 'Thought for 0s'], [500, 'Thought for 1s'], [800, 'Thought for 1s'], [1500, 'Thought for 2s'], [60000, 'Thought for 1m'], [61000, 'Thought for 1m 1s']]) {
+        assert.equal(ChatArea.prototype.formatReasoningDuration(duration), expected);
+        for (const withheld of [false, true]) {
+            const html = buildReasoningTrace(withheld ? '' : 'A trace.', 'brief', false, text => text, duration, null, { withheld });
+            assert.ok(html.includes(expected));
+            assert.doesNotMatch(html, /less than 1s/);
+        }
+    }
     const unknown = buildReasoningTrace('', 'unknown', false, null, 0, null, { withheld: true });
     assert.match(unknown, />Thought<\/span>/);
     assert.doesNotMatch(unknown, /Thought for/);
@@ -52,9 +57,47 @@ test('wordless thinking that resumed after part of the answer renders as Thinkin
     assert.doesNotMatch(html, /reasoning-body|reasoning-chevron|reasoning-loading-indicator/);
 });
 
-test('a finished trace with words and no known time reads "Thought", never a summary or "Reasoning complete"', () => {
+test('a restored trace with no time uses its heading or Reasoning complete', () => {
     const html = buildReasoningTrace('**Sorting the shelves**\nFiction first.', 'notime', false, text => text, undefined, null, {});
-    assert.match(html, /id="reasoning-subtitle-notime"[^>]*>Thought<\/span>/);
-    assert.doesNotMatch(html, /Reasoning complete|>Sorting the shelves</);
-    assert.match(buildReasoningTrace('Fiction first.', 'timed', false, text => text, 2000, null, {}), />Thought for 2s</);
+    assert.match(html, /id="reasoning-subtitle-notime"[^>]*>Sorting the shelves<\/span>/);
+    assert.match(buildReasoningTrace('Fiction first.', 'untimed', false, text => text), />Reasoning complete</);
+    assert.match(buildReasoningTrace('Fiction first.', 'timed', false, text => text, 2000), />Thought for 2s</);
+});
+
+test('provider headings are escaped and clipped when used as header text', () => {
+    const reasoning = '# <img src=x onerror=alert(1)> heading';
+    for (const streaming of [true, false]) {
+        const html = buildReasoningTrace(reasoning, 'escaped', streaming, () => 'Rendered trace');
+        assert.match(html, /id="reasoning-subtitle-escaped"[^>]*>&lt;img/);
+        assert.doesNotMatch(html, /<img/);
+        const long = buildReasoningTrace('# ' + 'x'.repeat(180), 'long', streaming, () => 'Rendered trace');
+        assert.ok(long.includes('x'.repeat(147) + '...</span>'));
+    }
+    assert.equal(ChatArea.prototype.extractReasoningSubtitle.call(ChatArea.prototype, 'No heading here.'), 'Thinking...');
+});
+
+test('rounded headers stay consistent through settling, resuming and settling again', () => {
+    const previous = globalThis.document;
+    const classes = new Set(['reasoning-subtitle-streaming']);
+    let withheld = true;
+    const subtitle = { textContent: 'Thinking...', closest: () => withheld ? {} : null, classList: {
+        add: value => classes.add(value), remove: value => classes.delete(value)
+    } };
+    globalThis.document = { getElementById: () => subtitle };
+    try {
+        const area = Object.create(ChatArea.prototype);
+        area.settleThinkingHeader('hidden', 200);
+        assert.equal(subtitle.textContent, 'Thought for 0s');
+        assert.equal(classes.size, 0);
+        area.resumeReasoningDisplay('hidden');
+        assert.equal(subtitle.textContent, 'Thinking...');
+        assert.ok(classes.has('reasoning-subtitle-streaming'));
+        area.settleThinkingHeader('hidden', 1200);
+        assert.equal(subtitle.textContent, 'Thought for 1s');
+        withheld = false;
+        area.settleThinkingHeader('visible', 1200);
+        assert.equal(subtitle.textContent, 'Thought for 1s');
+        area.settleThinkingHeader('visible', undefined);
+        assert.equal(subtitle.textContent, 'Reasoning complete');
+    } finally { globalThis.document = previous; }
 });
