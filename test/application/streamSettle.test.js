@@ -495,11 +495,13 @@ test('a resumed signal for a trace with words reopens it; the next words settle 
 // event it read "Thought" / "Reasoning complete" (0 ms); timed from the open
 // stream it reads like every other model.
 test('thinking is timed from when the stream opens, so a burst of reasoning before the answer still reads "Thought for …"', async t => {
+    let now = 1000;
+    t.mock.method(Date, 'now', () => now);
     const restore = installBrowser();
     const { app, assistant, paints } = streamHarness(async (...args) => {
         const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
         await opened();
-        await new Promise(resolve => setTimeout(resolve, 40));
+        now += 40;
         await reasoning('Light has three primaries.');
         await chunk('Red, green, and blue.');
         return { completionTokens: 9, finishReason: 'stop', isStreaming: false };
@@ -507,8 +509,8 @@ test('thinking is timed from when the stream opens, so a burst of reasoning befo
     t.after(restore);
     await app.sendMessage();
     const settle = paints.find(call => call.name === 'settleReasoningDisplay');
-    assert.ok(settle.args[2] >= 40, `settled with the open-stream time (${settle.args[2]} ms)`);
-    assert.ok(assistant().at(-1).reasoningDuration >= 40);
+    assert.equal(settle.args[2], 40, 'settled with the exact open-stream time');
+    assert.equal(assistant().at(-1).reasoningDuration, 40);
 });
 
 test('a stopped reply keeps its thinking time, so it reads "Thought for …" after a reload too', async t => {
