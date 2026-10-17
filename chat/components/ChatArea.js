@@ -3078,8 +3078,27 @@ export default class ChatArea {
         return { summaries, sections };
     }
 
-    /** Keep the streaming header stable even when reasoning contains headings. */
-    extractReasoningSubtitle() {
+    /** Use the provider’s latest explicit heading while reasoning streams. */
+    extractReasoningSubtitle(reasoning) {
+        if (!reasoning || reasoning.trim().length === 0) {
+            return 'Thinking...';
+        }
+
+        const MAX_LENGTH = 150;
+        const structure = this.parseReasoningStructure(reasoning);
+
+        // Only use explicit subtitle markers (headings or bold text)
+        // If none found, keep showing "Thinking..." - don't fall back to body text
+        if (structure.summaries.length > 0) {
+            const lastSummary = structure.summaries[structure.summaries.length - 1];
+            const summaryText = lastSummary.text;
+
+            return summaryText.length > MAX_LENGTH
+                ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
+                : summaryText;
+        }
+
+        // No subtitle markers detected - keep default streaming indicator
         return 'Thinking...';
     }
 
@@ -3090,7 +3109,6 @@ export default class ChatArea {
      */
     formatReasoningDuration(durationMs) {
         if (!Number.isFinite(durationMs) || durationMs <= 0) return '';
-        if (durationMs < 1000) return 'Thought for less than 1s';
 
         const seconds = Math.round(durationMs / 1000);
 
@@ -3134,9 +3152,9 @@ export default class ChatArea {
     }
 
     /**
-     * The thinking is over: the header takes its duration. Used for wordless
-     * thinking (the header is all there is); a disclosed trace's words
-     * settle through settleReasoningDisplay.
+     * The thinking is over: the header takes its duration. Completion also
+     * calls this for visible traces. Disclosed words settle through
+     * settleReasoningDisplay; hidden reasoning has only this header.
      * @param {string} messageId - The message ID
      * @param {number} reasoningDuration - Duration in milliseconds
      */
@@ -3144,7 +3162,11 @@ export default class ChatArea {
         const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
         if (!subtitleEl) return;
         subtitleEl.classList.remove('reasoning-subtitle-streaming');
-        subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
+        const withheld = Boolean(subtitleEl.closest('.reasoning-trace-withheld'));
+        const duration = this.formatReasoningDuration(reasoningDuration);
+        subtitleEl.textContent = withheld
+            ? (duration || 'Thought')
+            : (duration || 'Reasoning complete');
     }
 
     /**
@@ -3223,9 +3245,8 @@ export default class ChatArea {
             if (!alreadyUpdated) {
                 // Subtitle hasn't been updated yet, update it now
                 subtitleEl.classList.remove('reasoning-subtitle-streaming');
-                // One vocabulary for a finished trace: "Thought for Ns", or
-                // "Thought" when no time is known.
-                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Thought';
+                // Preserve the original live completion fallback when no time is known.
+                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Reasoning complete';
             }
             // If already updated, we skip the re-render to avoid redundancy
         }

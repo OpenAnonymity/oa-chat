@@ -283,7 +283,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
                 </svg>
-                <span class="text-xs text-muted-foreground ${isStreaming ? 'flex-1 truncate reasoning-subtitle-streaming' : ''}">${escapeHtml(subtitle)}</span>
+                <span class="text-xs text-muted-foreground ${isStreaming ? 'flex-1 truncate reasoning-subtitle-streaming' : ''}">${escapeHtmlAttribute(subtitle)}</span>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${isExpanded ? 'style="transform: rotate(180deg)"' : ''}>
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
@@ -882,7 +882,6 @@ function extractReasoningSummaries(reasoning) {
  */
 function formatReasoningDuration(durationMs) {
     if (!Number.isFinite(durationMs) || durationMs <= 0) return '';
-    if (durationMs < 1000) return 'Thought for less than 1s';
 
     const seconds = Math.round(durationMs / 1000);
 
@@ -918,9 +917,22 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
         return 'Reasoning incomplete';
     }
 
-    // A finished trace reads the same whatever the model: with no known
-    // time (older or imported messages) it is simply "Thought".
-    return 'Thought';
+    const MAX_LENGTH = 150;
+    const summaries = extractReasoningSummaries(reasoning);
+
+    // Only use explicit subtitle markers (headings or bold text)
+    // If none found, fall back to generic "Reasoning complete"
+    if (summaries.length > 0) {
+        const lastSummary = summaries[summaries.length - 1];
+        const summaryText = lastSummary.text;
+
+        return summaryText.length > MAX_LENGTH
+            ? summaryText.substring(0, MAX_LENGTH - 3) + '...'
+            : summaryText;
+    }
+
+    // No subtitle markers detected - use generic completion text
+    return 'Reasoning complete';
 }
 
 /**
@@ -940,14 +952,15 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     // only): the header alone, timed, with nothing to open.
     if (!reasoning && options?.withheld) {
         // Streaming here means the model is thinking again after part of its answer.
-        const subtitle = isStreaming ? 'Thinking...' : (formatReasoningDuration(reasoningDuration) || 'Thought');
+        const subtitle = isStreaming ? 'Thinking...'
+            : (formatReasoningDuration(reasoningDuration) || 'Thought');
         return `
         <div class="reasoning-trace reasoning-trace-withheld w-full" id="${reasoningId}">
             <div class="reasoning-toggle inline-flex items-center gap-2 px-2 py-1 text-left rounded">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
                 </svg>
-                <span id="reasoning-subtitle-${messageId}" class="text-xs text-muted-foreground${isStreaming ? ' reasoning-subtitle-streaming' : ''}">${subtitle}</span>
+                <span id="reasoning-subtitle-${messageId}" class="text-xs text-muted-foreground${isStreaming ? ' reasoning-subtitle-streaming' : ''}">${escapeHtmlAttribute(subtitle)}</span>
             </div>
         </div>
     `;
@@ -991,8 +1004,27 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     // stream as the thinking: one disclosure, steps first.
     reasoningHtml = buildKeptAccessTraceInline(accessTrace) + reasoningHtml;
 
-    // Live renders and session restores use the same fixed streaming header.
-    const subtitle = isStreaming ? 'Thinking...' : generateReasoningSubtitle(reasoning, reasoningDuration);
+    // Generate subtitle - show timing for completed reasoning, or compute from content during streaming
+    // When switching back to a streaming session, compute subtitle from available reasoning content
+    let subtitle;
+    if (isStreaming) {
+        // If we have reasoning content, try to extract a meaningful subtitle from it
+        if (trimmedReasoning && trimmedReasoning.length > 20) {
+            const summaries = extractReasoningSummaries(trimmedReasoning);
+            if (summaries.length > 0) {
+                const lastSummary = summaries[summaries.length - 1];
+                subtitle = lastSummary.text.length > 150
+                    ? lastSummary.text.substring(0, 147) + '...'
+                    : lastSummary.text;
+            } else {
+                subtitle = 'Thinking...';
+            }
+        } else {
+            subtitle = 'Thinking...';
+        }
+    } else {
+        subtitle = generateReasoningSubtitle(reasoning, reasoningDuration);
+    }
 
     // Full-width during streaming to show more subtitle, compact when finished
     const buttonWidthClass = isStreaming ? 'w-full' : '';
@@ -1011,7 +1043,7 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
                 </svg>
-                <span id="${subtitleId}" class="text-xs text-muted-foreground ${spanFlexClass} ${spanAnimationClass}">${subtitle}</span>
+                <span id="${subtitleId}" class="text-xs text-muted-foreground ${spanFlexClass} ${spanAnimationClass}">${escapeHtmlAttribute(subtitle)}</span>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${chevronRotation}>
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
