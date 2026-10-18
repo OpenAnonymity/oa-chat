@@ -1558,7 +1558,7 @@ function buildCouncilLaneWorkingIndicator(since) {
     const start = Number.isFinite(since) ? since : Date.now() - 1000;
     startStillWorkingClock();
     return `
-        <div class="council-lane-working" data-council-lane-working${stillWorkingSinceAttribute(start)}>
+        <div class="council-lane-working" role="status" data-council-lane-working${stillWorkingSinceAttribute(start)}>
             ${buildStillWorkingLabel(start)}
         </div>
     `;
