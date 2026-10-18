@@ -565,6 +565,8 @@ test('returning to a stalled chat restores its line and live reasoning state, an
     const restore = installBrowser();
     t.after(restore);
     t.mock.timers.enable({ apis: ['setTimeout'] });
+    let now = 1000;
+    t.mock.method(Date, 'now', () => now);
     const { app, paints } = streamHarness(async (...args) => {
         await args[9]('First thought.');
         await args[3]('First answer.');
@@ -572,11 +574,17 @@ test('returning to a stalled chat restores its line and live reasoning state, an
         assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, false);
         assert.equal(app.getStreamingReplyDisplay(messageId, 'other'), null);
         app.state.currentSessionId = 'other';
-        t.mock.timers.tick(1000);
+        now = 6000;
+        t.mock.timers.tick(5000);
         assert.deepEqual(stillWorkingCalls(paints), [], 'no paint in the other chat');
         app.state.currentSessionId = 'one';
         app.restoreStreamingReplyDisplays('one');
         assert.deepEqual(stillWorkingCalls(paints), [true]);
+        assert.equal(paints.at(-1).args[2], 1000, 'restoration retains the last-text timestamp');
+        now = 8000;
+        app.restoreStreamingReplyDisplays('one');
+        assert.equal(paints.at(-1).args[2], 1000);
+        paints.pop();
         await args[9](' More thought.');
         assert.equal(app.getStreamingReplyDisplay(messageId, 'one').streamingReasoning, true);
         assert.deepEqual(stillWorkingCalls(paints), [true, false]);
