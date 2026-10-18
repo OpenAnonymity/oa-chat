@@ -460,6 +460,7 @@ function readSnapshot(value) {
         hasOpenWithdrawal: input.hasOpenWithdrawal === true,
         sdkDepositsClosed: input.sdkDepositsClosed === true,
         service: isRecord(input.service) ? input.service : null,
+        activation: isRecord(input.activation) ? input.activation : null,
         otherDeploymentWithdrawals: asArray(input.otherDeploymentWithdrawals),
         otherDeploymentCredits: asArray(input.otherDeploymentCredits),
         // Only the concession family reports these. A snapshot without them
@@ -1094,7 +1095,12 @@ export function deriveVersionState(input) {
 
     const partial = {
         show,
-        current: { id: active.id, label: typeof active.label === 'string' ? active.label : active.id, status: active.status },
+        current: {
+            id: active.id,
+            label: typeof active.label === 'string' ? active.label : active.id,
+            protocolVersion: nonEmptyString(active.protocolVersion) || null,
+            status: active.status
+        },
         target: versionRef(targetVersion),
         holding,
         depositsOpen,
@@ -1148,6 +1154,7 @@ export function deriveVersionState(input) {
         previous: partial.previous,
         unsent: partial.unsent,
         service: partial.service,
+        ...(snapshot.activation ? { activation: snapshot.activation } : {}),
         notices: collectNotices(others),
         exit,
         payouts: {

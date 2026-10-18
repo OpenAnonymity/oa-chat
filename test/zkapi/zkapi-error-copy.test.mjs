@@ -464,7 +464,7 @@ test('a device that is not the newest is told what to do instead, with no restor
     for (const name of ['device_not_newest_defeated', 'device_not_newest_successor']) {
         const text = words(realError(name));
         assert.match(text, /can’t safely withdraw it/, name);
-        assert.match(text, /zkAPI companion tool/, name);
+        assert.match(text, /device that used it last/, name);
         assert.doesNotMatch(text, /restore|backup/i, name);
         assert.doesNotMatch(text, SDK_JARGON, name);
     }

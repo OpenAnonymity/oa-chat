@@ -12,7 +12,7 @@
 // slot", the session flags) are read from the facade here when the caller did
 // not pass them, so a caller needs only the arguments below:
 //
-//   badge(state, {surface, helpOpen})            -> html, '' when !state.show
+//   badge(state, {surface, helpOpen})            -> html; balance details always name the version
 //   banner(state, {surface, now})                -> html, '' when nothing to say
 //   patch(root, state, {now})                    -> {needsRender}
 //   help(kind, state?)                           -> {title, body} | null
@@ -33,7 +33,7 @@
 // no state, and a balance this browser cannot exit keeps its buttons hidden
 // whatever else is missing:
 //
-//   balanceExtras(options?)       -> html   exit kit status row and the
+//   balanceExtras(options?)       -> html   activation status and the
 //                                           give-up link, under the balance
 //   exitChoice(options?)          -> html   the fine print about a settling
 //                                           chat and, while one holds the
@@ -313,9 +313,7 @@ export function createVersionUi({
             try {
                 const state = stateOf(facade, options);
                 if (!state) return '';
-                const canExport = facade && typeof facade.canExportExitKit === 'function'
-                    ? facade.canExportExitKit() !== false : true;
-                return renderBalanceExtras(state, { canExport, ...(isRecord(options) ? options : {}) });
+                return renderBalanceExtras(state, isRecord(options) ? options : {});
             } catch {
                 return '';
             }

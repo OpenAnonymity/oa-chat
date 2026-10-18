@@ -57,7 +57,6 @@ const STATE_PROTOCOL = T('zkapi-version-state-protocol');
 const NOTICES = T('zkapi-protocol-notices');
 const FACADE = T('zkapi-facade-protocol');
 const RECORD_EXTRAS = T('zkapi-record-extras');
-const EXIT_KIT_DIALOG = T('zkapi-exit-kit-dialog');
 const SIGNER = T('address-funding-escape-concession');
 const REAL_SHAPES = T('zkapi-concession-real-shapes');
 const RECOVERY = T('withdrawal-recovery');
@@ -77,6 +76,9 @@ const RECOVERY_MODULE = 'chat/zkapi/services/withdrawalRecovery.mjs';
 const DIALOG_MODULE = 'chat/zkapi/components/AccountModal.js';
 
 const EVIDENCE = {
+    'deposit-activation': [
+        row(T('zkapi-proved-activation'), 'chat/zkapi/components/BalanceExtras.js', 'renderBalanceExtras')
+    ],
     // The service pause is said in the host's words by code, with "Check
     // again", from the snapshot, from errors, and from a refusal the snapshot
     // does not report.
@@ -149,16 +151,6 @@ const EVIDENCE = {
             ]
         }),
         row(REHEARSAL, SIGNER_MODULE, 'AddressFundingProvider', { activation: true })
-    ],
-
-    // An exit kit is offered after a deposit, created with a generated
-    // passphrase, saved in a fresh gesture, and never stored.
-    'exit-kit': [
-        row(EXIT_KIT_DIALOG, 'chat/zkapi/components/ExitKitDialog.js', 'openExitKitDialog'),
-        row(NOTICES, NOTICES_MODULE, 'buildVersionNotices'),
-        row(FACADE, FACADE_MODULE, 'createZkapiVersioning'),
-        // Drives the SDK's own exportExitKit; no host symbol.
-        row(REHEARSAL, null, null, { activation: true })
     ],
 
     // The balance and the prepared withdrawal are re-verified under the
@@ -352,8 +344,8 @@ test('WIRED is exactly the union of every adapter\'s requiredWiring', () => {
     assert.deepEqual(unlisted, [], 'an adapter requires a behavior the host does not list as wired');
     assert.deepEqual(unrequired, [], 'the host lists a behavior no adapter requires');
     assert.equal(WIRED.size, required.size);
-    // The family that exists today asks for the ten.
-    assert.equal(getAdapter('concession-v1').requiredWiring.length, 10);
+    // The family that exists today asks for nine (the web exit-kit feature is removed).
+    assert.equal(getAdapter('concession-v1').requiredWiring.length, 9);
     assert.deepEqual(getAdapter('note-bound-v1').requiredWiring, []);
 });
 

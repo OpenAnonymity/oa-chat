@@ -27,6 +27,9 @@ export function stopWithdrawalFees(owner) {
 
 export function needsWithdrawalFees(owner) {
     const prepared = zkapiClient.config?.prepared_withdrawal;
+    // The fee is deducted from the payout. Requiring an ETH balance here
+    // would make the sponsored path impossible for precisely its users.
+    if (prepared?.fee_payer === 'payout' || (!prepared && owner.sponsoredChoice === 'payout' && owner.sponsoredApi?.())) return false;
     return owner.isOpen && ['balance', 'withdraw'].includes(owner.view)
         && zkapiClient.note && !zkapiClient.activeLateWithdrawal
         && zkapiClient.withdrawal?.phase !== 'pending'

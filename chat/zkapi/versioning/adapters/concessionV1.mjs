@@ -115,7 +115,7 @@ function profileError(message) {
  *     its registry status, never written twice (docs/ZKAPI_VERSIONING.md,
  *     "Derived values").
  */
-function validateProfile(config, ctx) {
+export function validateConcessionProfile(config, ctx, family = FAMILY, vaultRevision = 3) {
     const options = ctx || {};
     const pins = config?.trusted_deployment;
     if (config?.deployment_status === 'migration_required') {
@@ -129,10 +129,10 @@ function validateProfile(config, ctx) {
             throw profileError('The profile has an unknown deployment_status.');
         }
     }
-    validateBaseProfile(config, options, FAMILY);
+    validateBaseProfile(config, options, family);
 
-    if (pins.vault_revision !== 3) {
-        throw profileError('The profile must pin vault revision 3.');
+    if (pins.vault_revision !== vaultRevision) {
+        throw profileError(`The profile must pin vault revision ${vaultRevision}.`);
     }
     if (pins.exit_concession !== 1) {
         throw profileError('The profile must pin a vault with the concession exit (exit_concession 1).');
@@ -544,7 +544,6 @@ const requiredWiring = Object.freeze([
     'device-not-newest',             // device_not_newest: restore the newest backup or exit kit
     'near-expiry',                   // note_near_expiry and config.exit.near_expiry
     'ownership-proof-wait',          // ownership_proof_wait, exit_release_pending, request_settlement_pending
-    'exit-kit',                      // exportExitKit after a deposit and when out of date
     'withdrawal-operation-recheck',  // re-verify the displayed prepared withdrawal under the wallet lock
     'other-deployment-withdrawals',  // config.other_deployment_withdrawals blocks deposits
     'other-deployment-credits'       // config.other_deployment_credits claimable from that build
@@ -568,7 +567,7 @@ export const concessionV1 = Object.freeze({
     billing: NATIVE_ETH_BILLING,
     abandon: ABANDON,
 
-    validateProfile,
+    validateProfile: validateConcessionProfile,
 
     fundingFromProfile(config) {
         return fundingFromTrustedProfile(config);

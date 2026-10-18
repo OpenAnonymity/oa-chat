@@ -825,7 +825,7 @@ test('the words are given inside a render and the facade is told after it, never
 
 // -- Exit kit ------------------------------------------------------------------------
 
-test('wiring:exit-kit the kit is created through the client, and a kit that was not saved is remembered for its balance', async t => {
+test('legacy SDK export compatibility: the kit is created through the client, and a kit that was not saved is remembered for its balance', async t => {
     const h = setup(t, { scenario: 'kit_out_of_date' });
     const heard = [];
     h.facade.subscribe(state => heard.push(state.exit.kit.unsaved));
@@ -1338,24 +1338,13 @@ function mount(html) {
     return root;
 }
 
-test('the balance extras show the kit row only where this client can make a kit', t => {
-    const h = uiSetup(t, { scenario: 'kit_never_exported' });
-    const root = mount(h.ui.balanceExtras());
-    const kit = root.querySelector('[data-zkapi-kit-row]');
-    assert.equal(kit.getAttribute('data-kit-state'), 'never');
-    assert.equal(kit.querySelector('button').getAttribute('data-zkapi-version-action'), 'export-exit-kit');
-
-    // An unsaved kit says so, in the state's own words.
-    h.facade.noteKitSaved(false);
-    assert.equal(mount(h.ui.balanceExtras()).querySelector('[data-zkapi-kit-row]').getAttribute('data-kit-state'), 'unsaved');
-
-    // A client with no kit to offer leaves the row out.
-    const bare = uiSetup(t, { scenario: 'kit_never_exported', exportKit: false });
-    assert.equal(bare.ui.balanceExtras(), '');
-    // And a page with no state shows nothing at all.
-    const none = uiSetup(t, { table: SINGLE, loaded: 'v1', wallet: noteWallet(1) });
-    assert.equal(none.ui.balanceExtras(), '');
-    assert.equal(createVersionUi({ facade: null }).balanceExtras(), '');
+test('the balance extras never expose legacy SDK exit-kit state', t => {
+    for (const exportKit of [false, true]) {
+        const h = uiSetup(t, { scenario: 'kit_never_exported', exportKit });
+        assert.equal(h.ui.balanceExtras(), '');
+        h.facade.noteKitSaved(false);
+        assert.equal(h.ui.balanceExtras(), '');
+    }
 });
 
 test('the give-up link is a version action of the balance card', t => {
@@ -1582,16 +1571,16 @@ test('resetForTests forgets every refusal, latch, flag, read and verdict the fac
 // Whole snapshots the revision 3 SDK emitted, through the real facade, state
 // derivation and notice builder: what the dialog would say for each situation.
 const NOTICE_IDS = {
-    service_missing: ['service', 'kit'],
-    service_changed: ['service', 'kit'],
-    service_legacy: ['service', 'kit'],
-    kit_never_exported: ['kit'],
+    service_missing: ['service'],
+    service_changed: ['service'],
+    service_legacy: ['service'],
+    kit_never_exported: [],
     kit_out_of_date: [],
-    near_expiry: ['near', 'kit'],
-    just_outside_near_expiry: ['kit'],
-    unresolved_request_settlement_wait: ['kit'],
-    mutual_lock_with_ownership_proof: ['frozen', 'kit'],
-    escape_lock_released_proof: ['frozen', 'kit'],
+    near_expiry: ['near'],
+    just_outside_near_expiry: [],
+    unresolved_request_settlement_wait: [],
+    mutual_lock_with_ownership_proof: ['frozen'],
+    escape_lock_released_proof: ['frozen'],
     device_not_newest_evidence: ['device'],
     withdrawals_alert_credited_defeated: ['device', 'payout', 'claim', 'setaside'],
     other_deployments: ['previous']

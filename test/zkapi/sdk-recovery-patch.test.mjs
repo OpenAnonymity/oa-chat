@@ -197,7 +197,8 @@ async function checkout(t, { registryData = registry, dependencies, legacy = fal
     const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'oa-patch-guard-')));
     t.after(() => fs.rm(temp, { recursive: true, force: true }));
     for (const file of ['scripts/patch-zkapi-sdk.mjs', 'patches/zkapi-browser-sdk-wallet-recovery.mjs',
-        'patches/zkapi-browser-sdk-v2c-recovery.mjs', 'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-v2c-provider-verification.mjs']) {
+        'patches/zkapi-browser-sdk-v2c-recovery.mjs', 'patches/zkapi-browser-sdk-v3-recovery.mjs', 'patches/zkapi-browser-sdk-v3-provider-verification.mjs',
+        'patches/zkapi-browser-sdk-v3-gasless-recovery.mjs', 'patches/zkapi-browser-sdk-v3-gasless-provider-verification.mjs', 'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-v2c-provider-verification.mjs']) {
         await fs.mkdir(path.dirname(path.join(temp, file)), { recursive: true });
         await fs.copyFile(path.join(repositoryRoot, file), path.join(temp, file));
     }

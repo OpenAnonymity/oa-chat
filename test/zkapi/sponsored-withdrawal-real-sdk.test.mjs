@@ -21,6 +21,8 @@ import { Wallet } from 'ethers';
 import { AddressFundingProvider } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { readSponsoredPins } from '../../chat/zkapi/services/sponsoredOperation.mjs';
 import { concessionV1 } from '../../chat/zkapi/versioning/adapters/concessionV1.mjs';
+import { concessionV2 } from '../../chat/zkapi/versioning/adapters/concessionV2.mjs';
+import { createSponsoredFees } from '../../chat/zkapi/versioning/sponsoredFees.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 
@@ -101,7 +103,7 @@ function locks() {
 async function scenario({ payoutBalance = 500_000_000 } = {}) {
     const { harness, store, runtime, ZkapiClient, fake, secp, deployedProfile, storage } = sdk;
     const { DEPLOYMENT, VAULT, createHarness, depositPath, noteState, nullifierFor } = harness;
-    const { BUNDLER_URL, VECTORS, attemptsKeyOf, fakeBundler, fakeGaslessChain, gaslessProfileFromVectors, logs } = fake;
+    const { VECTORS, attemptsKeyOf, fakeBundler, fakeGaslessChain, gaslessProfileFromVectors, logs } = fake;
     indexedDB.clear();
     storage.clear();
     for (const name of ['exitRpc', 'pinnedRpc']) delete runtime[name];
@@ -110,21 +112,23 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     runtime.gaslessStatus = null;
     runtime.bundlerChainCheck = null;
     runtime.exitRpcChainCheck = null;
-    const state = noteState({ current_balance: payoutBalance, deposit_path: depositPath('0x51') });
-    const gasless = gaslessProfileFromVectors({ spelling: 'profile' });
+    const state = noteState({ current_balance: payoutBalance,
+        ...(depositPath ? { deposit_path: depositPath('0x51') } : {}) });
+    const bundlerUrl = 'https://chat.example/zkapi-deployment-v3/_bundler';
+    const gasless = gaslessProfileFromVectors({ spelling: 'profile', bundlerUrl });
     const h = createHarness(function SharedRuntime() { return runtime; });
     h.worker.mutate = plan => { plan.proof.proof = Buffer.alloc(256, h.worker.proofs).toString('base64'); };
     h.server.clearance = body => ({ status: 'ok', withdrawal_nullifier: body.withdrawal_nullifier, signature: { r: '0x1', s: '0x2' } });
     runtime.browserConfig.trusted_deployment = {
         ...deployedProfile('sepolia').trusted_deployment, contract_address: VAULT, chain_id: CHAIN_ID,
-        native_asset_wei_per_unit: '1000000000', max_pause_duration: 604_800, vault_revision: 3, gasless
+        native_asset_wei_per_unit: '1000000000', max_pause_duration: 604_800, vault_revision: depositPath ? 3 : 4, gasless
     };
     await store.writeBrowserWallet({ deploymentId: DEPLOYMENT, billingAsset: 'native_eth', state });
     await runtime.reload();
     const chain = fakeGaslessChain({ chainId: CHAIN_ID, vault: VAULT, gasless, noteId: state.note_id, finalBalance: state.current_balance });
     runtime.exitRpc = () => chain.request;
     runtime.pinnedRpc = () => chain.request;
-    const bundler = fakeBundler({ chain });
+    const bundler = fakeBundler({ chain, url: bundlerUrl });
 
     const ownerKey = `0x${OWNER_KEY.toString(16).padStart(64, '0')}`;
     const funding = { chain_id: CHAIN_ID, contract_address: VAULT, demo_rpc_url: 'https://exit-rpc.example/rpc',
@@ -133,9 +137,9 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     const provider = new AddressFundingProvider({
         getConfig: () => funding, store: memoryStore(), locks: locks(), createChannel: () => null,
         createWallet: () => new Wallet(ownerKey),
-        protocol: () => ({ adapter: concessionV1, deploymentId: DEPLOYMENT_ID, version: { id: 'v2' } }),
+        protocol: () => ({ adapter: depositPath ? concessionV1 : concessionV2, deploymentId: DEPLOYMENT_ID, version: { id: depositPath ? 'v2' : 'v3' } }),
         sponsoredPins: () => readSponsoredPins(runtime.browserConfig.trusted_deployment),
-        bundlerUrl: () => BUNDLER_URL,
+        bundlerUrl: () => bundlerUrl,
         // The only network this signer is given is the bundler's.
         transport: async (url, init) => {
             bundlerCalls.push({ url, method: JSON.parse(init.body).method });
@@ -191,15 +195,19 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     // The host's action around the SDK's call, as the dialog makes it.
     const withdraw = (mode, auth = authorization(), options = {}) => provider.withAuthorizedAction(auth,
         () => client.performWithdrawal(mode, onStatus, {
-            destination: PAYEE, fees: 'payout', bundlerUrl: BUNDLER_URL, feeCapWei: VECTORS.policy.flat_fee_wei, ...options
+            destination: PAYEE, fees: 'payout', bundlerUrl, feeCapWei: VECTORS.policy.flat_fee_wei, ...options
         }));
     const finalizing = (record, extra = {}) => ({ kind: 'finalization', destination: PAYEE, noteId: state.note_id,
         sponsored: { feeCapWei: VECTORS.policy.flat_fee_wei }, recordId: record?.recordId, ...extra });
     const collecting = (extra = {}) => ({ kind: 'collection', destination: PAYEE,
         sponsored: { feeCapWei: VECTORS.policy.flat_fee_wei, transitAccount: S }, ...extra });
     const record = async () => (await store.listBrowserWithdrawals(DEPLOYMENT)).find(entry => entry.noteId === state.note_id);
+    const prepared = async () => (await store.readBrowserWallet()).preparedWithdrawal || null;
+    const sponsoredFees = createSponsoredFees({ getClient: () => client, getRuntime: () => runtime,
+        getContext: () => ({ adapter: depositPath ? concessionV1 : concessionV2, version: { proxyPath: '/zkapi-deployment-v3/' } }),
+        getOrigin: () => 'https://chat.example' });
     return { h, chain, bundler, provider, client, statuses, withdraw, authorization, finalizing, collecting, record, S, nullifier,
-        closeKey, closeBundle, state, runtime, store, bundlerCalls, DEPLOYMENT, VECTORS, fake, secp };
+        closeKey, closeBundle, state, runtime, store, bundlerCalls, DEPLOYMENT, VECTORS, fake, secp, prepared, sponsoredFees };
 }
 
 test('a sponsored close signed by the host key is released once, judged, and settles', { skip }, async () => {
@@ -226,6 +234,97 @@ test('a sponsored close signed by the host key is released once, judged, and set
 });
 
 const PAYOUT_FOR_PAYEE = PAYEE;
+
+async function displayedFee(s) {
+    const quote = await s.sponsoredFees.quote({ mode: 'mutual', destination: PAYEE, owner: s.provider.address,
+        provider: s.provider });
+    assert.equal(quote.available, true);
+    const plan = s.sponsoredFees.plan(quote);
+    assert.ok(plan);
+    return { quote, plan, authorization: s.authorization({ sponsored: plan.sponsored }) };
+}
+
+test('the host fee estimate permits a later network fee increase within deployment policy', { skip }, async () => {
+    const s = await scenario();
+    const { quote, plan, authorization } = await displayedFee(s);
+    s.chain.baseFee *= 2n;
+    s.bundler.autoMine = s.closeBundle();
+    const result = await sdk.harness.within(8_000, s.withdraw('mutual', authorization, plan.options), 'updated network fee');
+    assert.equal(result.status, 'closed');
+    assert.equal(s.bundler.sent.length, 1);
+    const op = s.bundler.sent[0].op;
+    const actualMaxCost = ['callGasLimit', 'verificationGasLimit', 'preVerificationGas',
+        'paymasterVerificationGasLimit', 'paymasterPostOpGasLimit'].reduce((sum, key) => sum + BigInt(op[key]), 0n)
+        * BigInt(op.maxFeePerGas);
+    assert.ok(actualMaxCost > BigInt(quote.maxCostWei), 'the earlier exact quote would have refused');
+    assert.ok(actualMaxCost <= BigInt(plan.options.maxCostWei));
+});
+
+test('the relay can raise pre-verification gas within policy after the host fee estimate', { skip }, async () => {
+    const s = await scenario();
+    const { plan, authorization } = await displayedFee(s);
+    const wanted = BigInt(s.VECTORS.gas_policy.pvg_cap) - 1n;
+    s.bundler.estimate = { preVerificationGas: `0x${wanted.toString(16)}` };
+    s.bundler.autoMine = s.closeBundle();
+    const result = await sdk.harness.within(8_000, s.withdraw('mutual', authorization, plan.options), 'relay gas adjustment');
+    assert.equal(result.status, 'closed');
+    assert.equal(s.bundler.sent.length, 1);
+    assert.equal(BigInt(s.bundler.sent[0].op.preVerificationGas), wanted);
+});
+
+test('continuing a saved exact-cap withdrawal replaces both caps without changing its identity', { skip }, async () => {
+    const s = await scenario();
+    const { quote } = await displayedFee(s);
+    const exactOptions = { maxCostWei: quote.maxCostWei,
+        maxTotalFeeWei: String(BigInt(quote.maxCostWei) + BigInt(quote.flatFeeWei)), feeCapWei: quote.flatFeeWei };
+    const exactAuthorization = s.authorization({ sponsored: { maxCostWei: quote.maxCostWei, feeCapWei: quote.flatFeeWei } });
+    s.bundler.onSend = async () => ({ error: { code: -32602, message: 'replacement underpriced: fee too low' } });
+    await assert.rejects(sdk.harness.within(8_000, s.withdraw('mutual', exactAuthorization, exactOptions), 'old quote cap'),
+        { code: 'gasless_cost_above_cap' });
+    const saved = await s.prepared();
+    assert.equal(saved.gaslessMaxCostWei, exactOptions.maxCostWei);
+    assert.equal(saved.gaslessMaxTotalFeeWei, exactOptions.maxTotalFeeWei);
+    // Resume needs no fresh fee quote. The host uses the deployment policy even if the quote view is idle.
+    const plan = s.sponsoredFees.plan({ available: true });
+    assert.ok(plan);
+    let attempts = 0;
+    let journalAtSend;
+    s.bundler.onSend = async () => {
+        if (++attempts === 1) return { error: { code: -32602, message: 'replacement underpriced: fee too low' } };
+        journalAtSend = await s.prepared();
+    };
+    s.bundler.autoMine = s.closeBundle();
+    const result = await sdk.harness.within(8_000, s.withdraw('mutual', s.authorization({ sponsored: plan.sponsored }),
+        { ...plan.options, expectedWithdrawalOperationId: saved.operationId }), 'continued withdrawal');
+    assert.equal(result.status, 'closed');
+    assert.equal(journalAtSend.operationId, saved.operationId);
+    assert.deepEqual(journalAtSend.public_inputs, saved.public_inputs);
+    assert.equal(journalAtSend.gaslessMaxCostWei, plan.options.maxCostWei);
+    assert.equal(journalAtSend.gaslessMaxTotalFeeWei, plan.options.maxTotalFeeWei);
+    assert.ok(BigInt(journalAtSend.userOp.maxFeePerGas) > BigInt(saved.userOp.maxFeePerGas));
+});
+
+test('using deployment fee limits still rejects fees above the paymaster ceiling', { skip }, async () => {
+    const s = await scenario();
+    const { plan, authorization } = await displayedFee(s);
+    s.chain.baseFee = BigInt(s.runtime.browserConfig.trusted_deployment.gasless.fee_ceilings.max_fee_wei) + 1n;
+    await assert.rejects(sdk.harness.within(8_000, s.withdraw('mutual', authorization, plan.options), 'contract fee ceiling'),
+        { code: 'gas_above_paymaster_ceiling' });
+    assert.equal(s.bundler.sent.length, 0);
+    assert.equal(await s.prepared(), null);
+    assert.equal(s.h.workerOperations('prepareWithdrawal').length, 0);
+});
+
+test('a lower live sponsorship cost limit still refuses before preparing or sending', { skip }, async () => {
+    const s = await scenario();
+    const { quote, plan, authorization } = await displayedFee(s);
+    s.chain.paymasterState.policy.maxSponsoredCost = BigInt(quote.maxCostWei) / 2n;
+    await assert.rejects(sdk.harness.within(8_000, s.withdraw('mutual', authorization, plan.options), 'live sponsorship policy'),
+        { code: 'max_cost_above_policy' });
+    assert.equal(s.bundler.sent.length, 0);
+    assert.equal(await s.prepared(), null);
+    assert.equal(s.h.workerOperations('prepareWithdrawal').length, 0);
+});
 
 test('a withdrawal confirmed for another payee, note or mode releases nothing', { skip }, async () => {
     const { within } = sdk.harness;

@@ -938,7 +938,7 @@ export default class AccountModal {
         const version = this.currentVersion();
         if (!version?.ui || typeof version.ui.patch !== 'function') return;
         let result = null;
-        try { result = version.ui.patch(this.overlay, version.state, { now }); } catch { result = null; }
+        try { result = version.ui.patch(this.overlay, version.state, { now, surface: 'dialog' }); } catch { result = null; }
         if (result?.needsRender === true && this.bannerWithheld(version)) result = { needsRender: false };
         if (result?.needsRender === true && !this.busy && !this.disclosureAnimating && this.canRefreshContent()) this.render();
     }
@@ -1071,12 +1071,8 @@ export default class AccountModal {
     renderVersionBadge(version) {
         if (!version?.ui || typeof version.ui.badge !== 'function') return { badge: '', help: '' };
         try {
-            const open = Boolean(this.privateBalanceHelpOpen?.version);
-            const badge = String(version.ui.badge(version.state, { surface: 'dialog', helpOpen: open }) || '');
-            if (!badge) return { badge: '', help: '' };
-            let detail = null;
-            try { detail = version.ui.help?.('version', version.state) ?? null; } catch { detail = null; }
-            return { badge, help: privateBalanceHelpContent('modal', 'version', open, detail) };
+            // A pill with a short tooltip: no help disclosure.
+            return { badge: String(version.ui.badge(version.state, { surface: 'dialog' }) || ''), help: '' };
         } catch { return { badge: '', help: '' }; }
     }
 
@@ -2523,7 +2519,9 @@ export default class AccountModal {
         if (getWalletMethod() === 'address') {
             try { destination = withdrawalDestination(this); } catch { destination = ''; }
         }
-        return `${noteId}|${mode}|${destination}`.toLowerCase();
+        const method = getWalletMethod();
+        const owner = method === 'address' ? addressFundingWallet.address : zkapiClient.walletAddress;
+        return JSON.stringify([noteId, zkapiClient.note?.current_balance, mode, method, owner || '', destination]).toLowerCase();
     }
 
     sponsoredViewState(mode) {
@@ -2537,14 +2535,15 @@ export default class AccountModal {
     // nothing to choose (no such payment here, a plan that is already
     // bound to how its fee is paid, the work already running, an upgrade).
     renderSponsoredFee({ prepared = null, submissionActive = false, showJourney = false, upgrade = false } = {}) {
-        if (upgrade || submissionActive || showJourney || prepared) return '';
+        if (upgrade || submissionActive || (showJourney && !prepared) || (prepared && prepared.fee_payer !== 'payout')) return '';
         if (!this.sponsoredApi()) return '';
         const ui = versionFacade()?.ui;
         if (typeof ui?.sponsoredFee !== 'function') return '';
         try {
             const view = this.sponsoredViewState(this.withdrawMode);
             return String(ui.sponsoredFee({
-                choice: view.choice, status: view.status, quote: view.quote, busy: this.busy === true,
+                choice: prepared ? 'payout' : view.choice, status: view.status, quote: view.quote, busy: this.busy === true,
+                locked: Boolean(prepared),
                 method: getWalletMethod() === 'address' ? 'address' : 'metamask', mode: this.withdrawMode,
                 format: units => this.formatWithdrawalAmount(units)
             }) || '');
@@ -2557,7 +2556,10 @@ export default class AccountModal {
     async refreshSponsoredQuote(mode = this.withdrawMode) {
         const api = this.sponsoredApi();
         if (!api || this.busy) return;
-        const key = this.sponsoredKeyFor(mode);
+        let key = this.sponsoredKeyFor(mode);
+        const method = getWalletMethod();
+        const noteId = zkapiClient.note?.note_id;
+        const balance = zkapiClient.note?.current_balance;
         const sequence = this.sponsoredSeq = (Number(this.sponsoredSeq) || 0) + 1;
         this.sponsoredQuote = { key, status: 'loading', quote: null };
         this.render();
@@ -2574,13 +2576,17 @@ export default class AccountModal {
                 owner = await zkapiClient.connectWallet();
                 destination = zkapiClient.config?.prepared_withdrawal?.payout || null;
             }
+            if (sequence !== this.sponsoredSeq || method !== getWalletMethod()
+                || noteId !== zkapiClient.note?.note_id || balance !== zkapiClient.note?.current_balance) return;
+            // Connecting MetaMask can populate its owner for the first time.
+            key = this.sponsoredKeyFor(mode);
             quote = await api.quote({ mode, destination, owner,
                 ...(getWalletMethod() === 'address' ? { provider: addressFundingWallet } : {}) });
         } catch (error) {
             quote = { available: false, reason: 'unknown',
                 text: walletErrorMessage(error) || 'Paying the network fee from this withdrawal isn’t available right now.' };
         }
-        if (sequence !== this.sponsoredSeq) return;
+        if (sequence !== this.sponsoredSeq || key !== this.sponsoredKeyFor(mode)) return;
         this.sponsoredQuote = { key, status: quote?.available === true ? 'ready' : 'unavailable', quote };
         if (this.isOpen) this.render();
     }
@@ -2594,8 +2600,13 @@ export default class AccountModal {
         const prepared = zkapiClient.config?.prepared_withdrawal;
         const api = this.sponsoredApi();
         if (prepared?.fee_payer === 'payout') {
-            const url = api?.bundlerUrl?.();
-            return { options: { fees: 'payout', ...(url ? { bundlerUrl: url } : {}) }, bounds: {} };
+            const view = this.sponsoredViewState(mode);
+            // Continue within the deployment policy, including plans saved
+            // by a build that treated its fee estimate as an exact cap.
+            const plan = api?.plan?.(view.status === 'ready' ? view.quote
+                : { available: true, flatFeeWei: prepared.flat_fee_cap_wei });
+            if (!plan) return { refused: 'Paying the network fee from this withdrawal isn’t available right now.' };
+            return { options: plan.options, bounds: plan.sponsored };
         }
         if (prepared || this.sponsoredChoice !== 'payout' || !api) return null;
         const view = this.sponsoredViewState(mode);
@@ -2633,6 +2644,8 @@ export default class AccountModal {
         if (getWalletMethod() === 'address') {
             try { withdrawalDestination(this); } catch { return false; }
         }
+        const sponsored = this.sponsoredPlanFor(this.withdrawMode);
+        if (sponsored) return !sponsored.refused;
         return withdrawalFeeReady(this);
     }
 
@@ -2641,9 +2654,11 @@ export default class AccountModal {
         if (getWalletMethod() === 'address') {
             try { destination = withdrawalDestination(this); } catch { return null; }
         }
+        const sponsored = this.sponsoredPlanFor(this.withdrawMode);
         return JSON.stringify([zkapiClient.note?.note_id, zkapiClient.note?.current_balance,
-            this.withdrawMode, getWalletMethod(), destination, getWalletMethod() === 'metamask' ? this.withdrawalFees?.quote?.address : null,
-            zkapiClient.config?.prepared_withdrawal?.operation_id, this.withdrawalEscapeIntent]);
+            this.withdrawMode, getWalletMethod(), destination, getWalletMethod() === 'metamask' ? zkapiClient.walletAddress || this.withdrawalFees?.quote?.address : null,
+            zkapiClient.config?.prepared_withdrawal?.operation_id, this.withdrawalEscapeIntent,
+            sponsored ? [this.sponsoredKeyFor(this.withdrawMode), sponsored.options, sponsored.bounds, sponsored.refused] : 'wallet']);
     }
 
     requestWithdrawal() {
@@ -2692,6 +2707,7 @@ export default class AccountModal {
         const escapeIntent = this.withdrawalEscapeIntent;
         const noteId = zkapiClient.note?.note_id;
         const submitGeneration = this.withdrawalSubmitGeneration || 0;
+        const preparedOperationId = zkapiClient.config?.prepared_withdrawal?.operation_id || null;
         const refusal = this.upgradeDestinationRefusal();
         if (refusal) {
             this.outcome = { tone: 'error', message: refusal, view: this.view };
@@ -2792,6 +2808,10 @@ export default class AccountModal {
             if (noteId == null || Number(zkapiClient.note?.note_id) !== Number(noteId)) {
                 throw new Error('The private balance changed. Reopen Withdraw before starting another withdrawal.');
             }
+            if (sponsored && reviewedScope !== this.withdrawalReviewScope()) {
+                this.sponsoredQuote = null;
+                throw new Error('Your balance changed while the chat settled. Check the withdrawal fee and review the amount again.');
+            }
             if (recheck) {
                 // The wallet may ask for an account or a network here, which
                 // can take as long as the person likes. Ask it first (the SDK
@@ -2816,6 +2836,7 @@ export default class AccountModal {
             const base = escapeIntent
                 ? { destination: escapeIntent.destination, expectedWithdrawalOperationId: escapeIntent.operationId }
                 : destination ? { destination } : {};
+            if (preparedOperationId && !base.expectedWithdrawalOperationId) base.expectedWithdrawalOperationId = preparedOperationId;
             // A sponsored withdrawal pays no wallet fee: no reserve was reviewed.
             if (!sponsored && getWalletMethod() === 'metamask') base.reviewedFunding = reviewedFunding;
             const options = sponsored ? { ...base, ...sponsored.options } : base;
@@ -2975,7 +2996,7 @@ export default class AccountModal {
                     <section class="zkapi-figure-block">
                         <p class="zkapi-balance-caption">Escape hatch · ${this.escapeHtml(zkapiClient.escapePeriodBadge())} safety window</p>
                         <p class="zkapi-balance-amount" data-zkapi-escape-countdown>${ready ? 'The safety window is complete.' : `Finalize in ${zkapiClient.formatExpiry(deadline)}.`}</p>
-                        <p class="zkapi-meta">To ${this.escapeHtml(zkapiClient.compact(withdrawal.destination, 9))}${deadline ? ` · ready ${this.escapeHtml(new Date(deadline * 1000).toLocaleString())}` : ''}</p>
+                        <p class="zkapi-meta">To ${this.escapeHtml(zkapiClient.compact(recordPayee(withdrawal) || withdrawal.destination, 9))}${deadline ? ` · ready ${this.escapeHtml(new Date(deadline * 1000).toLocaleString())}` : ''}</p>
                     </section>
                     <div class="zkapi-actions">
                         <button id="zkapi-finalize-btn" class="zkapi-primary-button" type="button" ${!ready || this.busy ? 'disabled' : ''}>${ready ? 'Finalize in MetaMask' : `Finalize in ${zkapiClient.formatExpiry(deadline)}`}</button>
@@ -3026,22 +3047,28 @@ export default class AccountModal {
                 ? `<span class="zkapi-transfer-address">${this.escapeHtml(zkapiClient.compact(withdrawalDestination(this), 9))}</span>`
                 : 'Your MetaMask account';
             const feeQuote = this.withdrawalFees?.quote;
-            const feeWei = feeQuote ? withdrawalFeeReceiptAmounts(feeQuote).needed : null;
+            const payoutQuote = this.sponsoredChoice === 'payout' && this.sponsoredApi()
+                ? this.sponsoredViewState(this.withdrawMode).quote : null;
+            const feeWei = payoutQuote?.available ? String(BigInt(payoutQuote.maxCostWei) + BigInt(payoutQuote.flatFeeWei) + BigInt(payoutQuote.creditSurchargeWei || '0'))
+                : feeQuote ? withdrawalFeeReceiptAmounts(feeQuote).needed : null;
             const feeUsd = feeWei ? fundingUsdText(feeWei) : null;
-            const feeText = feeWei ? `up to ${this.escapeHtml(feeUsd || `${formatFundingAmount(feeWei, 18)} ETH`)}` : '—';
+            const feeText = feeWei ? `${payoutQuote ? 'about' : 'up to'} ${this.escapeHtml(feeUsd || `${formatFundingAmount(feeWei, 18)} ETH`)}` : '—';
             const row = (label, value) => `<div class="zkapi-transfer-row"><span class="zkapi-transfer-label">${label}</span><span class="zkapi-transfer-value">${value}</span><span class="zkapi-transfer-control"></span></div>`;
             const amountText = amountKnown ? this.escapeHtml(displayAmount) : '';
+            const receivedWei = payoutQuote?.available ? escapeReview ? payoutQuote.estimatedReceivedWei : payoutQuote.minimumReceivedWei : null;
+            const receivedText = receivedWei != null ? this.escapeHtml(fundingUsdText(receivedWei) || `${formatFundingAmount(receivedWei, 18)} ETH`) : amountText;
             return `<div class="zkapi-stack zkapi-withdraw-review">
                 <div class="zkapi-transfer">
                     ${row('You withdraw', amountKnown ? `<span data-withdraw-amount>${amountText}</span>` : '<span class="zkapi-transfer-muted">Checking…</span>')}
                     ${row('To', to)}
                     ${row(escapeReview ? 'Network fees' : 'Network fee', `${feeText}${escapeReview ? ' <small>· two steps</small>' : ''}`)}
-                    ${row('You receive', amountKnown ? `<b>${amountText}</b>` : '—')}
+                    ${row('You receive', amountKnown ? `${payoutQuote ? 'about ' : ''}<b>${receivedText}</b>` : '—')}
                 </div>
+                ${payoutQuote ? '<p class="zkapi-note">The fee is paid from this withdrawal. No ETH is needed in your signing account. Estimates may change before signing.</p>' : ''}
                 <p class="zkapi-note">${!escapeReview
                     ? 'Once the server approves it, it can’t be cancelled, and this balance can’t be used for chat. Closing this window afterward does not cancel the withdrawal.'
                     : `Starting the escape hatch makes this balance unavailable for chat. Return after ${zkapiClient.escapePeriodPhrase()} to finish. Each step has a network fee. You can go back now without starting it.`}</p>
-                ${this.withdrawalFees?.loading ? '<p class="zkapi-helper" role="status">Checking available ETH…</p>' : ''}
+                ${!payoutQuote && this.withdrawalFees?.loading ? '<p class="zkapi-helper" role="status">Checking available ETH…</p>' : ''}
                 ${upgrade ? '<p class="zkapi-note">Withdrawing closes this private balance; you deposit again to finish upgrading.</p>' : ''}
                 <div class="zkapi-actions zkapi-withdraw-actions"><button id="zkapi-withdraw-review-confirm" class="zkapi-primary-button w-full" type="button" ${this.withdrawalInputReady() ? '' : 'disabled'}>${escapeReview ? 'Start escape hatch' : amountKnown ? `Withdraw ${amountText}` : 'Withdraw'}</button>
                 <button id="zkapi-withdraw-review-back" class="zkapi-quiet-button" type="button">Back</button></div>
@@ -3065,8 +3092,9 @@ export default class AccountModal {
                 : prepared.phase === 'reserving' ? 'Paused before MetaMask. Continue when you’re ready.'
                 : clearanceReserved ? 'Nothing has been sent yet.'
                 : 'The proof is ready. Nothing has been sent yet.';
-            const destination = prepared?.destination
-                ? zkapiClient.compact(prepared.destination, 9)
+            const recipient = prepared?.fee_payer === 'payout' ? prepared.payout : prepared?.destination;
+            const destination = recipient
+                ? zkapiClient.compact(recipient, 9)
                 : getWalletMethod() === 'metamask' ? 'your MetaMask account' : 'your wallet address';
             const methodName = escapeRun ? `Escape hatch · ${zkapiClient.escapePeriodPhrase()} wait` : 'Mutual close';
             if (restoring) {
@@ -3108,7 +3136,8 @@ export default class AccountModal {
                     ${exitChoice}
                     ${prepared && clearanceReserved && !submissionActive && !busyJourney ? '<p class="zkapi-note">This withdrawal can’t be cancelled. Close saves your progress.</p>' : ''}
                     ${this.renderOutcome()}
-                    ${!submissionActive && !busyJourney ? this.literal(renderWithdrawalFees(this)) : ''}
+                    ${!submissionActive && !busyJourney && prepared?.fee_payer !== 'payout' ? this.literal(renderWithdrawalFees(this)) : ''}
+                    ${prepared?.fee_payer === 'payout' && !busyJourney ? sponsoredFee : ''}
                     <div class="zkapi-actions">${primary}${secondary}${dismiss}</div>
                     ${options ? `<div class="zkapi-guides">${options}</div>` : ''}
                 </div>`;
@@ -3124,7 +3153,7 @@ export default class AccountModal {
                 ${this.literal(renderWalletMethod(this))}
                 ${figure('You withdraw')}
                 ${address ? this.literal(renderFundingAccount(this, { rows: false })) : `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span><p class="zkapi-withdraw-account">Your MetaMask account${account}</p></div>`}
-                ${this.literal(renderWithdrawalFeeLine(this))}
+                ${this.sponsoredChoice === 'payout' && this.sponsoredApi() ? '' : this.literal(renderWithdrawalFeeLine(this))}
                 ${upgrade ? '<p class="zkapi-note">Withdrawing closes this private balance; you deposit again to finish upgrading.</p>' : ''}
                 ${exitChoice}${sponsoredFee}
                 ${escapeForm ? `<p class="zkapi-note zkapi-withdraw-escape-note">Escape hatch: withdraw without the server’s approval. It takes ${zkapiClient.escapePeriodPhrase()} and two network fees: one to start, one to finish.</p>` : ''}
@@ -3429,6 +3458,7 @@ export default class AccountModal {
             this.withdrawMode = this.withdrawMode === 'escape' ? 'mutual' : 'escape';
             this.clearTransientOutcome();
             this.render();
+            if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(this.withdrawMode);
         });
         this.overlay.querySelectorAll('input[name="zkapi-withdraw-mode"]').forEach(input => {
             input.addEventListener('change', () => {
@@ -3442,6 +3472,8 @@ export default class AccountModal {
             input.addEventListener('change', () => {
                 if (this.busy) return;
                 this.sponsoredChoice = input.value === 'payout' ? 'payout' : 'wallet';
+                this.withdrawalConfirmation = null;
+                stopWithdrawalFees(this);
                 if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote();
                 else this.render();
             });
@@ -3540,7 +3572,9 @@ export default class AccountModal {
             }, { kind: 'withdraw-sync', title: 'Checking withdrawal', phase: 'syncing' }));
         });
         this.overlay.querySelector('#zkapi-finalize-btn')?.addEventListener('click', () => this.run(async (report) => {
-            const result = await zkapiClient.finalizeEscape(report);
+            const url = versionFacade()?.sponsored?.bundlerUrl?.();
+            const result = await zkapiClient.finalizeEscape(report, undefined,
+                zkapiClient.withdrawal?.feePayer === 'payout' && url ? { bundlerUrl: url } : undefined);
             this.recordWithdrawalOutcome(result);
         }, { kind: 'escape-finalize', title: 'Finishing account recovery', phase: 'wallet', blocksSend: true }));
         this.overlay.querySelectorAll('[data-finalize-withdrawal]').forEach(button => {

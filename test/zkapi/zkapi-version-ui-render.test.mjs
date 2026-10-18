@@ -293,14 +293,9 @@ test('the pill sits beside the readiness pill, never between the expiry label an
     assert.ok(top < pill && pill < foot, 'in the card header');
     assert.ok(Math.abs(pill - readiness) < 700, 'next to the readiness pill');
     assert.match(html, /data-zkapi-balance-expiry>[^<]*<\/span><button id="zkapi-modal-expiry-help-toggle"/);
-    // Its explanation is a help panel of the card, closed until asked for.
-    assert.match(html, /id="zkapi-modal-version-help" data-zkapi-help-content="version" hidden/);
-    assert.match(html, /Your balance is on version 1\./);
-    // The surface is the dialog's and the toggle's state is the owner's.
+    // No help panel: the pill is the whole explanation.
+    assert.doesNotMatch(html, /id="zkapi-modal-version-help"|Your balance is on version 1\./);
     assert.match(html, /data-surface="dialog"/);
-    f.modal.privateBalanceHelpOpen = { version: true };
-    assert.match(f.modal.renderBalance(), /aria-expanded="true"/);
-    assert.match(f.modal.renderBalance(), /id="zkapi-modal-version-help" data-zkapi-help-content="version" >/);
 });
 
 test('the banner follows the balance card and precedes the expired notice, as static text', t => {
@@ -1149,13 +1144,13 @@ test('the real notice helpers mount where the dialog puts them, and their patch 
     const f = fixture(t, { note: aNote(5), facade });
     const html = f.modal.renderBalance();
     assert.match(html, /data-zkapi-version-badge-group data-zkapi-version-surface="dialog"/);
-    assert.match(html, /id="zkapi-modal-version-help-toggle"/);
-    assert.match(html, /id="zkapi-modal-version-help" data-zkapi-help-content="version" hidden/);
-    assert.match(html, /data-zkapi-version-banner="dialog"/);
-    assert.match(html, /data-zkapi-version-action="upgrade"/);
+    // The `?` is a tooltip: no toggle, and no help panel beneath it.
+    assert.match(html, /aria-label="The zkAPI protocol version this balance uses"/);
+    assert.doesNotMatch(html, /zkapi-modal-version-help/);
+    assert.doesNotMatch(html, /data-zkapi-version-banner="dialog"/);
+    assert.match(html, /A new version is available\./);
     assert.match(html, /data-zkapi-balance-expiry>[^<]*<\/span><button id="zkapi-modal-expiry-help-toggle"/);
     const card = html.indexOf('zkapi-balance-foot');
-    assert.ok(card < html.indexOf('data-zkapi-version-banner="dialog"'));
     assert.ok(html.indexOf('data-zkapi-version-badge-group') < card);
     // Their patch, given a root holding exactly this markup, sees nothing to redo.
     const root = rootFrom(html);
@@ -1177,7 +1172,7 @@ function rootFrom(html) {
     }));
     const banners = banner ? [{ dataset: { zkapiVersionBanner: banner[1], zkapiVersionSig: sig ? sig[1].replaceAll('&amp;', '&') : '' },
         querySelectorAll: selector => (selector === '[data-zkapi-version-notice]' ? notices : []), querySelector: () => null }] : [];
-    return { querySelectorAll: selector => (selector === '[data-zkapi-version-badge]' ? badge : selector === '[data-zkapi-version-banner]' ? banners : []) };
+    return { querySelectorAll: selector => (selector === '[data-zkapi-version-badge]' ? badge : selector === '[data-zkapi-version-banner]' ? banners : selector === '[data-zkapi-version-available]' && html.includes('data-zkapi-version-available') ? [{}] : []) };
 }
 
 test('a facade-attached dialog closes a lone exit-only version’s deposits with the real helpers too', t => {
@@ -1719,7 +1714,7 @@ test('a set-aside note keeps its deadline in the dialog, where the closed view c
     const html = f.modal.renderBalance();
     assert.match(html, /data-zkapi-deposits-closed/);
     assert.match(html, /data-zkapi-version-banner="dialog"/);
-    assert.match(textOf(html), /3 days left to upgrade\. Withdraw by/);
+    assert.match(textOf(html), /A saved balance is nearing expiry\. Open Payment history/);
     // Another version's withdrawal is what the closed view says in full.
     const other = derive({
         active: V2,
@@ -1763,7 +1758,7 @@ test('the clock never renders the dialog over a banner its view left out on purp
     const f = fixture(t, { note: aNote(30), view: 'upgrade', facade });
     f.modal.render();
     assert.equal(hooks(f.modal.overlay.html).banner, false);
-    assert.equal(f.modal.versionBannerSuppressed, true);
+    assert.equal(f.modal.versionBannerSuppressed, false);
     // The DOM the render made, as the helper's patch sees it: a pill, no banner.
     const { overlay } = f.modal;
     const pill = { textContent: 'Version 2', dataset: { zkapiVersionTone: 'muted' }, classList: { toggle() {} } };
@@ -2321,46 +2316,7 @@ test('an open welcome is not redrawn under an amount being typed or a password',
     assert.equal(renders, 2);
 });
 
-test('the deposit step’s notice can be dismissed for good, on the panel, the dialog and the fallback', async t => {
-    const { resetVersionNoticeDismissals } = await import('../../chat/zkapi/components/VersionNotices.js');
-    resetVersionNoticeDismissals();
-    t.after(resetVersionNoticeDismissals);
-    const intent = { v: 1, network: 'mainnet', from: 'v1', to: 'v2', stage: 'withdrawn', since: NOW_MS - 1000 };
-    const deposit = derive({ active: V2, selection: selectionFor(V2, { reason: 'no_runtime_note', slotOwner: null, slotKind: 'empty' }), intent });
-    assert.equal(deposit.upgrade.stage, 'deposit');
-    const facade = withRealHelpers(facadeFor(deposit, { selection: selectionFor(V2), active: V2 }));
-    const f = fixture(t, { facade });
-    f.modal.render = () => {};
-    // On the fund view the notice carries both buttons.
-    const html = f.modal.renderBalance();
-    assert.match(html, /data-zkapi-version-notice="deposit"/);
-    assert.match(html, /data-zkapi-version-action="upgrade">Continue upgrade</);
-    assert.match(html, /data-zkapi-version-action="dismiss">Dismiss</);
-    // The click: the upgrade is forgotten, and the notice goes with it.
-    const context = { surface: 'dialog', notify() {}, refresh() {}, dispatch() {} };
-    await f.modal.runVersionAction('dismiss', { ...context, noticeId: 'deposit' });
-    assert.deepEqual(facade.calls.filter(call => call === 'abandon'), ['abandon']);
-    assert.doesNotMatch(f.modal.renderBalance(), /data-zkapi-version-notice="deposit"/);
-    // The "done" notice is only this page's: nothing is forgotten for it.
-    await f.modal.runVersionAction('dismiss', { ...context, noticeId: 'done' });
-    assert.equal(facade.calls.filter(call => call === 'abandon').length, 1);
 
-    // A dialog whose helpers have no handler of their own: the same two things.
-    const dismissed = [];
-    const bare = facadeFor(deposit, { selection: selectionFor(V2), active: V2,
-        ui: { ...helpers().ui, dismiss: id => dismissed.push(id) } });
-    zkapiClient.oaVersioning = bare;
-    await f.modal.runVersionAction('dismiss', { ...context, noticeId: 'deposit' });
-    assert.deepEqual(bare.calls.filter(call => call === 'abandon'), ['abandon']);
-    assert.deepEqual(dismissed, ['deposit']);
-    // The reminder dismissal keeps working with no notice id.
-    const soon = facadeFor(holder(6), { ui: { ...helpers().ui, dismiss: id => dismissed.push(id) } });
-    zkapiClient.oaVersioning = soon;
-    await f.modal.runVersionAction('dismiss', context);
-    assert.deepEqual(soon.calls.filter(call => Array.isArray(call)), [['ack', 3]]);
-    assert.equal(soon.calls.includes('abandon'), false);
-    assert.deepEqual(dismissed, ['deposit'], 'no id, nothing to dismiss');
-});
 
 test('operator notices that relaxed the gate are told on the dialog, escaped and bounded', t => {
     const text = `Escape 7 waits on <img src=x onerror=alert(1)> & "quotes" ${'long '.repeat(80)}`;
@@ -2611,34 +2567,7 @@ const bodyOf = html => {
 
 // -- The balance card ---------------------------------------------------------
 
-test('the exit kit row sits under the card and the banner, and its button is the helpers’ own', async t => {
-    zkapiClient.exportExitKit = async () => '{"kit":true}';
-    t.after(() => { delete zkapiClient.exportExitKit; });
-    const page = shapesPage(t, 'kit_never_exported');
-    const html = page.modal.renderBalance();
-    const positions = ['zkapi-balance-foot', 'data-zkapi-version-banner="dialog"', 'data-zkapi-balance-extras',
-        'data-private-balance-expired-notice'].map(marker => html.indexOf(marker));
-    assert.ok(positions.every(position => position >= 0), `all four are drawn: ${positions}`);
-    assert.deepEqual([...positions].sort((left, right) => left - right), positions, 'card, banner, extras, expiry notice');
-    assert.match(html, /data-zkapi-kit-row data-kit-state="never"/);
-    // Wired by the dialog's own delegation (outside the banner), once.
-    const root = bodyOf(html);
-    const row = root.querySelector('[data-zkapi-balance-extras] [data-zkapi-version-action="export-exit-kit"]');
-    assert.ok(row);
-    assert.equal(row.closest('[data-zkapi-version-banner]'), null, 'outside the banner');
-    // A click is one call of the helper's action, which opens the dialog of the
-    // exit kit with the facade's export.
-    const opened = [];
-    const dialogs = [];
-    const result = await page.modal.runVersionAction('export-exit-kit', {
-        surface: 'dialog', notify() {}, refresh() {}, dispatch() {},
-        openExitKit: options => { dialogs.push(options); opened.push('opened'); return { result: Promise.resolve({ saved: true }) }; }
-    });
-    assert.deepEqual(opened, ['opened']);
-    assert.equal(typeof dialogs[0].exportKit, 'function');
-    assert.equal(await dialogs[0].exportKit('ABCDE-ABCDE-ABCDE-ABCDE'), '{"kit":true}');
-    assert.equal(result, undefined, 'the dialog does not need an answer');
-});
+
 
 test('a balance that has been claimed, or a page with no helpers, has no exit kit row', t => {
     zkapiClient.exportExitKit = async () => '{}';
@@ -3948,7 +3877,8 @@ test('choosing to pay from the withdrawal asks once, for this balance and this w
     assert.equal(page.quotes[0].options.bundlerUrl, SPONSORED_ROUTE);
     const html = page.modal.renderWithdrawal();
     const words = textOf(html);
-    assert.match(words, /You’ll receive at least/);
+    assert.match(words, /You’ll receive about/);
+    assert.match(words, /Estimates may change before signing/);
     assert.match(words, /goes through this app to the service’s relay/);
     // Another way of leaving is another quote: the old one is not drawn for it.
     page.modal.withdrawMode = 'escape';
@@ -3972,7 +3902,7 @@ test('a refused quote is explained in plain words, keeps the wallet, and can be 
     assert.equal(started.withdrawals.length, 0);
 });
 
-test('a withdrawal that was chosen to pay its own fee starts with exactly the options and bounds that were shown', async t => {
+test('a payout-paid withdrawal uses deployment bounds rather than freezing its fee estimate', async t => {
     const page = sponsoredPage(t);
     t.mock.method(zkapiClient, 'connectWallet', async () => `0x${'c'.repeat(40)}`);
     const started = startable(t, page);
@@ -3983,12 +3913,14 @@ test('a withdrawal that was chosen to pay its own fee starts with exactly the op
     await page.modal.submitWithdrawal();
     assert.equal(started.withdrawals.length, 1);
     assert.deepEqual(started.withdrawals[0].options, {
-        fees: 'payout', bundlerUrl: SPONSORED_ROUTE, feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei, allowExpensiveGas: false
+        fees: 'payout', bundlerUrl: SPONSORED_ROUTE, feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
+        maxCostWei: SPONSORED_VECTORS.policy.max_sponsored_cost,
+        maxTotalFeeWei: String(BigInt(SPONSORED_VECTORS.policy.max_sponsored_cost) + BigInt(SPONSORED_VECTORS.policy.flat_fee_wei)), allowExpensiveGas: false
     });
-    // The signer is told what was shown, with headroom for fees that moved.
+    // The signer still enforces the deployment's network fee limit.
     assert.deepEqual(started.runs[0].details.sponsored, {
         feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
-        maxCostWei: ((BigInt(READY_QUOTE.maxCost) * 3n) / 2n).toString()
+        maxCostWei: SPONSORED_VECTORS.policy.max_sponsored_cost
     });
     // The choice is spent by the attempt: the next withdrawal starts from the wallet.
     assert.equal(page.modal.sponsoredChoice, 'wallet');
@@ -4024,7 +3956,11 @@ test('a plan the SDK already bound to a holding address continues the way it sta
     drawWithdraw(page);
     await page.modal.submitWithdrawal();
     assert.equal(started.withdrawals.length, 1);
-    assert.deepEqual(started.withdrawals[0].options, { fees: 'payout', bundlerUrl: SPONSORED_ROUTE });
+    assert.deepEqual(started.withdrawals[0].options, { fees: 'payout', bundlerUrl: SPONSORED_ROUTE,
+        feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
+        maxCostWei: SPONSORED_VECTORS.policy.max_sponsored_cost,
+        maxTotalFeeWei: String(BigInt(SPONSORED_VECTORS.policy.max_sponsored_cost) + BigInt(SPONSORED_VECTORS.policy.flat_fee_wei)),
+        allowExpensiveGas: false });
 });
 
 test('a sponsored withdrawal\'s row names the person\'s address, not its holding address, and its buttons start the right work', async t => {

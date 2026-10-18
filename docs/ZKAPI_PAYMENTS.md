@@ -736,8 +736,8 @@ goes live. In short, and in full in
 - a payout the vault only credited is "held" and claimed from Payment history;
   a payout below the disclosed bound is a standing alert;
 - a balance another device used is explained, not withdrawn;
-- an exit kit is created with a generated passphrase through a two-step
-  dialog, and never stored, logged or copied to a clipboard;
+- exit-kit export and prompts are removed from the browser UI; existing wallet
+  journals and SDK recovery metadata remain unchanged;
 - before a withdrawal starts the displayed balance and prepared withdrawal are
   re-verified under the wallet lock (the SDK half is a recovery patch);
 - the payment history of the other versions is read from the shared wallet

@@ -60,7 +60,7 @@ function rejects(registry, code, pattern = null, overrides = {}) {
 // The shipped registry
 // ---------------------------------------------------------------------------
 
-test('the shipped registry validates against the reviewed profiles: v2 is active on Sepolia, dormant on mainnet', () => {
+test('the shipped registry validates: v3 active and older versions exit-only on Sepolia; mainnet unchanged', () => {
     const registry = JSON.parse(readText('deployments/zkapi/registry.json'));
     const profiles = {
         'mainnet.json': JSON.parse(readText('deployments/zkapi/mainnet.json')),
@@ -75,9 +75,9 @@ test('the shipped registry validates against the reviewed profiles: v2 is active
         const table = resolveRuntimeTable(registry, network, { profiles, sha256: sha256Hex });
         const activated = network === 'sepolia';
         // Mainnet: v2 is pending and not in the table, so no probe, facade or UI follows from it.
-        assert.deepEqual(liveVersions(registry, network).map(row => row.id), activated ? ['v1', 'v2'] : ['v1']);
-        assert.deepEqual(table.map(version => version.id), activated ? ['v1', 'v2'] : ['v1']);
-        assert.equal(depositTarget(registry, network).id, activated ? 'v2' : 'v1');
+        assert.deepEqual(liveVersions(registry, network).map(row => row.id), activated ? ['v1', 'v2', 'v3'] : ['v1']);
+        assert.deepEqual(table.map(version => version.id), activated ? ['v1', 'v2', 'v3'] : ['v1']);
+        assert.equal(depositTarget(registry, network).id, activated ? 'v3' : 'v1');
         const [v1] = table;
         assert.equal(v1.deploymentId, profile.trusted_deployment.deployment_id);
         assert.equal(v1.chainId, profile.trusted_deployment.chain_id);
@@ -92,8 +92,14 @@ test('the shipped registry validates against the reviewed profiles: v2 is active
         assert.equal(walletDatabaseName(registry, network), `zkapi-browser-wallet-fresh-20260930-${network}-v1`);
         if (activated) {
             const v2 = table[1];
-            assert.equal(v2.status, 'active');
-            assert.equal(v2.depositsOpen, true);
+            assert.equal(v2.status, 'exit-only');
+            assert.equal(v2.depositsOpen, false);
+            const v3 = table[2];
+            assert.equal(v3.status, 'active');
+            assert.equal(v3.depositsOpen, true);
+            assert.equal(v3.vault, '0x7ff4ba0662a8218d0954c1a11ae61df6c3548ea4');
+            assert.equal(v3.proxyPath, '/zkapi-deployment-v3/');
+            assert.equal(v3.assetBase, 'zkapi/v3/');
             assert.equal(v2.proxyPath, '/zkapi-deployment-v2c/');
             assert.equal(v2.assetBase, 'zkapi/v2c/');
         }
@@ -102,7 +108,9 @@ test('the shipped registry validates against the reviewed profiles: v2 is active
     assert.equal(v1.networks.mainnet.activatedAt, '2026-09-30T00:00:00Z');
     assert.equal(v1.networks.sepolia.activatedAt, '2026-09-30T00:00:00Z');
     assert.equal(v1.networks.sepolia.status, 'exit-only');
-    assert.equal(v2.networks.sepolia.status, 'active');
+    assert.equal(v2.networks.sepolia.status, 'exit-only');
+    assert.equal(registry.versions[2].networks.sepolia.status, 'active');
+    assert.equal(registry.versions[2].networks.mainnet.status, 'pending');
     assert.equal(v2.networks.mainnet.status, 'pending');
     assert.deepEqual(v2.networks.mainnet.config, { deployment_status: 'not_deployed' });
     assert.equal(v2.sdk.alias, 'zkapi-sdk-v2c');
@@ -712,7 +720,7 @@ test('activation gate: protocol wiring must be implemented before a row is live'
     validate(activatedRegistry(), { wired: ALL_WIRED });
     // The default is the checked-in WIRED set, which is every name the family
     // requires: with no override the gate is the production one, and open.
-    assert.deepEqual([...WIRED].sort(), [...ALL_WIRED].sort());
+    assert.ok([...ALL_WIRED].every(name => WIRED.has(name)));
     assert.equal(validateRegistry(activatedRegistry(), validationOptions({ wired: undefined })).versions[1].id, 'v2');
     // A set that is not a Set of names holds nothing.
     rejects(activatedRegistry(), 'gate_wiring', /not implemented/, { wired: null });
@@ -1192,8 +1200,8 @@ test('the runtime table excludes pending rows, orders live rows by ordinal and e
         [['v2', 'exit-only'], ['v3', 'active'], ['v1', 'retired']]);
     const [, , tombstone] = table;
     assert.deepEqual({ ...tombstone, transition: undefined }, {
-        id: 'v1', ordinal: 1, label: 'Version 1', adapter: 'note-bound-v1', circuitId: 'zkapi-v2-note-bound-v1',
-        vaultRevision: 1, status: 'retired', depositsOpen: false, depositsClosedSince: Date.UTC(2026, 10, 1),
+        id: 'v1', ordinal: 1, label: 'Version 1', protocolVersion: '0.1', adapter: 'note-bound-v1',
+        circuitId: 'zkapi-v2-note-bound-v1', vaultRevision: 1, status: 'retired', depositsOpen: false, depositsClosedSince: Date.UTC(2026, 10, 1),
         admissionClosesAt: null, deploymentId: 'zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930', chainId: 1,
         vault: '0x4386fdbda35d995beb3bf8625118ec5982ec81fe', rpcUrl: null, configSha256: null, assetBase: null,
         proxyPath: null, transition: undefined, notices: []
@@ -1359,7 +1367,7 @@ test('an unknown adapter or a row that disagrees with its adapter is refused', (
     assert.throws(() => getAdapter('future-family'), error => error.code === 'unknown_adapter');
     assert.throws(() => getAdapter('toString'), error => error.code === 'unknown_adapter');
     assert.throws(() => getAdapter(undefined), error => error.code === 'unknown_adapter');
-    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1']);
+    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1', 'concession-v2']);
 });
 
 test('the transition policy is data and is bounded', () => {
@@ -1427,7 +1435,7 @@ test('the give-up policy keys are optional row data, bounded by the family\'s sm
 // ---------------------------------------------------------------------------
 
 test('WIRED lists exactly the adapter\'s requiredWiring and cannot be changed through its API', () => {
-    const required = getAdapter('concession-v1').requiredWiring;
+    const required = [...new Set(ADAPTER_IDS.flatMap(id => getAdapter(id).requiredWiring))];
     assert.equal(WIRED.size, required.length);
     assert.deepEqual([...WIRED].sort(), [...required].sort());
     for (const name of required) assert.equal(WIRED.has(name), true, name);
@@ -1449,6 +1457,7 @@ test('the registry model, wiring and adapters are pure: no Node built-ins, SDK, 
         'chat/zkapi/versioning/adapters/index.mjs',
         'chat/zkapi/versioning/adapters/noteBoundV1.mjs',
         'chat/zkapi/versioning/adapters/concessionV1.mjs',
+        'chat/zkapi/versioning/adapters/concessionV2.mjs',
         'chat/zkapi/services/tokenAmount.mjs'
     ];
     // Comments may mention anything; only code is checked.

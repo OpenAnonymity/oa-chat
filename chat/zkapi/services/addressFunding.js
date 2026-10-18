@@ -76,7 +76,7 @@ function sponsoredBounds(given) {
 
 export function withdrawalDestination(owner, recordId = null) {
     const record = recordId ? zkapiClient.withdrawals.find(entry => entry.recordId === recordId) : null;
-    const saved = record?.destination || zkapiClient.config?.prepared_withdrawal?.destination
+    const saved = sponsoredPayee(record) || record?.destination || zkapiClient.config?.prepared_withdrawal?.destination
         || zkapiClient.withdrawal?.destination;
     // A saved destination was fixed when its withdrawal was prepared and cannot
     // be edited. It must stay completable, so only typed input meets the

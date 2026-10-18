@@ -207,7 +207,7 @@ export function validRegistry() {
         walletDatabaseVersion: 3,
         versions: [
             {
-                id: 'v1', ordinal: 1, label: 'Version 1', adapter: 'note-bound-v1',
+                id: 'v1', ordinal: 1, label: 'Version 1', protocolVersion: '0.1', adapter: 'note-bound-v1',
                 circuitId: 'zkapi-v2-note-bound-v1', vaultRevision: 1,
                 sdk: {
                     alias: '@openanonymity/zkapi-browser-sdk',
@@ -229,7 +229,7 @@ export function validRegistry() {
                 }
             },
             {
-                id: 'v2', ordinal: 2, label: 'Version 2', adapter: 'concession-v1',
+                id: 'v2', ordinal: 2, label: 'Version 2', protocolVersion: '0.2', adapter: 'concession-v1',
                 circuitId: 'zkapi-v2-concession-v1', vaultRevision: 3,
                 sdk: { alias: 'zkapi-sdk-v2c', source: null, revision: null, storeSha256: null, patches: [], honorsDepositsFlag: true },
                 publicPath: '/zkapi/v2c/', proxyPath: '/zkapi-deployment-v2c/',

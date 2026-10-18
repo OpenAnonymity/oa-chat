@@ -9,13 +9,13 @@
 // binds those to the page's facade; tests pass them directly.
 //
 // What is shown, and why it is shown that way:
-//   - the pill ("Version 1") only where a build has more than one live
-//     version (`state.show`). It is amber only inside the prompt window
+//   - one muted protocol-version pill in balance details, with a quiet
+//     availability line for an older balance
 //   - banners from the phase and the deposit gate, never from `state.show`:
 //     a lone exit-only version has no pill but a closed gate that must be
 //     explained
-//   - a day-0 balance gets a neutral note; the prominent button starts inside
-//     the prompt window. An empty balance gets no prompt (the state says so)
+//   - upgrade reminders are suppressed at every tier; ordinary expiry and
+//     recovery notices still explain actions the person can take
 //   - banners are static text: no live region, no focus theft, no layout
 //     shift. A clock tick only patches text (patchVersionNotices)
 //   - nothing signs, deposits, withdraws or reloads on its own: a button is
@@ -47,7 +47,6 @@
 //             the dialog it also stands in for this version's own "finish the
 //             previous withdrawal" notice, which would tell the same deadline
 //             a second time in the words of an upgrade
-//   kit       no exit kit was made, or one was made and not saved
 //   abandon   an empty or very small balance on a closed version can be given
 //             up; it replaces the upgrade prompt on the surfaces that carry it
 // plus "Check again" on the service notice. The ticket surface carries none of
@@ -70,8 +69,7 @@ import {
     versionCopy, versionCopyText
 } from '../versioning/copy.mjs';
 import { ABANDON_WORDS, openAbandonDialog } from './AbandonDialog.js';
-import { EXIT_KIT_WORDS, openExitKitDialog } from './ExitKitDialog.js';
-import { privateBalanceHelpButton, versionHelpDetail } from './PrivateBalanceHelp.js';
+import { versionHelpDetail } from './PrivateBalanceHelp.js';
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -87,7 +85,6 @@ const LABELS = Object.freeze({
     dismiss: 'Dismiss',
     withdraw: 'Withdraw',
     openPayments: 'Open Payment history',
-    createKit: 'Create exit kit',
     withdrawInstead: 'Withdraw instead'
 });
 
@@ -134,8 +131,7 @@ function surfaceOf(value) {
 const dismissed = new Set();
 
 /**
- * Hide a dismissible notice (`draft`, `done`, `deposit`, `payout`, and the
- * exit kit prompt) on every surface.
+ * Hide a dismissible notice on every surface for this page session.
  */
 export function dismissVersionNotice(id) {
     if (typeof id === 'string' && id) dismissed.add(id);
@@ -168,19 +164,29 @@ function isDismissed(id, options) {
 // The pill
 // ---------------------------------------------------------------------------
 
+function newerVersionAvailable(state) {
+    return state?.current?.status === 'exit-only' && Boolean(state.target?.id)
+        && state.target.id !== state.current.id;
+}
+
 function badgeModel(state) {
-    if (!isRecord(state) || state.show !== true || !isRecord(state.current)) return null;
+    if (!isRecord(state) || !isRecord(state.current)) return null;
+    // The pill names the zkAPI protocol version ("zkAPI v0.2"). A registry
+    // row without one falls back to its version label.
+    const protocol = typeof state.current.protocolVersion === 'string' ? state.current.protocolVersion.trim() : '';
+    if (protocol) {
+        const text = `zkAPI v${protocol}`;
+        return { label: escapeHtml(text), text, amber: false };
+    }
     const label = versionCopy('pill', { F: state.current.label || state.current.id });
     if (!label) return null;
-    // Amber only inside the prompt window: the colour says "act", not "old".
-    const amber = state.phase === 'upgrade-soon' || state.phase === 'upgrade-overdue';
-    return { label, text: versionCopyText('pill', { F: state.current.label || state.current.id }), amber };
+    return { label, text: versionCopyText('pill', { F: state.current.label || state.current.id }), amber: false };
 }
 
 /**
  * The version pill and its help toggle, for the panel header or the dialog's
- * balance card. '' when the build has one live version (`state.show` false),
- * so today's DOM is untouched.
+ * balance card. Balance details always name their protocol; other surfaces
+ * only distinguish versions when the build has more than one live version.
  *
  * The toggle is the shared help button (id `zkapi-{panel|modal}-version-help-toggle`,
  * `data-zkapi-help="version"`); its disclosure is `privateBalanceHelpContent(
@@ -191,6 +197,7 @@ function badgeModel(state) {
  * @param {{surface?: 'panel'|'dialog', helpOpen?: boolean}} [options]
  */
 export function renderVersionBadge(state, options = {}) {
+    if (options.surface !== 'dialog' && state?.show !== true) return '';
     const badge = badgeModel(state);
     if (!badge) return '';
     const surface = options.surface === 'dialog' ? 'dialog' : 'panel';
@@ -198,10 +205,12 @@ export function renderVersionBadge(state, options = {}) {
     // The dialog's pills (readiness, expiry) have their own frame; the panel's
     // are utility-styled at 9px.
     const classes = [surface === 'dialog' ? 'zkapi-version-pill zkapi-pill' : PILL_BASE, ...PILL_TONES[tone]].join(' ');
-    const toggle = privateBalanceHelpButton(surface === 'dialog' ? 'modal' : 'panel', 'version', options.helpOpen === true);
+    // The `?` is a tooltip, not a disclosure: nothing opens beneath it.
+    const toggle = '<span class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground" '
+        + 'role="img" tabindex="0" aria-label="The zkAPI protocol version this balance uses" title="The zkAPI protocol version this balance uses">?</span>';
     return `<span class="zkapi-version-badge-group" data-zkapi-version-badge-group data-zkapi-version-surface="${surface}">`
         + `<span class="${classes}" data-zkapi-version-badge data-zkapi-version-tone="${tone}">${badge.label}</span>`
-        + `${toggle}</span>`;
+        + `${toggle}${newerVersionAvailable(state) ? '<span class="zkapi-helper" data-zkapi-version-available>A new version is available.</span>' : ''}</span>`;
 }
 
 /**
@@ -268,17 +277,6 @@ function upgradeAction(state, kind, label) {
     return { action: 'upgrade', label, kind, disabled: false, hint: null };
 }
 
-// The close-by notice a set-aside note on THIS version uses (no upgrade
-// phase applies to it, but its deadline is the same one): the reminder tier's
-// text, or the neutral note when no tier has started.
-function deadlineKey(state) {
-    const tier = state.reminderTier;
-    if (typeof tier === 'number' && Number.isFinite(tier)) {
-        return upgradeBannerKey({ phase: 'upgrade-soon', reminderTier: tier });
-    }
-    return finite(state.closeByTs) !== null ? 'banner.available' : null;
-}
-
 function withdrawingNotice(state, tokens) {
     const stage = state.upgrade?.stage;
     if (stage !== 'withdrawing' && stage !== 'confirming') return null;
@@ -334,15 +332,11 @@ function previousNotice(state, tokens) {
     const previous = state.previous;
     const own = isRecord(previous) && previous.versionId === state.current?.id;
     if (own) {
-        // The holder is this very version: a note set aside here. The words
-        // are the deadline's, the controls are the withdrawal list's.
-        const key = deadlineKey(state);
-        if (!key) return null;
-        // Outside every reminder tier this is the neutral note, not an alert.
-        const neutral = key === 'banner.available';
-        return notice('previous', neutral ? 'info' : 'attention', [copyParagraph(key, tokens)], {
-            closeByTs: finite(state.closeByTs), tier: finite(state.reminderTier), neutral
-        });
+        // This deadline belongs to the saved balance, not to an upgrade.
+        const near = finite(state.reminderTier) !== null;
+        return notice('previous', near ? 'attention' : 'info', [plainParagraph(
+            'A saved balance is nearing expiry. Open Payment history to withdraw it.'
+        )], { neutral: !near, actions: [plainAction('open-payments', LABELS.openPayments)] });
     }
     const actions = [];
     if (isRecord(previous) && previous.canOpen === true && tokens.P) {
@@ -543,28 +537,6 @@ function setAsideNotice(state, tokens) {
     });
 }
 
-// The exit kit prompt: never created, or created and not saved. A kit that is
-// merely older than the latest chats is the balance card's quiet row. Nothing
-// is asked for a balance this browser can not exit, one about to be cleared,
-// or while the page must reload first.
-function kitNotice(state, tokens) {
-    const exit = state.exit;
-    if (!isRecord(exit) || !isRecord(exit.kit)) return null;
-    if (state.phase === 'reload-required' || state.abandon?.available === true || exit.deviceNotNewest === true) return null;
-    if (exit.kit.unsaved === true) {
-        return notice('kit', 'attention', [copyParagraph('kit.unsaved', tokens)], {
-            actions: [plainAction('export-exit-kit', LABELS.createKit)]
-        });
-    }
-    if (exit.kit.exported !== true) {
-        return notice('kit', 'info', [copyParagraph('kit.never', tokens)], {
-            actions: [plainAction('export-exit-kit', LABELS.createKit), dismissAction()],
-            dismissible: true
-        });
-    }
-    return null;
-}
-
 // An empty or very small balance on a version that no longer takes deposits.
 // The facade's verdict (`state.abandon`) decides; the amounts are not in the
 // state, so the words say "very small" and the dialog names the figure. An
@@ -751,7 +723,7 @@ export function buildVersionNotices(state, options = {}) {
     const facts = state.held?.unreachable === true ? [] : [
         nearNotice(state, tokens), waitNotice(state, tokens), frozenNotice(state, tokens),
         deviceNotice(state, tokens), payoutNotice(state, tokens), claimNotice(state, tokens),
-        setAsidePlaced ? null : setAside, abandonPlaced ? null : abandon, kitNotice(state, tokens)
+        setAsidePlaced ? null : setAside, abandonPlaced ? null : abandon
     ];
     facts.forEach(entry => { if (entry) list.push(entry); });
     // What the operator said about a withdrawal that is covered: the notice
@@ -779,11 +751,10 @@ export function buildVersionNotices(state, options = {}) {
         if (entry.dismissible && (isDismissed(entry.id, options) || isDismissed(entry.dismissKey, options))) return false;
         // A refused withdrawal's wait is told where the withdrawal is.
         if (DIALOG_ONLY_NOTICES.has(entry.id) && surface !== 'dialog') return false;
-        if (surface === 'ticket') {
-            if (!TICKET_NOTICES.has(entry.id)) return false;
-            // A neutral note is not worth a place in a different mode.
-            if (entry.neutral) return false;
-        }
+        // The day-0 "a newer version is available" note says nothing the
+        // person must act on: the pill alone tells which protocol they are on.
+        if (entry.neutral || entry.id === 'upgrade' || entry.id === 'deposit' || entry.id === 'done') return false;
+        if (surface === 'ticket' && !TICKET_NOTICES.has(entry.id)) return false;
         return true;
     });
     // The paragraph count is structure too: a patch writes text into the
@@ -809,7 +780,7 @@ function blockSignature(signature, extra) {
 
 // A short digest of the host markup (FNV-1a, 32 bits), recorded beside the
 // signature: a clock tick patches notice TEXT, but markup the host changed
-// (an exit kit status that moved on) is not text the patch knows, so a block
+// (an activation status that moved on) is not text the patch knows, so a block
 // whose markup differs from what is on the page is replaced as a whole. ''
 // for no markup, so a block without any carries no attribute.
 function extraDigest(extra) {
@@ -917,7 +888,13 @@ export function patchVersionNotices(root, state, options = {}) {
     const badges = elements(root, '[data-zkapi-version-badge]');
     const banners = elements(root, '[data-zkapi-version-banner]');
     const badge = badgeModel(state);
-    if (Boolean(badge) !== badges.length > 0) return { needsRender: true };
+    // A host that mounts no pill (the System Panel) passes `badge: false`.
+    const wantsBadge = options.badge !== false && Boolean(badge)
+        && (options.surface === 'dialog' || state?.show === true);
+    if (wantsBadge && Boolean(elements(root, '[data-zkapi-version-available]').length) !== newerVersionAvailable(state)) {
+        return { needsRender: true };
+    }
+    if (wantsBadge !== badges.length > 0) return { needsRender: true };
 
     const extra = typeof options.extra === 'string' ? options.extra : '';
     if (!banners.length) {
@@ -960,7 +937,7 @@ export function patchVersionNotices(root, state, options = {}) {
     }
 
     // Structure matches: patch.
-    if (badge) {
+    if (badge && badges[0]) {
         const element = badges[0];
         const tone = badge.amber ? 'amber' : 'muted';
         setIfChanged(element, badge.text);
@@ -1043,10 +1020,6 @@ function switchFailure(result) {
  *   open-withdraw  open the dialog's Withdraw view
  *   open-payments  open the dialog's Payment history
  *                  (both are the `zkapi-payment-required` event)
- *   export-exit-kit  the exit kit dialog (ExitKitDialog.js), through
- *                  `facade.exportExitKit`; afterwards the facade is told
- *                  whether the file's download was started
- *                  (`facade.noteKitSaved`)
  *   abandon-open   the give-up dialog (AbandonDialog.js), through
  *                  `facade.abandonPreview` and `facade.giveUpBalance`
  *
@@ -1054,9 +1027,9 @@ function switchFailure(result) {
  * @param {{facade?: object, state?: object|null, surface?: string, noticeId?: string,
  *   dispatch?: Function, reload?: Function, notify?: (text: string) => void,
  *   refresh?: () => void, withdrawalConfirmed?: boolean, doc?: Document,
- *   openExitKit?: Function, openAbandon?: Function}} [context]
+ *   openAbandon?: Function}} [context]
  *   `withdrawalConfirmed` overrides what `facade.ui.facts()` (and, without
- *   it, `facade.flags()`) says. `doc`, `openExitKit` and `openAbandon` are
+ *   it, `facade.flags()`) says. `doc` and `openAbandon` are
  *   for tests: the document the dialogs are placed in and their openers
  * @returns {Promise<{ok: boolean, why?: string}>}
  */
@@ -1198,38 +1171,6 @@ export async function handleVersionAction(action, context = {}) {
             case 'open-payments':
                 dispatch('zkapi-payment-required', { view: 'withdrawals' });
                 return { ok: true };
-            case 'export-exit-kit': {
-                if (!facade || typeof facade.exportExitKit !== 'function') {
-                    notify(EXIT_KIT_WORDS.unavailable);
-                    return { ok: false, why: 'unavailable' };
-                }
-                const opener = typeof context.openExitKit === 'function' ? context.openExitKit : openExitKitDialog;
-                // Dialogs are numbered as they open: a dialog that was closed
-                // mid-export reports only after the SDK answers, which can be
-                // after a newer one saved a kit.
-                kitDialogsOpened += 1;
-                const opened = kitDialogsOpened;
-                const dialog = opener({ exportKit: passphrase => facade.exportExitKit(passphrase), doc: context.doc });
-                const outcome = await dialog.result;
-                const saved = isRecord(outcome) && outcome.saved === true;
-                if (saved) kitSavedBy = Math.max(kitSavedBy, opened);
-                // A kit the SDK made and the person did not save is said on
-                // the notice until one is: the SDK counts it as exported the
-                // moment it exists, so the host remembers the rest. Only a
-                // dialog that says nothing was made (`created: false`, the
-                // person cancelled first) leaves the notice as it was. A late
-                // "not saved" from an older dialog never overrides a newer
-                // dialog's saved kit.
-                const created = isRecord(outcome) && outcome.created !== false;
-                const supersededBySaved = !saved && kitSavedBy > opened;
-                if ((saved || created) && !supersededBySaved && typeof facade.noteKitSaved === 'function') {
-                    try {
-                        facade.noteKitSaved(saved);
-                    } catch { /* the notice just keeps its last words */ }
-                }
-                refresh();
-                return saved ? { ok: true } : { ok: false, why: 'not_saved' };
-            }
             case 'abandon-open': {
                 let preview = null;
                 try {
@@ -1264,11 +1205,6 @@ export async function handleVersionAction(action, context = {}) {
         return { ok: false, why: 'failed' };
     }
 }
-
-// How many exit kit dialogs this page has opened, and the newest one that
-// started a download. Memory only.
-let kitDialogsOpened = 0;
-let kitSavedBy = 0;
 
 const bound = new WeakSet();
 

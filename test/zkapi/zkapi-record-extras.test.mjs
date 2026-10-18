@@ -384,7 +384,7 @@ test('wiring:device-not-newest a balance used on another device loses its button
 
     const text = words(extras.noteHtml);
     assert.equal(text, versionCopyText('exit.device'));
-    assert.match(text, /Withdraw it from the device that used it last, or use your newest exit kit with the zkAPI companion tool\./);
+    assert.match(text, /Withdraw it from the device that used it last\./);
     assert.match(text, /Trying here would cost network fees and be rejected\./);
     // No in-app restore is promised, and no button invites one.
     assert.doesNotMatch(text, /\brestore\b|\bimport\b|\bupload\b|use this balance|finish withdrawal/i);

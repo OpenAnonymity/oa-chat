@@ -9,6 +9,10 @@ import proofCachePatch from '../patches/zkapi-browser-sdk-proof-cache.mjs';
 import providerVerificationPatch from '../patches/zkapi-browser-sdk-provider-verification.mjs';
 import patchV2c from '../patches/zkapi-browser-sdk-v2c-recovery.mjs';
 import providerVerificationV2c from '../patches/zkapi-browser-sdk-v2c-provider-verification.mjs';
+import patchV3 from '../patches/zkapi-browser-sdk-v3-recovery.mjs';
+import providerVerificationV3 from '../patches/zkapi-browser-sdk-v3-provider-verification.mjs';
+import patchV3Gasless from '../patches/zkapi-browser-sdk-v3-gasless-recovery.mjs';
+import providerVerificationV3Gasless from '../patches/zkapi-browser-sdk-v3-gasless-provider-verification.mjs';
 import registry from '../deployments/zkapi/registry.json' with { type: 'json' };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,7 +36,11 @@ const SDK_PATCHES = Object.freeze({
     [PROOF_CACHE_PATCH]: proofCachePatch,
     [PROVIDER_VERIFICATION_PATCH]: providerVerificationPatch,
     [V2C_PATCH]: patchV2c,
-    [providerVerificationV2c.name]: providerVerificationV2c
+    [providerVerificationV2c.name]: providerVerificationV2c,
+    'wallet-recovery-v3': patchV3,
+    [providerVerificationV3.name]: providerVerificationV3,
+    'wallet-recovery-v3-gasless': patchV3Gasless,
+    [providerVerificationV3Gasless.name]: providerVerificationV3Gasless
 });
 
 // The patches of the legacy SDK, in the order their file chains apply.
@@ -59,7 +67,9 @@ export const zkapiSdkPatches = Object.freeze(LEGACY_PATCH_NAMES.map(name => SDK_
 // every key is a registered patch and every value an adapter wiring name).
 export const PATCH_COVERAGE = Object.freeze({
     [LEGACY_PATCH]: Object.freeze(['withdrawal-operation-recheck']),
-    [V2C_PATCH]: Object.freeze(['withdrawal-operation-recheck'])
+    [V2C_PATCH]: Object.freeze(['withdrawal-operation-recheck']),
+    'wallet-recovery-v3': Object.freeze(['withdrawal-operation-recheck']),
+    'wallet-recovery-v3-gasless': Object.freeze(['withdrawal-operation-recheck'])
 });
 
 export function zkapiSdkPatchProvenance(name = LEGACY_PATCH) {

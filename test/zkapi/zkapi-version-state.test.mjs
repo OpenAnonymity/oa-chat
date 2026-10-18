@@ -102,7 +102,7 @@ test('the state has exactly the documented shape', () => {
     assert.equal(state.abandon, null);
     assert.deepEqual(state.payouts, { credited: 0, alerts: 0 });
     assert.deepEqual(state.setAside, { near: 0, earliestMustInitiateByMs: null, device: 0 });
-    assert.deepEqual(state.current, { id: 'v1', label: 'Version 1', status: 'exit-only' });
+    assert.deepEqual(state.current, { id: 'v1', label: 'Version 1', protocolVersion: '0.1', status: 'exit-only' });
     assert.deepEqual(state.target, { id: 'v2', label: 'Version 2' });
     assert.deepEqual(Object.keys(state.gate).sort(), ['canResume', 'canStart', 'code', 'successor']);
     assert.deepEqual(Object.keys(state.upgrade).sort(), ['available', 'blockedBy', 'canStart', 'stage']);

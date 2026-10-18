@@ -14,7 +14,7 @@ import {
     restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState
 } from './PrivateBalanceHelp.js';
 import { attachVersionNotices } from './VersionNotices.js';
-import { copyTokens, upgradeBannerKey, versionCopyText } from '../versioning/copy.mjs';
+import { versionCopyText } from '../versioning/copy.mjs';
 import { isUnclaimedPayoutCredit } from '../versioning/walletHoldings.mjs';
 
 // The facade's own timer announces every boundary (tier, window, close-by,
@@ -24,8 +24,6 @@ import { isUnclaimedPayoutCredit } from '../versioning/walletHoldings.mjs';
 // settle never turns into a render per tick.
 const VERSION_PATCH_INTERVAL_MS = 5000;
 const VERSION_REMOUNT_INTERVAL_MS = 30000;
-// A one-time reminder toast stays up long enough to read and act on.
-const VERSION_REMINDER_TOAST_MS = 12000;
 
 /**
  * OA's System Panel with its ticket purchase/redemption section replaced by
@@ -141,16 +139,10 @@ export default class RightPanel extends SharedRightPanel {
         const view = this.versionView(now);
         if (!view) return none;
         const { state, ui } = view;
-        const helpOpen = Boolean(this.privateBalanceHelpOpen?.version);
         try {
-            const badge = ui.badge?.(state, { surface: 'panel', helpOpen }) || '';
-            return {
-                badge,
-                help: badge
-                    ? privateBalanceHelpContent('panel', 'version', helpOpen, ui.help?.('version', state))
-                    : '',
-                banner: ui.banner?.(state, { surface: 'panel', now }) || ''
-            };
+            // The version pill lives in balance details only; the panel keeps
+            // the banner for notices that need action.
+            return { badge: '', help: '', banner: ui.banner?.(state, { surface: 'panel', now }) || '' };
         } catch {
             // Presentation only: the balance renders without version notices.
             return none;
@@ -191,7 +183,7 @@ export default class RightPanel extends SharedRightPanel {
         if (!view || typeof view.ui.patch !== 'function') return;
         let result;
         try {
-            result = view.ui.patch(root, view.state, { now, surface: this.versionSurface() });
+            result = view.ui.patch(root, view.state, { now, surface: this.versionSurface(), badge: false });
         } catch {
             return;
         }
@@ -201,32 +193,9 @@ export default class RightPanel extends SharedRightPanel {
         this.refreshVersionNotices();
     }
 
-    /**
-     * One toast per reminder tier, in zkAPI mode only (ticket mode suppresses
-     * zkAPI toasts; the banner is there either way). The tier last shown is
-     * a per-viewer convenience kept by the facade; this panel also remembers
-     * it for its own lifetime, so storage that refuses writes (quota,
-     * restricted mode) cannot turn every state change into another toast.
-     * A lower tier is more urgent, so "already shown" is the lowest of both.
-     */
-    remindVersionDeadline() {
-        const facade = this.versionFacade();
-        if (!facade || this.app?.integration?.getMode?.() === 'tickets') return;
-        try {
-            const state = facade.state();
-            if (!state || !['upgrade-soon', 'upgrade-overdue'].includes(state.phase)) return;
-            const tier = state.reminderTier;
-            if (!Number.isFinite(tier) || tier < 0) return;
-            const shown = [facade.lastReminderTier?.(), this.versionReminderTier].filter(Number.isFinite);
-            if (shown.length && tier >= Math.min(...shown)) return;
-            const key = upgradeBannerKey(state);
-            const text = key ? versionCopyText(key, copyTokens(state, { table: facade.table })) : '';
-            if (!text || typeof this.app?.showToast !== 'function') return;
-            this.versionReminderTier = tier;
-            facade.acknowledgeReminder?.(tier);
-            this.app.showToast(text, 'info', VERSION_REMINDER_TOAST_MS);
-        } catch { /* a reminder is a convenience */ }
-    }
+    // Version availability belongs in balance details. The ordinary balance
+    // expiry UI retains its existing deadlines without upgrade reminders.
+    remindVersionDeadline() {}
 
     onRuntimePresentationChange() {
         const transition = this.app.integration?.getTransition?.();

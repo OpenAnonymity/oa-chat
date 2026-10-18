@@ -257,8 +257,8 @@ const TEMPLATES = Object.freeze({
         + '{!until}This balance is frozen while a withdrawal of it has started and not finished. New chats '
         + 'resume when it finishes or can no longer go through.{/until} You can still withdraw.',
     'exit.device': 'This balance was used on another device or copy after this browser last saved it, so this '
-        + 'browser can’t safely withdraw it. Withdraw it from the device that used it last, or use your newest '
-        + 'exit kit with the zkAPI companion tool. Trying here would cost network fees and be rejected.',
+        + 'browser can’t safely withdraw it. Withdraw it from the device that used it last. '
+        + 'Trying here would cost network fees and be rejected.',
     'exit.device.label': 'Used on another device',
     'exit.rpc': 'Keep a current exit kit so you can leave even if the service is unavailable.',
 

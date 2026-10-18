@@ -22,10 +22,6 @@ const isRecord = value => value !== null && typeof value === 'object' && !Array.
 const WEI_PER_UNIT = 1_000_000_000n; // the ledger counts gwei
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[0-9]{1,78}$/;
-// How far above the quoted reservation a withdrawal may run before the signer
-// refuses it as "more than was shown": fees move between a quote and a send.
-const HEADROOM_NUMERATOR = 3n;
-const HEADROOM_DENOMINATOR = 2n;
 
 /**
  * Why a sponsored withdrawal is not offered, in the product's words. Every
@@ -33,6 +29,7 @@ const HEADROOM_DENOMINATOR = 2n;
  * object, and each ends where the person can go on: paying from the wallet.
  */
 export const SPONSORED_REASON_COPY = Object.freeze({
+    gasless_cost_above_cap: 'Network fees changed above the amount you approved. Check the fee again before continuing.',
     gasless_unavailable: 'Paying the network fee from this withdrawal isn’t available for this balance.',
     not_pinned: 'Paying the network fee from this withdrawal isn’t offered for this balance.',
     gasless_profile_invalid: 'Paying the network fee from this withdrawal isn’t available right now.',
@@ -83,6 +80,7 @@ const KEEP_WALLET = ' You can pay the network fee from your wallet instead.';
 // Refusals that are about a withdrawal already started, or that a wallet
 // cannot cure: the hint would be wrong.
 const NO_WALLET_HINT = new Set(['gasless_plan_mismatch', 'gasless_record_not_pinned', 'wrong_owner_account',
+    'gasless_cost_above_cap',
     'gasless_policy_mismatch', 'exits_paused', 'gasless_op_expired', 'gasless_op_pending', 'user_op_pending',
     'withdrawal_wallet_pending', 'escape_not_due', 'gasless_fee_bump_exhausted', 'gasless_op_reverted', 'signature_rejected',
     'bundler_hash_mismatch', 'paymaster_time_window', 'transit_funds_waiting', 'transit_sweep_needed',
@@ -143,12 +141,14 @@ export function normalizeQuote(raw, { mode } = {}) {
         available: true,
         mode: mode === 'escape' ? 'escape' : 'mutual',
         payoutWei: weiString(raw.payoutWei),
-        // A close promises a floor; an emergency exit only an estimate (its
-        // fee is charged when it is finished, possibly days later).
+        // The SDK quote supplies a close floor at its quoted fees. The host
+        // displays this as an estimate because fees may change before signing.
+        // An escape is charged when finished, possibly days later.
         minimumReceivedWei: weiString(raw.minimumReceivedWei),
         estimatedReceivedWei: weiString(raw.estimatedReceivedWei),
         maxCostWei,
         flatFeeWei,
+        creditSurchargeWei: weiString(raw.creditSurchargeWei) || '0',
         owedWei: weiString(raw.owedWei),
         payoutHasCode: raw.payoutHasCode === true,
         transitExists: raw.transitExists === true
@@ -239,21 +239,25 @@ export function createSponsoredFees({ getClient, getRuntime, getContext, getOrig
         },
 
         /**
-         * The options a withdrawal is started with for a quote the person
-         * chose, and the bounds the signer holds it to. null for a quote
-         * that is not an available one.
+         * The displayed quote is an estimate. Use the deployment's existing
+         * policy limits so a fresh fee read or relay gas adjustment does not
+         * invalidate it. Explicit values also replace an older saved quote
+         * cap when this same withdrawal is continued.
          */
         plan(quote) {
             if (!isRecord(quote) || quote.available !== true || !supported()) return null;
-            const max = BigInt(quote.maxCostWei);
+            const pins = trusted().gasless;
+            const feeCapWei = quote.flatFeeWei ?? String(pins.policy.flat_fee_wei);
+            const maxCostWei = String(pins.policy.max_sponsored_cost_wei);
+            const creditReserve = BigInt(pins.gas_policy.credit_gas ?? 0) * BigInt(pins.fee_ceilings.max_fee_wei);
             return {
-                options: { fees: 'payout', bundlerUrl: bundlerUrl(), feeCapWei: quote.flatFeeWei, allowExpensiveGas: false },
+                options: { fees: 'payout', bundlerUrl: bundlerUrl(), feeCapWei,
+                    maxCostWei,
+                    maxTotalFeeWei: String(BigInt(maxCostWei) + BigInt(feeCapWei) + creditReserve),
+                    allowExpensiveGas: false },
                 sponsored: {
-                    feeCapWei: quote.flatFeeWei,
-                    // Fees move between this quote and the send: the signer
-                    // allows the reservation 50% above what was shown, never
-                    // more, and the paymaster's own policy bounds it too.
-                    maxCostWei: ((max * HEADROOM_NUMERATOR) / HEADROOM_DENOMINATOR).toString()
+                    feeCapWei,
+                    maxCostWei
                 }
             };
         }

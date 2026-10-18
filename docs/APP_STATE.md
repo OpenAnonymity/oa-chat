@@ -22,6 +22,94 @@ cleanup, chat-switch restoration, and model → reasoning → answer ordering re
 No transport, storage, analytics or production/staging experiment code changes.
 These are local source changes; the previously signed desktop 0.1.43 does not
 contain this restoration and must not be presented as the updated release.
+## October 17, 2026 — Sepolia withdrawal fees paid from the payout
+
+The revision-4 Sepolia profile now enables the withdrawal fee choice with the
+reviewed SDK pin `d482e4d2fb8b8e6914bd01846eb46969ed85dbf5`. A user can pay
+from the withdrawal without funding the signing account with ETH. The review
+shows the maximum fee and minimum net payout; an escape labels its two-step
+amount as an estimate. The signed operation and recovery journal keep the
+approved fee bounds and withdrawal identity through retries, replacements and
+concurrent tabs. Older profiles without support retain wallet-paid withdrawals.
+This supersedes the dormant-sponsorship and prepared-operation review gap noted
+in the earlier revision-4 rollout entry below.
+
+The Sepolia profile pins paymaster `0xDd5c8a38052E6024C970C6bd6b43D2C0e700123C`
+and its compact account factory, with the explicitly measured Glamsterdam gas
+schedule. The hosted bundler is restricted to this deployment and canonical
+EntryPoint v0.7. Its RPC admits only the reviewed method allowlist; the testnet
+service uses bounded private validation without generic opcode/storage tracing.
+This is a restricted Sepolia staging configuration, not a mainnet rollout.
+
+Actual browser SDK acceptance used an isolated signing account with exactly
+zero ETH before withdrawing note 6. It signed once and sent no wallet
+transaction. Bundle `0x2946fb8c21bee4eb6d6596202af6fcbdf24df9ba1f01f355f3317fb2d0512a6c`
+was included at Sepolia block 11938808: the 100,000,000,000,000-wei payout paid
+25,850,080 wei in fees, below the approved 89,505,680-wei maximum, and delivered
+99,999,974,149,920 wei to the intended account. Independent RPC checks confirmed
+the receipt, exact net balance, and zero transit balance, debt and credit. The
+SDK cleared the closed note and continues finality checks in the background;
+this entry records inclusion, not finalized-chain status.
+
+## October 17, 2026 — quiet balance versions and removed exit-kit UI
+
+Balance details is the only location for the protocol-version pill. It names
+`zkAPI v0.1`, `v0.2` or `v0.3` from the registry, with a muted “A new version is
+available.” line for an older balance. The panel and composer keep their normal
+layout. Upgrade banners, countdown reminders, completion prompts and reminder
+toasts are removed. Existing expiry, unavailable-service, withdrawal and
+cross-device recovery messages remain; a saved balance's expiry notice speaks
+of withdrawal, not upgrading. Version selection still follows the local wallet;
+no funds are moved and no transaction or reload is initiated by a notice.
+
+Exit-kit creation, download, status rows and reminders are removed from the web
+app, including the dialog and its helper module. Old kit metadata and SDK export
+APIs remain compatible; existing balances, journals and backups are not changed
+or cleared. The host no longer advertises exit-kit UI as required family wiring.
+Tests cover absent controls and stale action dispatch, all reminder tiers, normal
+expiry notices, and current/older version details. This supersedes the historical
+exit-kit and upgrade-notification descriptions below.
+
+## 2026-10-15: One version pill, in balance details only
+
+- The System Panel no longer shows the version pill, its `?` or any help panel;
+  balance details shows one muted pill named for the zkAPI protocol version
+  (`zkAPI v0.2`) with a tooltip-only `?`. `protocolVersion` is a new optional
+  registry row field (`0.1` for version 1, `0.2` for version 2; shape
+  `N.N[.N]`); a row without it falls back to its `label`, and `VersionState.current`
+  carries it. The pill is always muted: amber is gone.
+- The neutral "Version N is available. Your balance ... keeps working until"
+  notice (and the neutral set-aside note) is dropped on every surface. Reminder
+  tiers (7/3/1 days, overdue) are unchanged and still carry the Upgrade button,
+  so the voluntary "Upgrade now" link no longer appears before the prompt window.
+- `patchVersionNotices` takes `badge: false` for a host that mounts no pill (the
+  System Panel); without it a missing pill reads as structural and re-renders on
+  every clock tick.
+- `version 1`'s `0.1` is the registry's own choice, not read from the SDK:
+  confirm it against the real v1 protocol naming before shipping.
+
+## October 17, 2026 — revision-4 Sepolia staging rollout
+
+The `concession-v2` adapter supports circuit `zkapi-v2-concession-v2`, vault
+revision 4, and the SDK pinned at `22ef8f770bd78573969901ec9a5a569b17ea9548`.
+Version 3 is active on Sepolia at vault
+`0x7ff4ba0662a8218d0954c1a11ae61df6c3548ea4`, creation block 11937653.
+Version 2 becomes exit-only there. Both older versions retain their SDK pins,
+profiles, wallet stores and routes. Mainnet remains on version 1; its newer
+versions stay pending. This source is authorized for staging only.
+
+Deposits are recorded before the operator activates them in the request tree.
+The balance panel distinguishes waiting, paused and unknown activation status;
+only sanitized status, queue position and pause state reach the host snapshot.
+The new withdrawal ABI binds directly to the stored note, with 17 tuple words
+and 27 total words. The funding signer checks the new selectors and offsets.
+
+The SDK includes the existing confirmed withdrawal identity checks and fee
+budget API. A revision-specific, hash-checked provider verification patch keeps
+the host's verifier policy and cached-key recheck. Sponsored withdrawals remain
+disabled; their inherited prepared-UserOp resume identity gap is not covered by
+this wallet-transaction recovery review. See the revision-4 note in
+[the versioning guide](ZKAPI_VERSIONING.md#revision-4-sepolia-staging-rollout).
 
 ## October 15, 2026 — late reasoning stays below the model header
 
@@ -8614,3 +8702,38 @@ Controlled test instrumentation is isolated on the experiment branch. Its source
 and revisions must not enter production, even disabled. See
 [STAGING_REQUEST_TIMING.md](STAGING_REQUEST_TIMING.md) for semantics, limitations,
 opt-in boundaries and experiment-free UI baselines. No live collection is implied.
+
+## October 17, 2026 — withdrawal fees paid from the payout
+
+The sponsored withdrawal choice now bypasses the ordinary ETH balance/top-up
+check and shows the fee and net payout in the existing review. Quotes bind the
+balance, destination, signing account and mode; changes require another review.
+The revision-4 SDK preserves the exact approved gas and total fee caps through
+replacement and resume. Contract recipients' possible payout-credit surcharge
+is included in the disclosed net. Saved sponsored withdrawals continue to their
+`payout` address, not their intermediate contract destination, and can recheck
+a changed fee before continuing. Old versions without sponsorship retain their
+ordinary wallet-funded withdrawal. See the October 17 addendum in
+[ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md).
+
+The revision-4 SDK additionally rechecks the exact prepared operation and
+statement under the wallet lock for sponsored resume and background replay.
+The host now carries `prepared_withdrawal.operation_id` through continuation;
+a concurrent replacement or concession change returns to review before send.
+
+## October 18, 2026 — withdrawal fee estimates can change
+
+Sponsored withdrawals no longer treat the displayed network-fee estimate as
+an exact approval cap. Live fee reads and relay gas adjustments may increase
+between the quote and signing, which previously caused repeated
+`gasless_cost_above_cap` refusals. The form and review now describe the network
+fee and net payout as estimates that can change before signing.
+
+The host passes the existing pinned deployment limit as `maxCostWei`, plus
+the flat fee and worst-case credit reserve as `maxTotalFeeWei`. This preserves
+contract policy limits, uneconomic-withdrawal checks, and note/destination/
+signature validation. Continuing an older prepared withdrawal supplies those
+explicit limits again, replacing its stale quote caps without discarding its
+journal or requiring another estimate. The SDK's optional explicit-cap API and
+CLI approval behavior are unchanged. This supersedes the exact-quote approval
+description in the October 17 entry above.

@@ -208,14 +208,18 @@ function renderPanel({ transition = null, helpOpen = {}, ...overrides } = {}) {
 // The pill
 // ---------------------------------------------------------------------------
 
-test('the pill exists only where there are versions to tell apart, and names the version held', () => {
+test('balance details always name the version held, with quiet badges elsewhere', () => {
     const state = holderWith(30 * DAY);
     const html = renderVersionBadge(state, { surface: 'panel' });
-    assert.match(html, /data-zkapi-version-badge[^>]*data-zkapi-version-tone="muted"[^>]*>Version 1<\/span>/);
-    assert.match(html, /id="zkapi-panel-version-help-toggle"[^>]*data-zkapi-help="version"/);
-    assert.match(html, /aria-label="About versions"/);
-    assert.match(html, /aria-expanded="false" aria-controls="zkapi-panel-version-help"/);
-    assert.match(renderVersionBadge(state, { surface: 'dialog', helpOpen: true }), /id="zkapi-modal-version-help-toggle"[\s\S]*aria-expanded="true"/);
+    // The pill names the zkAPI protocol version, not the registry label.
+    assert.match(html, /data-zkapi-version-badge[^>]*data-zkapi-version-tone="muted"[^>]*>zkAPI v0\.1<\/span>/);
+    // The `?` is a tooltip: no help toggle, nothing that opens.
+    assert.match(html, /aria-label="The zkAPI protocol version this balance uses"/);
+    assert.doesNotMatch(html, /data-zkapi-help=|aria-expanded|aria-controls/);
+    assert.match(renderVersionBadge(state, { surface: 'dialog', helpOpen: true }), />zkAPI v0\.1<\/span>/);
+    // A row without a protocol version falls back to its label.
+    const unlabelled = { ...state, current: { ...state.current, protocolVersion: null } };
+    assert.match(renderVersionBadge(unlabelled, { surface: 'panel' }), />Version 1<\/span>/);
 
     // A lone exit-only version has a closed gate but no pill (show is false).
     const lone = resolvedTable(partialRevertRegistry(), 'mainnet');
@@ -223,16 +227,18 @@ test('the pill exists only where there are versions to tell apart, and names the
     const loneState = derive({ table: lone, active: lone[0], target: null });
     assert.equal(loneState.show, false);
     assert.equal(renderVersionBadge(loneState, { surface: 'panel' }), '');
+    assert.match(renderVersionBadge(loneState, { surface: 'dialog' }), /zkAPI v0\.1/);
+    assert.doesNotMatch(renderVersionBadge(loneState, { surface: 'dialog' }), /new version is available/);
     for (const bad of [null, undefined, {}, 'x', { show: true }]) {
         assert.equal(renderVersionBadge(bad, { surface: 'panel' }), '');
     }
 });
 
-test('the pill is amber only inside the prompt window', () => {
-    for (const [seconds, tone] of [[40 * DAY, 'muted'], [20 * DAY, 'muted'], [16 * DAY, 'amber'], [8 * DAY, 'amber'], [2 * DAY, 'amber']]) {
+test('the pill is always muted: it names a protocol, it does not prompt', () => {
+    for (const seconds of [40 * DAY, 20 * DAY, 16 * DAY, 8 * DAY, 2 * DAY]) {
         const html = renderVersionBadge(holderWith(seconds), { surface: 'panel' });
-        assert.match(html, new RegExp(`data-zkapi-version-tone="${tone}"`), `${seconds / DAY} days`);
-        assert.equal(/bg-amber-100/.test(html), tone === 'amber');
+        assert.match(html, /data-zkapi-version-tone="muted"/, `${seconds / DAY} days`);
+        assert.doesNotMatch(html, /bg-amber-100/);
     }
 });
 
@@ -256,38 +262,9 @@ test('the version help says which version the balance is on, and what an upgrade
 // The banner, by phase
 // ---------------------------------------------------------------------------
 
-test('a day-0 balance gets a neutral note and a quiet link; the prompt window brings the button', () => {
-    const neutral = banner(holderWith(30 * DAY));
-    assert.match(neutral, /data-zkapi-version-banner="panel"/);
-    assert.match(neutral, /Version 2 is available\. Your balance is on version 1 and keeps working until 2026-12-15T12:00:00Z/);
-    assert.match(neutral, /bg-muted\/50/);
-    assert.doesNotMatch(neutral, /amber/);
-    assert.match(neutral, /zkapi-version-action--secondary" data-zkapi-version-action="upgrade">Upgrade now</);
 
-    const soon = banner(holderWith(16 * DAY));
-    assert.match(soon, /Upgrade to version 2 by 2026-11-28T12:00:00Z\./);
-    assert.match(soon, /border-amber-300\/60 bg-amber-50\/60 text-amber-800 dark:border-amber-500\/30/);
-    assert.match(soon, /zkapi-version-action--primary" data-zkapi-version-action="upgrade">Upgrade balance</);
-});
 
-test('reminder tiers use the canonical words and keep the close-by date machine-readable', () => {
-    const cases = [
-        [8 * DAY, 7, /^7 days left to upgrade\. Withdraw by 2026-11-20T12:00:00Z\.$/],
-        [5 * DAY, 3, /^3 days left to upgrade\. Withdraw by 2026-11-17T12:00:00Z\.$/],
-        [3.5 * DAY, 1, /^Less than a day left to upgrade\. Withdraw now to get your unused balance back\.$/],
-        [2 * DAY, 0, /^Upgrade now\. Withdrawals can take a while to confirm\. After 2026-11-17T12:00:00Z, the service treasury can claim your full original deposit, and nothing is refunded\.$/]
-    ];
-    for (const [seconds, tier, pattern] of cases) {
-        const state = holderWith(seconds);
-        assert.equal(state.reminderTier, tier);
-        const html = banner(state);
-        const root = parseHtml(html);
-        const text = root.querySelector('[data-zkapi-version-text="0"]');
-        assert.match(text.textContent, pattern);
-        assert.equal(text.dataset.zkapiVersionTier, String(tier));
-        assert.equal(text.dataset.zkapiVersionCloseby, String(state.closeByTs));
-    }
-});
+
 
 test('an empty balance, a current balance and an expired one get no upgrade prompt', () => {
     const empty = derive({ snapshot: normalizedSnapshot() });
@@ -449,18 +426,7 @@ test('service pause, retiring admission and an unsent plan', () => {
     assert.match(html, /data-zkapi-version-action="cancel-unsent">Cancel unfinished deposit</);
 });
 
-test('a started deposit finishes first; chat settling holds the upgrade without hiding it', () => {
-    const started = holderWith(16 * DAY, { snapshot: noteSnapshot(16 * DAY, { hasPendingDeposit: true }) });
-    assert.equal(started.upgrade.blockedBy, 'pending_deposit');
-    let html = banner(started);
-    assert.match(html, /Your saved deposit can still be finished here\./);
-    assert.doesNotMatch(html, /data-zkapi-version-action="upgrade"/);
 
-    const busy = holderWith(16 * DAY, { busy: true });
-    assert.equal(busy.upgrade.blockedBy, 'in_flight');
-    const root = parseHtml(banner(busy));
-    assert.equal(root.querySelector('[data-zkapi-version-action="upgrade"]').disabled, true);
-});
 
 test('the upgrade stages: withdrawing, deposit and done', () => {
     const withdrawing = derive({ snapshot: noteSnapshot(20 * DAY, { hasPreparedWithdrawal: true }),
@@ -473,14 +439,13 @@ test('the upgrade stages: withdrawing, deposit and done', () => {
         intent: { v: 1, network: 'mainnet', from: 'v1', to: 'v2', stage: 'withdrawn', since: NOW_MS } });
     assert.equal(deposit.upgrade.stage, 'deposit');
     const html = banner(deposit);
-    assert.match(html, /Your balance is withdrawn\. Deposit to finish upgrading to version 2\./);
-    assert.match(html, /data-zkapi-version-action="upgrade">Continue upgrade</);
+    assert.equal(html, '');
 
     const done = derive({ active: V2, selection: selectionFor(V2), snapshot: noteSnapshot(20 * DAY),
         intent: { v: 1, network: 'mainnet', from: 'v1', to: 'v2', stage: 'depositing', since: NOW_MS } });
     assert.equal(done.upgrade.stage, 'done');
     resetVersionNoticeDismissals();
-    assert.match(banner(done), /Upgrade complete\. Your balance is on version 2\./);
+    assert.equal(banner(done), '');
     // Dismissed once, gone on every surface until the page reloads.
     notices.dismissVersionNotice('done');
     assert.equal(banner(done), '');
@@ -503,8 +468,8 @@ test('session flags: a cleared draft is dismissible, a discard loop says to clos
 test('ticket mode shows only what puts funds at risk, never a neutral note', () => {
     const neutral = holderWith(30 * DAY);
     assert.equal(banner(neutral, { surface: 'ticket' }), '');
-    assert.match(banner(holderWith(16 * DAY), { surface: 'ticket' }), /data-zkapi-version-banner="ticket"/);
-    assert.match(banner(holderWith(2 * DAY), { surface: 'ticket' }), /Upgrade now\./);
+    assert.equal(banner(holderWith(16 * DAY), { surface: 'ticket' }), '');
+    assert.equal(banner(holderWith(2 * DAY), { surface: 'ticket' }), '');
     const paused = derive({ snapshot: noteSnapshot(20 * DAY, { service: {
         available: false, code: 'deployment_manifest_unavailable', message: 'Paused'
     } }) });
@@ -533,8 +498,11 @@ test('banners never speak ids, note numbers or emoji, and are static text', () =
 test('host markup follows the notices inside the same block, and alone it is still a block', () => {
     const state = holderWith(30 * DAY);
     const html = banner(state, { extra: '<p data-protocol-notice>Exit kit out of date</p>' });
-    assert.match(html, /data-zkapi-version-sig="upgrade:info:1:upgrade\|\+"/);
-    assert.ok(html.indexOf('data-zkapi-version-notice') < html.indexOf('data-protocol-notice'));
+    // The day-0 note is not shown, so the host's markup stands alone.
+    assert.match(html, /data-zkapi-version-sig="\|\+"/);
+    assert.match(html, /data-protocol-notice/);
+    const prompted = banner(holderWith(16 * DAY), { extra: '<p data-protocol-notice>Exit kit out of date</p>' });
+    assert.ok(prompted.indexOf('data-zkapi-version-notice') < prompted.indexOf('data-protocol-notice'));
     const quiet = derive({ active: V2, selection: selectionFor(V2), snapshot: normalizedSnapshot() });
     assert.equal(banner(quiet), '');
     assert.match(banner(quiet, { extra: '<p>x</p>' }), /data-zkapi-version-banner="panel"[^>]*><p>x<\/p><\/div>/);
@@ -566,8 +534,7 @@ test('crossing a boundary asks for one render and touches nothing', () => {
     const sameStructure = patchVersionNotices(root, later, { table: TABLE, formatter: FORMAT });
     // Same notice, same tone, same button: the words are patched in place.
     assert.equal(sameStructure.needsRender, false);
-    assert.match(root.querySelector('[data-zkapi-version-text="0"]').textContent, /^3 days left to upgrade\./);
-    assert.equal(root.querySelector('[data-zkapi-version-text="0"]').dataset.zkapiVersionTier, '3');
+    assert.equal(root.querySelector('[data-zkapi-version-text="0"]'), null);
 
     const reloadState = derive({ snapshot: noteSnapshot(20 * DAY), previewSelection: selectionFor(V2, { reason: 'runtime_holds_note' }) });
     const texts = root.querySelectorAll('[data-zkapi-version-text]').map(node => node.textContent);
@@ -577,26 +544,7 @@ test('crossing a boundary asks for one render and touches nothing', () => {
         'nothing is touched when a render is asked for');
 });
 
-test('entering the prompt window re-renders; a stale pill tone alone is corrected in place', () => {
-    const outside = holderWith(20 * DAY);
-    const root = mounted(outside);
-    const inside = holderWith(16 * DAY);
-    // The neutral note became the prominent one: tone and button differ.
-    assert.equal(patchVersionNotices(root, inside, { table: TABLE, formatter: FORMAT }).needsRender, true);
 
-    // A pill rendered muted next to a banner that is already the prominent
-    // one: the structure matches, so only the pill's tone is patched.
-    const stale = parseHtml(`${renderVersionBadge(outside, { surface: 'panel' })}${banner(inside)}`);
-    const pill = stale.querySelector('[data-zkapi-version-badge]');
-    assert.equal(pill.dataset.zkapiVersionTone, 'muted');
-    assert.equal(pill.classList.contains('bg-muted'), true);
-    const result = patchVersionNotices(stale, inside, { table: TABLE, formatter: FORMAT });
-    assert.deepEqual(result, { needsRender: false });
-    assert.equal(pill.dataset.zkapiVersionTone, 'amber');
-    assert.equal(pill.classList.contains('bg-amber-100'), true);
-    assert.equal(pill.classList.contains('bg-muted'), false);
-    assert.equal(pill.textContent, 'Version 1');
-});
 
 test('presence mismatches are structural: pill or banner appearing and disappearing', () => {
     const target = derive({ active: V2, selection: selectionFor(V2), snapshot: noteSnapshot(30 * DAY) });
@@ -606,6 +554,9 @@ test('presence mismatches are structural: pill or banner appearing and disappear
     assert.equal(patchVersionNotices(pillOnly, target, {}).needsRender, false);
     const hidden = { ...target, show: false };
     assert.equal(patchVersionNotices(pillOnly, hidden, {}).needsRender, true, 'a pill is mounted that is no longer called for');
+    const dialog = parseHtml(renderVersionBadge(hidden, { surface: 'dialog' }));
+    assert.equal(patchVersionNotices(dialog, hidden, { surface: 'dialog' }).needsRender, false,
+        'single-version balance details keep their badge on a clock tick');
     assert.equal(patchVersionNotices(null, target, {}).needsRender, false);
     assert.equal(patchVersionNotices({}, target, {}).needsRender, false);
 });
@@ -690,7 +641,7 @@ test('open-previous and claim-credit reload into the other version; cancel-unsen
 });
 
 test('the buttons are wired by delegation on the banner and ignore disabled ones', async () => {
-    const state = holderWith(2 * DAY);
+    const state = holderWith(2 * DAY, { admissionClosed: true });
     const root = mounted(state);
     const events = [];
     attachVersionNotices(root, { facade: () => fakeFacade({ state }), dispatch: (name, detail) => events.push([name, detail]) });
@@ -700,8 +651,9 @@ test('the buttons are wired by delegation on the banner and ignore disabled ones
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(events, [['zkapi-payment-required', { view: 'upgrade' }]], 'bound once, not twice');
 
-    const busy = holderWith(16 * DAY, { busy: true });
+    const busy = holderWith(16 * DAY, { admissionClosed: true });
     const busyRoot = mounted(busy);
+    busyRoot.querySelector('[data-zkapi-version-action="upgrade"]').disabled = true;
     const busyEvents = [];
     attachVersionNotices(busyRoot, { facade: () => fakeFacade({ state: busy }), dispatch: (...args) => busyEvents.push(args) });
     busyRoot.querySelector('[data-zkapi-version-action="upgrade"]').click();
@@ -735,7 +687,7 @@ test('versionUi keeps its member names and fills facts the caller does not pass'
     // A failing facade or notices hook leaves the plain renderers.
     const broken = createVersionUi({ facade: { get table() { throw new Error('x'); }, get selection() { throw new Error('x'); },
         flags() { throw new Error('x'); } }, protocolNotices: () => { throw new Error('x'); } });
-    assert.match(broken.banner(holderWith(8 * DAY), { surface: 'panel' }), /7 days left/);
+    assert.equal(broken.banner(holderWith(8 * DAY), { surface: 'panel' }), '');
 });
 
 test('the rescue helpers load the funding-address module only when used', async () => {
@@ -787,39 +739,32 @@ test('without a facade the panel is byte-identical to the unversioned panel', t 
     assert.equal(renderPanel().html, baseline);
 });
 
-test('the pill follows the help button, its help follows the billing help, the banner precedes the experience', t => {
-    const state = holderWith(8 * DAY);
+test('the panel carries no version pill; actionable notices precede the experience', t => {
+    const state = holderWith(8 * DAY, { admissionClosed: true });
     installFacade(t, fakeFacade({ state }));
     const baseline = (() => { delete zkapiClient.oaVersioning; return renderPanel({ helpOpen: {} }).html; })();
     const facade = fakeFacade({ state });
     zkapiClient.oaVersioning = facade;
     const { panel, html } = renderPanel({ helpOpen: {} });
 
+    // The pill and its `?` live in balance details only.
+    assert.doesNotMatch(html, /data-zkapi-version-badge|zkapi-panel-version-help/);
     const order = [
         html.indexOf('Private balance:'),
         html.indexOf('id="zkapi-panel-billing-help-toggle"'),
-        html.indexOf('data-zkapi-version-badge-group'),
-        html.indexOf('id="zkapi-panel-version-help-toggle"'),
         html.indexOf('id="zkapi-panel-billing-help"'),
-        html.indexOf('id="zkapi-panel-version-help"'),
         html.indexOf('data-chat-usage-estimate'),
         html.indexOf('data-zkapi-version-banner="panel"'),
         html.indexOf('id="zkapi-panel-fund"')
     ];
     assert.ok(order.every(position => position >= 0), `all present: ${order}`);
     assert.deepEqual([...order].sort((a, b) => a - b), order, 'document order');
-    // The pinned neighbours are intact.
-    assert.match(html, /Private balance:[\s\S]*?zkapi-panel-billing-help-toggle/);
-    assert.match(html, /data-zkapi-note-expiry>[^<]+<\/span><button id="zkapi-panel-expiry-help-toggle"/);
-    // The pill sits inside the same header row as the billing help.
-    const header = html.slice(html.indexOf('Private balance:'), html.indexOf('id="zkapi-panel-billing-help"'));
-    assert.match(header, /billing-help-toggle"[\s\S]*data-zkapi-version-badge-group/);
-    // Removing the three version fragments yields exactly the unversioned
-    // panel: nothing else moved, and nothing else was added.
+    // Removing the banner yields exactly the unversioned panel.
     const pieces = panel.versionPieces();
-    assert.ok(pieces.badge && pieces.help && pieces.banner);
-    const stripped = html.replace(pieces.badge, '').replace(pieces.help, '').replace(pieces.banner, '');
-    assert.equal(stripped, baseline);
+    assert.equal(pieces.badge, '');
+    assert.equal(pieces.help, '');
+    assert.ok(pieces.banner);
+    assert.equal(html.replace(pieces.banner, ''), baseline);
 });
 
 test('all seven UX proposals render the same status UI beside the version notices', () => {
@@ -840,15 +785,13 @@ test('all seven UX proposals render the same status UI beside the version notice
     delete zkapiClient.oaVersioning;
 });
 
-test('help state is kept per kind and the version help opens independently', t => {
+test('the panel has no version help; the billing help keeps its own state', t => {
     installFacade(t, fakeFacade({ state: holderWith(8 * DAY) }));
     const closed = renderPanel({ helpOpen: { billing: true } }).html;
-    assert.match(closed, /id="zkapi-panel-version-help" data-zkapi-help-content="version" hidden>/);
+    assert.doesNotMatch(closed, /data-zkapi-help-content="version"/);
     assert.doesNotMatch(closed, /id="zkapi-panel-billing-help" data-zkapi-help-content="billing" hidden>/);
     const open = renderPanel({ helpOpen: { version: true } }).html;
-    assert.match(open, /id="zkapi-panel-version-help" data-zkapi-help-content="version" >/);
-    assert.match(open, /aria-expanded="true" aria-controls="zkapi-panel-version-help"/);
-    assert.match(open, /Your balance is on version 1\./);
+    assert.doesNotMatch(open, /Your balance is on version 1\./);
 });
 
 test('a lone exit-only version shows the closed gate in the panel with no pill', t => {
@@ -873,7 +816,7 @@ test('facade changes remount only when what is shown changed, and never on a clo
     // Same words: nothing to do.
     panel.handleVersionChange();
     assert.deepEqual(renders, []);
-    facade.current = holderWith(16 * DAY);
+    facade.current = holderWith(16 * DAY, { admissionClosed: true });
     panel.handleVersionChange();
     assert.deepEqual(renders, ['render']);
     panel.handleVersionChange();
@@ -926,7 +869,7 @@ test('clock patches are text-only; a structural change remounts at most once per
 });
 
 test('a facade whose helpers arrive late renders them when it says so', t => {
-    const facade = fakeFacade({ state: holderWith(8 * DAY) });
+    const facade = fakeFacade({ state: holderWith(8 * DAY, { admissionClosed: true }) });
     const ui = facade.ui;
     facade.ui = null;
     installFacade(t, facade);
@@ -956,61 +899,9 @@ test('without a facade a clock tick never touches the document for versions', ()
     }
 });
 
-test('each reminder tier is toasted once, in zkAPI mode, and never in ticket mode', t => {
-    const facade = fakeFacade({ state: holderWith(8 * DAY) });
-    installFacade(t, facade);
-    const toasts = [];
-    const { panel } = renderPanel();
-    panel.app.showToast = (text, kind, ms) => toasts.push({ text, kind, ms });
-    panel.renderTopSectionOnly = () => {};
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 1);
-    assert.match(toasts[0].text, /^7 days left to upgrade\./);
-    assert.equal(toasts[0].kind, 'info');
-    assert.deepEqual(facade.calls.acknowledged, [7]);
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 1, 'the same tier is not repeated');
-    facade.current = holderWith(5 * DAY);
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 2);
-    assert.match(toasts[1].text, /^3 days left to upgrade\./);
 
-    // A neutral note is never a toast.
-    const quiet = fakeFacade({ state: holderWith(30 * DAY) });
-    zkapiClient.oaVersioning = quiet;
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 2);
-    // OA ticket mode suppresses zkAPI toasts.
-    const ticket = fakeFacade({ state: holderWith(2 * DAY) });
-    zkapiClient.oaVersioning = ticket;
-    panel.app.integration.getMode = () => 'tickets';
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 2);
-    assert.deepEqual(ticket.calls.acknowledged, []);
-});
 
-test('the panel clicks the banner buttons: upgrade opens the upgrade view', async t => {
-    const state = holderWith(2 * DAY);
-    const facade = fakeFacade({ state });
-    installFacade(t, facade);
-    const { panel, html } = renderPanel();
-    const root = parseHtml(html);
-    const original = globalThis.document;
-    const events = [];
-    t.after(() => { globalThis.document = original; globalThis.dispatchEvent = () => {}; });
-    globalThis.document = { ...original, querySelector: selector => (selector === '#right-panel' ? root : null),
-        getElementById: () => null };
-    globalThis.dispatchEvent = event => events.push([event.type, event.detail]);
-    globalThis.window = globalThis;
-    const base = Object.getPrototypeOf(RightPanel.prototype);
-    const original$ = base.attachTopSectionEventListeners;
-    base.attachTopSectionEventListeners = () => {};
-    t.after(() => { base.attachTopSectionEventListeners = original$; });
-    panel.attachTopSectionEventListeners();
-    root.querySelector('[data-zkapi-version-action="upgrade"]').click();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(events, [['zkapi-payment-required', { view: 'upgrade' }]]);
-});
+
 
 test('an SDK refusal that names another deployment reads plainly in the panel, by selection', t => {
     const refusal = () => new Error('This browser contains a wallet for zkapi-some-id. Switch back to that deployment before using or withdrawing it.');
@@ -1045,71 +936,9 @@ function ticketPanel(mode = 'tickets') {
     return panel;
 }
 
-test('ticket mode carries a keyed upgrade notice only when versions exist, and patches it in place', t => {
-    t.mock.method(TicketRightPanel.prototype, 'generateFundingSectionHTML', () => '<div id="normal-ticket-controls">Tickets</div>');
-    const panel = ticketPanel();
 
-    // No facade, and a single-version facade: the ticket panel is unchanged.
-    delete zkapiClient.oaVersioning;
-    const plain = panel.generateFundingSectionHTML();
-    assert.doesNotMatch(plain, /zkapi-upgrade-notice/);
-    installFacade(t, { multiVersion: false, state: () => null, subscribe: () => () => {}, ui: versionUi });
-    assert.equal(panel.generateFundingSectionHTML(), plain);
 
-    // Versions, but nothing at risk to say: the keyed slot exists, hidden.
-    const facade = fakeFacade({ state: holderWith(30 * DAY) });
-    zkapiClient.oaVersioning = facade;
-    let html = panel.generateFundingSectionHTML();
-    assert.match(html, /id="normal-ticket-controls"/);
-    assert.match(html, /id="zkapi-ticket-closing-notice"/);
-    assert.match(html, /<div id="zkapi-upgrade-notice" class="px-3 pb-3" hidden><\/div>/);
-    assert.ok(html.indexOf('zkapi-ticket-closing-notice') < html.indexOf('zkapi-upgrade-notice'));
 
-    // A reminder inside the window shows, static (no live region).
-    facade.current = holderWith(2 * DAY);
-    html = panel.generateFundingSectionHTML();
-    const slot = html.match(/<div id="zkapi-upgrade-notice"[^>]*>/)[0];
-    assert.doesNotMatch(slot, /hidden|aria-live|role=/);
-    assert.match(html, /data-zkapi-version-banner="ticket"/);
-    assert.match(html, /Upgrade now\./);
-});
-
-test('a facade change patches the keyed ticket notice and remounts nothing', t => {
-    t.mock.method(TicketRightPanel.prototype, 'generateFundingSectionHTML', () => '<div id="normal-ticket-controls">Tickets</div>');
-    const facade = fakeFacade({ state: holderWith(30 * DAY) });
-    installFacade(t, facade);
-    const panel = ticketPanel();
-    panel.generateFundingSectionHTML();   // the mounted slot is what the first render produced
-    let hidden = true;
-    let hiddenWrites = 0;
-    let html = '';
-    let htmlWrites = 0;
-    const slot = {
-        get hidden() { return hidden; }, set hidden(value) { hidden = value; hiddenWrites += 1; },
-        get innerHTML() { return html; }, set innerHTML(value) { html = value; htmlWrites += 1; },
-        querySelectorAll: () => []
-    };
-    const lookups = [];
-    t.mock.method(document, 'getElementById', id => { lookups.push(id); return id === 'zkapi-upgrade-notice' ? slot : null; });
-    panel.loadSessionData = () => assert.fail('a version change must not reload ticket access');
-    panel.renderTopSectionOnly = () => assert.fail('a version change must not remount ticket controls');
-
-    panel.handleVersionChange();
-    assert.equal(hidden, true, 'a neutral note is not worth OA mode');
-    assert.equal(htmlWrites, 0);
-    facade.current = holderWith(2 * DAY);
-    panel.handleVersionChange();
-    assert.equal(hidden, false);
-    assert.match(html, /data-zkapi-version-banner="ticket"/);
-    assert.equal(htmlWrites, 1);
-    panel.handleVersionChange();
-    assert.equal(htmlWrites, 1, 'unchanged markup is not rewritten');
-    facade.current = derive({ active: V2, selection: selectionFor(V2), snapshot: noteSnapshot(20 * DAY) });
-    panel.handleVersionChange();
-    assert.equal(hidden, true);
-    assert.equal(html, '');
-    assert.deepEqual([...new Set(lookups)], ['zkapi-upgrade-notice']);
-});
 
 test('zkAPI-mode panels do not look up the ticket slot, and ticket mode without versions looks up nothing', t => {
     const lookups = [];
@@ -1128,7 +957,7 @@ test('zkAPI-mode panels do not look up the ticket slot, and ticket mode without 
 // The toolbar chip
 // ---------------------------------------------------------------------------
 
-test('the standalone chip names the version only where versions are told apart', t => {
+test('the standalone chip keeps version information in balance details only', t => {
     const button = () => {
         const attributes = new Map();
         return { dataset: {}, title: '', attributes, querySelector: () => null,
@@ -1145,7 +974,7 @@ test('the standalone chip names the version only where versions are told apart',
     installFacade(t, fakeFacade({ state: holderWith(8 * DAY) }));
     const versioned = button();
     updateZkapiBalanceControl(versioned, app);
-    assert.equal(versioned.title, `${plain.title} · Version 1`);
+    assert.equal(versioned.title, plain.title);
     assert.equal(versioned.attributes.get('aria-label'), versioned.title);
     // A single-version build keeps the chip exactly as it was.
     zkapiClient.oaVersioning = { multiVersion: false, state: () => null };
@@ -1243,16 +1072,14 @@ test('a page on the deposit target never sends the person to deposit into the ve
     assert.match(banner(older), /Version 1 is no longer starting new chats\. Withdraw your balance, then deposit into version 2 to keep chatting\./);
 });
 
-test('a set-aside note far from its deadline is a neutral note, not an alert, and not a ticket notice', () => {
+test('a set-aside note far from its deadline is not shown, and is never an alert or a ticket notice', () => {
     const far = derive({ snapshot: normalizedSnapshot({ hasOpenWithdrawal: true,
         deadlines: [{ source: 'set-aside', expiryTs: NOW_S + 40 * DAY }] }) });
     assert.equal(far.phase, 'finish-previous-withdrawal');
     assert.equal(far.previous.versionId, 'v1');
-    const [only] = buildVersionNotices(far, { surface: 'panel', table: TABLE, formatter: FORMAT }).notices;
-    assert.equal(only.id, 'previous');
-    assert.equal(only.tone, 'info');
-    assert.match(banner(far), /Version 2 is available\./);
-    assert.doesNotMatch(banner(far), /amber/);
+    // Far from its deadline it says nothing: the neutral note is not shown.
+    assert.deepEqual(buildVersionNotices(far, { surface: 'panel', table: TABLE, formatter: FORMAT }).notices, []);
+    assert.equal(banner(far), '');
     assert.equal(banner(far, { surface: 'ticket' }), '');
 
     // Inside a reminder tier it is an alert on every surface that carries it.
@@ -1262,7 +1089,7 @@ test('a set-aside note far from its deadline is a neutral note, not an alert, an
         const [alert] = buildVersionNotices(near, { surface, table: TABLE, formatter: FORMAT }).notices;
         assert.equal(alert.id, 'previous');
         assert.equal(alert.tone, 'attention');
-        assert.match(alert.paragraphs[0].text, /^3 days left to upgrade\./);
+        assert.match(alert.paragraphs[0].text, /^A saved balance is nearing expiry\./);
     }
 });
 
@@ -1458,104 +1285,15 @@ test('a balance that expired after the review step was opened is never told as a
     assert.equal(JSON.parse(local.getItem(UPGRADE_INTENT_KEY)).stage, 'withdrawn');
 });
 
-test('a reminder tier is toasted once per panel even when storage cannot remember it', t => {
-    const facade = fakeFacade({ state: holderWith(8 * DAY) });
-    // Quota or restricted storage: nothing is ever stored.
-    facade.lastReminderTier = () => null;
-    facade.acknowledgeReminder = tier => { facade.calls.acknowledged.push(tier); };
-    installFacade(t, facade);
-    const toasts = [];
-    const { panel } = renderPanel();
-    panel.app.showToast = text => toasts.push(text);
-    panel.renderTopSectionOnly = () => {};
-    for (let index = 0; index < 5; index += 1) panel.handleVersionChange();
-    assert.equal(toasts.length, 1);
-    assert.match(toasts[0], /^7 days left to upgrade\./);
-    // A more urgent tier is a new reminder, once.
-    facade.current = holderWith(5 * DAY);
-    panel.handleVersionChange();
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 2);
-    assert.match(toasts[1], /^3 days left to upgrade\./);
-    // The tier is never walked backwards by a state that reads less urgent.
-    facade.current = holderWith(8 * DAY);
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 2);
-    // A facade that does remember keeps deciding with the panel's memory.
-    facade.lastReminderTier = () => 0;
-    facade.current = holderWith(2 * DAY);
-    panel.handleVersionChange();
-    assert.equal(toasts.length, 2);
-});
+
 
 // ---------------------------------------------------------------------------
 // The deposit step can be dismissed; operator notices
 // ---------------------------------------------------------------------------
 
-test('the deposit step’s notice carries a Dismiss that forgets the upgrade, and stays dismissed', async t => {
-    resetVersionNoticeDismissals();
-    t.after(resetVersionNoticeDismissals);
-    const deposit = derive({ active: V2, selection: selectionFor(V2, { reason: 'no_runtime_note', slotOwner: null, slotKind: 'empty' }),
-        snapshot: normalizedSnapshot(), intent: intentAt('withdrawn') });
-    assert.equal(deposit.upgrade.stage, 'deposit');
-    const [entry] = buildVersionNotices(deposit, { surface: 'panel', table: TABLE, formatter: FORMAT }).notices;
-    assert.equal(entry.id, 'deposit');
-    assert.deepEqual(entry.actions.map(action => action.action), ['upgrade', 'dismiss']);
-    // The ticket surface has no deposit step to show.
-    assert.deepEqual(buildVersionNotices(deposit, { surface: 'ticket', table: TABLE, formatter: FORMAT }).notices.map(item => item.id), []);
 
-    const facade = fakeFacade({ state: deposit });
-    facade.abandoned = 0;
-    facade.abandonUpgrade = () => { facade.abandoned += 1; return true; };
-    const root = mounted(deposit);
-    attachVersionNotices(root, { facade: () => facade, refresh: () => facade.calls.refreshes = (facade.calls.refreshes || 0) + 1 });
-    root.querySelector('[data-zkapi-version-action="dismiss"]').click();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(facade.abandoned, 1, 'the persisted upgrade is forgotten');
-    assert.equal(facade.calls.refreshes, 1);
-    // Gone from every surface for the life of the page, even before the state
-    // catches up with the forgotten upgrade.
-    assert.equal(banner(deposit), '');
-    assert.equal(banner(deposit, { surface: 'dialog' }), '');
 
-    // The "done" notice is this page's only: nothing is forgotten for it.
-    resetVersionNoticeDismissals();
-    await handleVersionAction('dismiss', { facade, noticeId: 'done' });
-    assert.equal(facade.abandoned, 1);
-    // A facade without the call, or one that throws, still hides the notice.
-    resetVersionNoticeDismissals();
-    const old = fakeFacade({ state: deposit });
-    assert.deepEqual(await handleVersionAction('dismiss', { facade: old, noticeId: 'deposit' }), { ok: true });
-    assert.equal(banner(deposit), '');
-    resetVersionNoticeDismissals();
-    const throwing = fakeFacade({ state: deposit });
-    throwing.abandonUpgrade = () => { throw new Error('x'); };
-    assert.deepEqual(await handleVersionAction('dismiss', { facade: throwing, noticeId: 'deposit' }), { ok: true });
-    assert.equal(banner(deposit), '', 'the click always has its effect on this page');
-});
 
-test('the real facade forgets a dismissed deposit step, and the notice does not come back', async t => {
-    resetVersionNoticeDismissals();
-    t.after(resetVersionNoticeDismissals);
-    const local = memoryStorage({ [UPGRADE_INTENT_KEY]: JSON.stringify({ v: 1, network: 'mainnet', from: 'v1', to: 'v2',
-        stage: 'withdrawn', since: Date.now() }) });
-    const session = memoryStorage();
-    withBrowserFacts(t, local);
-    const facade = createZkapiVersioning({
-        context: () => ({ table: TABLE, version: V2,
-            selection: selectionFor(V2, { reason: 'no_runtime_note', slotOwner: null, slotKind: 'empty' }), adapter: getAdapter(V2.adapter) }),
-        network: 'mainnet', setTimer: () => 0, clearTimer() {}, sessionStorage: session, localStorage: local
-    });
-    t.after(() => facade.resetForTests());
-    facade.attach({ client: { initialized: false, snapshot: () => legacyClientSnapshot(), subscribe: () => () => {} }, runtime: null, ui: null });
-    facade.attachUi(createVersionUi({ facade }));
-    assert.equal(facade.state().upgrade.stage, 'deposit');
-    assert.match(facade.ui.banner(facade.state(), { surface: 'panel' }), /data-zkapi-version-action="dismiss">Dismiss</);
-    assert.deepEqual(await facade.ui.act('dismiss', { surface: 'panel', noticeId: 'deposit', refresh() {} }), { ok: true });
-    assert.equal(local.getItem(UPGRADE_INTENT_KEY), null, 'nothing is left for the next page');
-    assert.equal(facade.state().upgrade.stage, 'idle');
-    assert.equal(facade.ui.banner(facade.state(), { surface: 'panel' }), '');
-});
 
 // A registry with one operator notice on version 1, and a page on version 2
 // that holds the pending escape it covers (the same shape the state tests use).
@@ -1662,4 +1400,23 @@ test('the registry fixtures stay what these tests assume', () => {
     assert.deepEqual(TABLE.map(row => [row.id, row.status]), [['v1', 'exit-only'], ['v2', 'active']]);
     assert.equal(validRegistry().versions.length, 2);
     assert.equal(stuckEscapeNotice().kind, 'stuck_escape');
+});
+
+test('all upgrade reminder tiers stay quiet while balance details name the version', t => {
+    for (const days of [30, 20, 8, 5, 2, 1]) {
+        const state = holderWith(days * DAY);
+        for (const surface of ['panel', 'dialog', 'ticket']) assert.equal(banner(state, { surface }), '');
+        const badge = renderVersionBadge(state, { surface: 'dialog' });
+        assert.match(badge, /zkAPI v0\.1/);
+        assert.match(badge, /A new version is available\./);
+        assert.doesNotMatch(badge, /amber|Upgrade now|data-zkapi-version-action/);
+        installFacade(t, fakeFacade({ state }));
+        const { panel } = renderPanel();
+        const calls = [];
+        panel.app.showToast = (...args) => calls.push(args);
+        panel.remindVersionDeadline();
+        assert.deepEqual(calls, []);
+    }
+    const state = derive({ active: V2, selection: selectionFor(V2), snapshot: noteSnapshot(30 * DAY) });
+    assert.doesNotMatch(renderVersionBadge(state, { surface: 'dialog' }), /new version is available/);
 });
