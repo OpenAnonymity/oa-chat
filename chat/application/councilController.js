@@ -1583,6 +1583,16 @@ export default class CouncilController {
         );
     }
 
+    restoreStillWorkingDisplays(sessionId) {
+        if (!this.app.isViewingSession(sessionId)) return;
+        for (const display of this.stalledLaneDisplays?.values() || []) {
+            if (display.sessionId === sessionId && !display.signal?.aborted) {
+                this.app.chatArea?.setCouncilLaneWorking?.(
+                    display.messageId, display.laneId, true, display.since);
+            }
+        }
+    }
+
     async streamLaneMessagesCompletion({
         session,
         entry,
@@ -1647,6 +1657,7 @@ export default class CouncilController {
         // finished. Streaming text needs no label, so it waits for a pause.
         let stillWorkingTimer = null;
         let lastOutputAt = Date.now();
+        const displayKey = {}; // Unique to this invocation, including lane regeneration.
         const setWorking = (working) => {
             if (laneState) {
                 laneState.stillWorking = working;
@@ -1654,6 +1665,12 @@ export default class CouncilController {
                 else delete laneState.stillWorkingSince;
             }
             if (!assistantMessage?.id || !laneId) return;
+            this.stalledLaneDisplays ??= new Map();
+            if (working) this.stalledLaneDisplays.set(displayKey, {
+                sessionId: session.id, messageId: assistantMessage.id, laneId,
+                since: lastOutputAt, signal: abortController?.signal
+            });
+            else this.stalledLaneDisplays.delete(displayKey);
             if (this.app.chatArea && this.app.isViewingSession(session.id)) {
                 this.app.chatArea.setCouncilLaneWorking?.(assistantMessage.id, laneId, working, lastOutputAt);
             }
@@ -1806,6 +1823,7 @@ export default class CouncilController {
             persistSnapshot(true);
             throw error;
         } finally {
+            this.stalledLaneDisplays?.delete(displayKey);
             if (stillWorkingTimer) {
                 clearTimeout(stillWorkingTimer);
                 stillWorkingTimer = null;

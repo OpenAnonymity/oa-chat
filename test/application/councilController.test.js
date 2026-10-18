@@ -2464,3 +2464,56 @@ test('Council checks the synthesis budget before issuing any opinion keys', asyn
     assert.equal(shortage.availableTickets, 6);
     assert.equal(issued, 0);
 });
+
+test('simultaneously quiet lanes restore their own clocks without a new saved snapshot', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let now = 1000, viewed = 'session-1';
+    t.mock.method(Date, 'now', () => now);
+    const callbacks = new Map(), finishes = new Map(), saved = new Map(), paints = [];
+    const controller = createController({ inferenceService: {
+        streamCompletion: (...args) => {
+            callbacks.set(args[1], args[3]);
+            return new Promise(resolve => finishes.set(args[1], resolve));
+        }
+    } });
+    Object.assign(controller.app, { isViewingSession: id => viewed === id, chatArea: {
+        updateCouncilLaneContent() {},
+        setCouncilLaneWorking: (...args) => paints.push(args)
+    } });
+    const requests = ['primary', 'secondary'].map(laneId => {
+        const laneState = { status: 'pending', response: '' };
+        const assistantMessage = { id: 'assistant-1' };
+        return controller.streamLaneMessagesCompletion({
+            session: { id: 'session-1' }, entry: { laneId, id: laneId, name: laneId },
+            laneSession: {}, messages: [], searchEnabled: false, abortController: new AbortController(),
+            streamTarget: { assistantMessage, laneState,
+                persistProgress: () => saved.set(laneId, structuredClone(laneState)) }
+        });
+    });
+    callbacks.get('primary')('First answer.');
+    now = 1600;
+    callbacks.get('secondary')('Second answer.');
+    viewed = 'other';
+    now = 6600;
+    t.mock.timers.tick(5000);
+    assert.equal(paints.length, 0);
+    assert.equal(saved.get('primary').stillWorking, undefined, 'saved clone predates the stall');
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.equal(paints.length, 0, 'does not paint another session');
+    viewed = 'session-1';
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.deepEqual(paints, [
+        ['assistant-1', 'primary', true, 1000], ['assistant-1', 'secondary', true, 1600]
+    ]);
+    now = 8000;
+    callbacks.get('primary')(' More.');
+    paints.length = 0;
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.deepEqual(paints, [['assistant-1', 'secondary', true, 1600]]);
+    for (const finish of finishes.values()) finish({ completionTokens: 1 });
+    await Promise.all(requests);
+    assert.equal(controller.stalledLaneDisplays.size, 0);
+    paints.length = 0;
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.equal(paints.length, 0);
+});
