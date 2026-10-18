@@ -1,3 +1,51 @@
+## October 17, 2026 — Sepolia withdrawal fees paid from the payout
+
+The revision-4 Sepolia profile now enables the withdrawal fee choice with the
+reviewed SDK pin `d482e4d2fb8b8e6914bd01846eb46969ed85dbf5`. A user can pay
+from the withdrawal without funding the signing account with ETH. The review
+shows the maximum fee and minimum net payout; an escape labels its two-step
+amount as an estimate. The signed operation and recovery journal keep the
+approved fee bounds and withdrawal identity through retries, replacements and
+concurrent tabs. Older profiles without support retain wallet-paid withdrawals.
+This supersedes the dormant-sponsorship and prepared-operation review gap noted
+in the earlier revision-4 rollout entry below.
+
+The Sepolia profile pins paymaster `0xDd5c8a38052E6024C970C6bd6b43D2C0e700123C`
+and its compact account factory, with the explicitly measured Glamsterdam gas
+schedule. The hosted bundler is restricted to this deployment and canonical
+EntryPoint v0.7. Its RPC admits only the reviewed method allowlist; the testnet
+service uses bounded private validation without generic opcode/storage tracing.
+This is a restricted Sepolia staging configuration, not a mainnet rollout.
+
+Actual browser SDK acceptance used an isolated signing account with exactly
+zero ETH before withdrawing note 6. It signed once and sent no wallet
+transaction. Bundle `0x2946fb8c21bee4eb6d6596202af6fcbdf24df9ba1f01f355f3317fb2d0512a6c`
+was included at Sepolia block 11938808: the 100,000,000,000,000-wei payout paid
+25,850,080 wei in fees, below the approved 89,505,680-wei maximum, and delivered
+99,999,974,149,920 wei to the intended account. Independent RPC checks confirmed
+the receipt, exact net balance, and zero transit balance, debt and credit. The
+SDK cleared the closed note and continues finality checks in the background;
+this entry records inclusion, not finalized-chain status.
+
+## October 17, 2026 — quiet balance versions and removed exit-kit UI
+
+Balance details is the only location for the protocol-version pill. It names
+`zkAPI v0.1`, `v0.2` or `v0.3` from the registry, with a muted “A new version is
+available.” line for an older balance. The panel and composer keep their normal
+layout. Upgrade banners, countdown reminders, completion prompts and reminder
+toasts are removed. Existing expiry, unavailable-service, withdrawal and
+cross-device recovery messages remain; a saved balance's expiry notice speaks
+of withdrawal, not upgrading. Version selection still follows the local wallet;
+no funds are moved and no transaction or reload is initiated by a notice.
+
+Exit-kit creation, download, status rows and reminders are removed from the web
+app, including the dialog and its helper module. Old kit metadata and SDK export
+APIs remain compatible; existing balances, journals and backups are not changed
+or cleared. The host no longer advertises exit-kit UI as required family wiring.
+Tests cover absent controls and stale action dispatch, all reminder tiers, normal
+expiry notices, and current/older version details. This supersedes the historical
+exit-kit and upgrade-notification descriptions below.
+
 ## 2026-10-15: One version pill, in balance details only
 
 - The System Panel no longer shows the version pill, its `?` or any help panel;
@@ -8630,3 +8678,21 @@ Controlled test instrumentation is isolated on the experiment branch. Its source
 and revisions must not enter production, even disabled. See
 [STAGING_REQUEST_TIMING.md](STAGING_REQUEST_TIMING.md) for semantics, limitations,
 opt-in boundaries and experiment-free UI baselines. No live collection is implied.
+
+## October 17, 2026 — withdrawal fees paid from the payout
+
+The sponsored withdrawal choice now bypasses the ordinary ETH balance/top-up
+check and shows the fee and net payout in the existing review. Quotes bind the
+balance, destination, signing account and mode; changes require another review.
+The revision-4 SDK preserves the exact approved gas and total fee caps through
+replacement and resume. Contract recipients' possible payout-credit surcharge
+is included in the disclosed net. Saved sponsored withdrawals continue to their
+`payout` address, not their intermediate contract destination, and can recheck
+a changed fee before continuing. Old versions without sponsorship retain their
+ordinary wallet-funded withdrawal. See the October 17 addendum in
+[ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md).
+
+The revision-4 SDK additionally rechecks the exact prepared operation and
+statement under the wallet lock for sponsored resume and background replay.
+The host now carries `prepared_withdrawal.operation_id` through continuation;
+a concurrent replacement or concession change returns to review before send.

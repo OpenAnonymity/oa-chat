@@ -21,6 +21,7 @@ import { Wallet } from 'ethers';
 import { AddressFundingProvider } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { readSponsoredPins } from '../../chat/zkapi/services/sponsoredOperation.mjs';
 import { concessionV1 } from '../../chat/zkapi/versioning/adapters/concessionV1.mjs';
+import { concessionV2 } from '../../chat/zkapi/versioning/adapters/concessionV2.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
 
@@ -110,14 +111,15 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     runtime.gaslessStatus = null;
     runtime.bundlerChainCheck = null;
     runtime.exitRpcChainCheck = null;
-    const state = noteState({ current_balance: payoutBalance, deposit_path: depositPath('0x51') });
+    const state = noteState({ current_balance: payoutBalance,
+        ...(depositPath ? { deposit_path: depositPath('0x51') } : {}) });
     const gasless = gaslessProfileFromVectors({ spelling: 'profile' });
     const h = createHarness(function SharedRuntime() { return runtime; });
     h.worker.mutate = plan => { plan.proof.proof = Buffer.alloc(256, h.worker.proofs).toString('base64'); };
     h.server.clearance = body => ({ status: 'ok', withdrawal_nullifier: body.withdrawal_nullifier, signature: { r: '0x1', s: '0x2' } });
     runtime.browserConfig.trusted_deployment = {
         ...deployedProfile('sepolia').trusted_deployment, contract_address: VAULT, chain_id: CHAIN_ID,
-        native_asset_wei_per_unit: '1000000000', max_pause_duration: 604_800, vault_revision: 3, gasless
+        native_asset_wei_per_unit: '1000000000', max_pause_duration: 604_800, vault_revision: depositPath ? 3 : 4, gasless
     };
     await store.writeBrowserWallet({ deploymentId: DEPLOYMENT, billingAsset: 'native_eth', state });
     await runtime.reload();
@@ -133,7 +135,7 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     const provider = new AddressFundingProvider({
         getConfig: () => funding, store: memoryStore(), locks: locks(), createChannel: () => null,
         createWallet: () => new Wallet(ownerKey),
-        protocol: () => ({ adapter: concessionV1, deploymentId: DEPLOYMENT_ID, version: { id: 'v2' } }),
+        protocol: () => ({ adapter: depositPath ? concessionV1 : concessionV2, deploymentId: DEPLOYMENT_ID, version: { id: depositPath ? 'v2' : 'v3' } }),
         sponsoredPins: () => readSponsoredPins(runtime.browserConfig.trusted_deployment),
         bundlerUrl: () => BUNDLER_URL,
         // The only network this signer is given is the bundler's.

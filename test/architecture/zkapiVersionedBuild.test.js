@@ -337,6 +337,7 @@ test('dormant registry: single mode emits exactly the legacy assets, bytes and r
     assert.deepEqual(generator.zkapiProxyRewrites(activated), [
         { source: '/zkapi-deployment/:path*', destination: `${root1}/:path*` },
         { source: '/zkapi-deployment-v2c/v0.2/:path*', destination: `${root1}/v0.2/:path*` },
+        { source: '/zkapi-deployment-v3/_bundler', destination: `${root1}/v0.3/bundler` },
         { source: '/zkapi-deployment-v3/v0.3/:path*', destination: `${root1}/v0.3/:path*` }
     ]);
 });
@@ -1946,7 +1947,7 @@ test('the bundled Vercel generator imports only node built-ins and routes every 
     for (const sources of [mainnetSources, sepoliaSources]) assert.equal(sources[0], '/zkapi-deployment/:path*');
     assert.deepEqual(mainnetSources.filter(source => source.startsWith('/zkapi-deployment')), ['/zkapi-deployment/:path*']);
     assert.deepEqual(sepoliaSources.filter(source => source.startsWith('/zkapi-deployment')),
-        ['/zkapi-deployment/:path*', '/zkapi-deployment-v2c/v0.2/:path*', '/zkapi-deployment-v3/v0.3/:path*']);
+        ['/zkapi-deployment/:path*', '/zkapi-deployment-v2c/v0.2/:path*', '/zkapi-deployment-v3/_bundler', '/zkapi-deployment-v3/v0.3/:path*']);
 });
 
 test('Vercel source uploads allow exactly the reviewed registry file besides the pins', async t => {

@@ -74,7 +74,10 @@ export function renderSponsoredFee(state = {}) {
     const payoutDisabled = state.busy === true || (choice === 'payout' && status === 'unavailable') ? ' disabled' : '';
     let detail = '';
     if (choice === 'payout') {
-        if (status === 'loading' || status === 'idle') {
+        if (status === 'idle' && state.locked) {
+            detail = `<p class="zkapi-note">The network fee is paid from this withdrawal, within the amount you approved.</p>
+                <button class="zkapi-quiet-button" type="button" data-zkapi-sponsored-retry${disabled}>Check fee again</button>`;
+        } else if (status === 'loading' || status === 'idle') {
             detail = `<p class="zkapi-note" data-zkapi-sponsored-detail role="status">${escapeHtml(SPONSORED_FEE_WORDS.checking)}</p>`;
         } else if (status === 'unavailable') {
             detail = `<p class="zkapi-note zkapi-note--attention" data-zkapi-sponsored-detail>${escapeHtml(quote?.text || '')}</p>
@@ -82,6 +85,7 @@ export function renderSponsoredFee(state = {}) {
         } else if (quote?.available === true) {
             const fee = money(quote.maxCostWei, state.format);
             const flat = BigInt(quote.flatFeeWei || '0') > 0n ? money(quote.flatFeeWei, state.format) : '';
+            const credit = BigInt(quote.creditSurchargeWei || '0') > 0n ? money(quote.creditSurchargeWei, state.format) : '';
             let line;
             if (quote.mode === 'escape') {
                 const estimate = quote.estimatedReceivedWei ? money(quote.estimatedReceivedWei, state.format) : '';
@@ -95,6 +99,7 @@ export function renderSponsoredFee(state = {}) {
             }
             detail = `<div data-zkapi-sponsored-detail>
                 ${line ? `<p class="zkapi-note">${line}</p>` : ''}
+                ${credit ? `<p class="zkapi-helper">The amount you receive allows for an additional fee of up to ${escapeHtml(credit)} if the receiving contract requires the payout to be held.</p>` : ''}
                 <p class="zkapi-helper">${escapeHtml(SPONSORED_FEE_WORDS.relay)}</p>
                 ${quote.payoutHasCode ? `<p class="zkapi-helper">${escapeHtml(SPONSORED_FEE_WORDS.contract)}</p>` : ''}
             </div>`;
@@ -102,12 +107,12 @@ export function renderSponsoredFee(state = {}) {
     }
     return `<fieldset class="zkapi-section zkapi-choices" data-zkapi-sponsored-fieldset ${state.busy === true ? 'disabled' : ''}>
         <legend class="zkapi-section-title">${escapeHtml(SPONSORED_FEE_WORDS.legend)}</legend>
-        <label class="zkapi-choice ${choice === 'wallet' ? 'selected' : ''}">
+        ${state.locked ? '' : `<label class="zkapi-choice ${choice === 'wallet' ? 'selected' : ''}">
             <input type="radio" name="zkapi-sponsored-fee" value="wallet" ${choice === 'wallet' ? 'checked' : ''}${disabled} />
             <span><strong>${escapeHtml(SPONSORED_FEE_WORDS.walletTitle)}</strong><small>${escapeHtml(walletHelp)}</small></span>
-        </label>
+        </label>`}
         <label class="zkapi-choice ${choice === 'payout' ? 'selected' : ''}">
-            <input type="radio" name="zkapi-sponsored-fee" value="payout" ${choice === 'payout' ? 'checked' : ''}${payoutDisabled} />
+            <input type="radio" name="zkapi-sponsored-fee" value="payout" ${choice === 'payout' ? 'checked' : ''}${state.locked ? ' disabled' : payoutDisabled} />
             <span><strong>${escapeHtml(SPONSORED_FEE_WORDS.payoutTitle)}</strong><small>${escapeHtml(SPONSORED_FEE_WORDS.payoutHelp)}</small></span>
         </label>
         ${detail}

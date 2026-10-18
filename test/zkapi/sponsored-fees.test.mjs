@@ -170,7 +170,7 @@ test('an available quote keeps only amounts; an unavailable one keeps a code and
     const quote = normalizeQuote(raw, { mode: 'mutual' });
     assert.deepEqual(quote, {
         available: true, mode: 'mutual', payoutWei: '1500000000000000', minimumReceivedWei: '1467250000000000', estimatedReceivedWei: null,
-        maxCostWei: '32750000000000000', flatFeeWei: '10000000000000', owedWei: '0', payoutHasCode: true, transitExists: true
+        maxCostWei: '32750000000000000', flatFeeWei: '10000000000000', creditSurchargeWei: '0', owedWei: '0', payoutHasCode: true, transitExists: true
     });
     assert.doesNotMatch(JSON.stringify(quote), /SECRET|bundler\.example|0x/);
     // An exit is an estimate, not a floor.
@@ -315,12 +315,12 @@ test('a quote for the Send Ethereum method is read with that wallet installed, a
     assert.equal(refused.available, false);
 });
 
-test('the options a withdrawal starts with are those that were shown, and the signer gets bounded headroom', () => {
+test('the options and signer cap exactly match the fee shown, with no hidden headroom', () => {
     const f = facadeFor();
     const quote = normalizeQuote({ available: true, mode: 'mutual', maxCost: '1000', flatFeeWei: '77', minimumReceivedWei: '5', payoutWei: '2000' });
     const plan = f.fees.plan(quote);
-    assert.deepEqual(plan.options, { fees: 'payout', bundlerUrl: ROUTE, feeCapWei: '77', allowExpensiveGas: false });
-    assert.deepEqual(plan.sponsored, { feeCapWei: '77', maxCostWei: '1500' });
+    assert.deepEqual(plan.options, { fees: 'payout', bundlerUrl: ROUTE, feeCapWei: '77', maxCostWei: '1000', maxTotalFeeWei: '1077', allowExpensiveGas: false });
+    assert.deepEqual(plan.sponsored, { feeCapWei: '77', maxCostWei: '1000' });
     // Never "expensive gas allowed": that is a decision of its own.
     assert.equal(plan.options.allowExpensiveGas, false);
     for (const unavailable of [null, undefined, { available: false }, 'x', { available: true, maxCostWei: '1' }]) {

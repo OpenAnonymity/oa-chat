@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import patch from '../../patches/zkapi-browser-sdk-v3-provider-verification.mjs';
+import patch from '../../patches/zkapi-browser-sdk-v3-gasless-provider-verification.mjs';
 import { patchSdkVersion } from '../../scripts/patch-zkapi-sdk.mjs';
 import registry from '../../deployments/zkapi/registry.json' with { type: 'json' };
 

@@ -2414,7 +2414,7 @@ test('a frozen balance is said frozen on the panel, the composer and the balance
         assert.equal(button.dataset.status, 'waiting', proposal);
         assert.equal(button.dataset.phase, 'withdrawal');
         // (The build's version is named after the words, as it is for every state.)
-        assert.equal(button.title, `Balance frozen. ${detail} · Version 2`);
+        assert.equal(button.title, `Balance frozen. ${detail}`);
     }
 });
 
@@ -2473,7 +2473,7 @@ test('a frozen balance another device has used says so on the panel, the compose
         updateZkapiBalanceControl(button, app);
         assert.equal(button.dataset.status, 'waiting', proposal);
         assert.equal(button.dataset.phase, 'withdrawal');
-        assert.equal(button.title, `${label}. ${detail} · Version 2`);
+        assert.equal(button.title, `${label}. ${detail}`);
         assert.doesNotMatch(button.title, WITHDRAWABLE);
     }
     // The panel's header keeps its amber waiting badge, not the green ready one.

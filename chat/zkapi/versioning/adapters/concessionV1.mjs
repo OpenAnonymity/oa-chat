@@ -544,7 +544,6 @@ const requiredWiring = Object.freeze([
     'device-not-newest',             // device_not_newest: restore the newest backup or exit kit
     'near-expiry',                   // note_near_expiry and config.exit.near_expiry
     'ownership-proof-wait',          // ownership_proof_wait, exit_release_pending, request_settlement_pending
-    'exit-kit',                      // exportExitKit after a deposit and when out of date
     'withdrawal-operation-recheck',  // re-verify the displayed prepared withdrawal under the wallet lock
     'other-deployment-withdrawals',  // config.other_deployment_withdrawals blocks deposits
     'other-deployment-credits'       // config.other_deployment_credits claimable from that build

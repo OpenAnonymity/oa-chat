@@ -773,22 +773,11 @@ the button, that checking links the older address to the current one at the
 provider. Returning the ETH reuses the same transport and signing rules as any
 other return.
 
-**Exit kit, other versions' history and giving up a balance.** These touch only
-local state, except where stated.
+**Other versions' history and giving up a balance.** These touch only local
+state, except where stated. The web exit-kit export feature was removed on
+October 17, 2026. Existing SDK export metadata and wallet recovery journals stay
+compatible, but the app no longer creates or downloads kits.
 
-- An exit kit is a user-initiated encrypted file that can move the whole
-  balance to any address. It is created in the browser with a generated 100-bit
-  passphrase (no person-chosen one), shown once and retyped; the key derivation
-  is local, so creating one makes no request. The passphrase and the file text
-  are never stored, logged, synced, placed in an activity record or written to
-  a clipboard (there is no Copy button: clipboards are read by managers and
-  synced between devices), and the file is saved by the person's own click.
-  This app cannot open a kit; that is the companion tool's job. The SDK can use
-  an exit RPC address of the person's own that it keeps in its own
-  `localStorage` key `zkapi-exit-rpc-url`; the app offers no way to set one and
-  never reads, writes or logs it, and because the SDK itself calls that
-  address, those reads do not go through the app's network proxy and that RPC
-  provider sees the user's IP and the time.
 - The payment history of the other versions is read from the shared wallet
   database by a read-only, version-less IndexedDB transaction over the deposits
   and withdrawals stores. It never loads the slot (note secrets, plans,

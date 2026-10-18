@@ -64,7 +64,6 @@ export const WIRED = new FrozenNameSet([
     'device-not-newest',
     'near-expiry',
     'ownership-proof-wait',
-    'exit-kit',
     'withdrawal-operation-recheck',
     'other-deployment-withdrawals',
     'other-deployment-credits',

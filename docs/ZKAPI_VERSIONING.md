@@ -61,6 +61,21 @@ also cites the same checkout's `sdk/build.mjs`, `demo/contracts/script/`,
 `protocol/rust/crates/zkapi-proof/`, `docs/design/concession-exit.md` and
 `docs-site/` by path and line.
 
+## Current presentation (October 17, 2026)
+
+The browser shows the protocol version only in balance details. Older balances
+carry the quiet text “A new version is available.” next to that version. No
+upgrade reminder banners, reminder toasts, or post-upgrade prompts are shown.
+Normal deposit expiry and actionable service/withdrawal recovery notices are
+unchanged. Existing wallet-driven SDK selection and explicit withdrawal/deposit
+actions remain: a version update never moves funds automatically.
+
+Exit-kit UI has been removed by product decision. The browser offers no export,
+passphrase, download or kit-status controls; the old action is rejected. SDK
+export APIs, persisted kit metadata and wallet recovery journals remain for
+compatibility. `exit-kit` is no longer a host wiring requirement. Historical
+sections below describing upgrade prompts are superseded by this section.
+
 ## Revision-4 Sepolia staging rollout
 
 The October 17 candidate adds version 3, adapter `concession-v2`, circuit
@@ -2487,57 +2502,10 @@ the rules; the host discloses them and records what the person chose
 
 ### 7.8 The exit kit
 
-An exit kit is an encrypted file that, with the zkAPI companion tool, lets a
-person withdraw even if the service is unavailable. It can also move the
-whole balance to any address, so this app treats it as a secret.
+The export dialog, passphrase helper, balance status row and reminders were
+removed on October 17. SDK export and recovery metadata remain compatible, but
+are not exposed by the host UI. See [Current presentation](#current-presentation-october-17-2026).
 
-- **Source.** `client.exportExitKit(passphrase)`, behind a `typeof` guard (the
-  legacy SDK has none; a static import of the SDK's `exit-kit` subpath would
-  fail the name-parity gate). The facade hands the text back and keeps neither
-  it nor the passphrase.
-- **Passphrase.** Generated, never chosen: 20 symbols from a 32-symbol alphabet
-  without `I`, `O`, `0` and `1`, shown as `XXXXX-XXXXX-XXXXX-XXXXX` (100 bits),
-  retyped before anything is created. The SDK's 10-character minimum is a floor,
-  not a design. There is no option for a person-chosen passphrase. The page
-  never writes the passphrase to the clipboard and has no Copy button: a
-  clipboard is read by managers, synced between devices and kept in a history,
-  none of which the app can undo, and the person already writes the passphrase
-  down to type it back. It stays selectable text.
-- **Dialog** ([ExitKitDialog.js](../chat/zkapi/components/ExitKitDialog.js),
-  `<dialog>` with `showModal()`). Step 1 creates the kit; deriving the key and
-  waiting for the wallet lock can take seconds, which lapses a click's user
-  activation, so nothing downloads there. Step 2 is a real "Save file" button
-  whose click builds the Blob, the object URL and the anchor click
-  synchronously, in that fresh gesture and from inside the modal. The result
-  is "Download started" with "Save again" (the same kit text, never a second
-  kit); the passphrase is dropped the moment the kit exists, the encrypted text
-  only when the dialog closes. The file is named
-  `oa-chat-exit-kit-YYYY-MM-DD.json` (local date, no identifier). A string that
-  is not exactly the sealed envelope is refused. Nothing is placed in
-  `chatDB`, storage, a URL, account sync, `networkLogger` or an activity record,
-  and the passphrase field is not autosaved.
-- **What the page can know.** The SDK sets its `exported_seq` BEFORE the file is
-  delivered, and `state_seq` moves with every settled chat, so "exported"
-  proves nothing about a file. The facade keeps an in-memory flag: closing the
-  dialog before a download started is "created, not saved", and the `kit`
-  notice keeps showing for that balance for this page session. A reload forgets
-  it, so the status row then says only "Created for this balance" (never "up to
-  date"). A persisted "saved" mark was declined: it would need a new storage key.
-  A later dialog that did save is not overridden by a late report from an older
-  one.
-- **Status row** (`ui.balanceExtras`): never created, created but not saved,
-  created for an earlier balance (with the same button), current. A stale kit
-  is a row with a one-click re-export, not a nag.
-- **The exit RPC.** The only line is "Keep a current exit kit so you can leave
-  even if the service is unavailable". The SDK keeps an optional exit RPC
-  address in its own `localStorage` key `zkapi-exit-rpc-url`; this app has no
-  control for it, never reads or writes it and never logs it (it may embed a
-  secret), and because the SDK fetches that address itself it does not pass
-  through the app's network proxy. `exit_release_pending` copy never mentions
-  an exit RPC.
-- **Not done.** The dialog cannot verify that a saved file decrypts (it would
-  need a WebCrypto port of a revision 3-only module), and there is no in-app
-  restore.
 
 ### 7.9 Giving up a zero or dust balance
 
@@ -3409,7 +3377,6 @@ evidence table and fails when:
 | `device-not-newest` | A balance another device used is explained and not offered for a withdrawal that would be rejected (no Withdraw, no upgrade nudge for that note). No in-app restore is promised: only the companion tool opens a kit | `versionState.mjs`; `RecordExtras.js` (`hideActions`); notice `device` | `zkapi-version-state-protocol`, `zkapi-record-extras`, `zkapi-protocol-notices`, `zkapi-facade-protocol` |
 | `near-expiry` | New chats pause with a persistent notice and Withdraw; set-aside notes get their own notice bound to Payment history; never mentions upgrading | facade `sendGate`; `VersionNotices.js` (`near`, `setaside`); `exitRefusal.mjs` (`note_near_expiry`) | `zkapi-version-state-protocol`, `zkapi-protocol-notices`, `zkapi-facade-protocol` |
 | `ownership-proof-wait` (with `request_settlement_pending`, `exit_release_pending`, `exit_locked`) | A refusal says when the withdrawal can be retried and what the choice costs; Withdraw and the emergency exit stay available. The settlement choice, the disclosed bound and the signer's cap ([7.7](#77-a-settling-chat-and-the-emergency-exit)) | `exitRefusal.mjs`; `ExitChoice.js`; `AccountModal.submitWithdrawal`; `addressFundingProvider.mjs` | `zkapi-exit-refusal`, `address-funding-escape-concession`, `zkapi-protocol-notices`, `zkapi-facade-protocol`, `zkapi-version-ui-render`, `zkapi-balance-extras-exit-choice`; open item below |
-| `exit-kit` | Export after a deposit (never-created and created-but-unsaved notices), a quiet status row, a generated passphrase, a two-step dialog ([7.8](#78-the-exit-kit)) | [ExitKitDialog.js](../chat/zkapi/components/ExitKitDialog.js); `exitKit.mjs`; `BalanceExtras.js`; facade `exportExitKit` | `zkapi-exit-kit-dialog`, `zkapi-protocol-notices`, `zkapi-facade-protocol`; real SDK in the rehearsal |
 | `withdrawal-operation-recheck` | The displayed balance and prepared withdrawal are re-verified under the wallet lock after settlement and the wallet connection, right before the SDK takes over; the signer binds the operation. **The SDK half is the recovery patch** ([11.2](#112-the-withdrawal-recheck-and-the-recovery-patch)) | [withdrawalRecovery.mjs](../chat/zkapi/services/withdrawalRecovery.mjs); `AccountModal.submitWithdrawal`; the signer | `withdrawal-recovery`, `zkapi-version-ui-render`, `zkapi-facade-protocol`; SDK half in the rehearsal |
 | `other-deployment-withdrawals` | Another deployment's unfinished withdrawal is unioned into the deposit gate (`previous_withdrawal_open`) and offers "Open version P". An operator `stuck_escape` notice that relaxed the gate also shows its reference number | `concessionV1.mjs`; `versionState.mjs`; `VersionNotices.js` (`previous`, operator notices with `operator.reference`) | `zkapi-concession-real-shapes`, `zkapi-protocol-notices`, `zkapi-facade-protocol` |
 | `other-deployment-credits` | Another deployment's credits never block deposits and keep their amount (the SDK writes it as a JS number); the page of the version that holds them offers the claim. A credit of an exit-only version can arrive only through `config.other_deployment_credits` | `concessionV1.mjs`; `versionState.mjs` (phase `claim-previous-credit`); `VersionNotices.js` (`credit`, `claim`) | `zkapi-concession-real-shapes`, `zkapi-other-deployment-credits` |
@@ -4343,7 +4310,6 @@ half of the withdrawal recheck.
 | [zkapi-exit-refusal.test.mjs](../test/zkapi/zkapi-exit-refusal.test.mjs) | each refusal code; seconds versus milliseconds; the 90-day clamp and the 60-second skew; the chat shape of `request_settlement_pending` ignored; the AND rule for the service codes; the legacy shape never a pause |
 | [zkapi-version-state-protocol.test.mjs](../test/zkapi/zkapi-version-state-protocol.test.mjs) | the exit, payout, set-aside and abandon facts of the state over the real-shape scenarios; flagged records and phases; a held settlement refusal merged with the standing time and bound |
 | [zkapi-protocol-notices.test.mjs](../test/zkapi/zkapi-protocol-notices.test.mjs) | the exit-state notices ([7.6](#76-exit-state-notices)): placement, ticket exclusion, interactions, actions, clock marker, escaping |
-| [zkapi-exit-kit-dialog.test.mjs](../test/zkapi/zkapi-exit-kit-dialog.test.mjs) | the two-step dialog, the generated passphrase and retype, the fresh-gesture download, "Save again", the unsaved result, nothing stored or logged, and that the passphrase reaches no clipboard (no Copy action, no clipboard call of any kind, none in the source) |
 | [zkapi-balance-extras-exit-choice.test.mjs](../test/zkapi/zkapi-balance-extras-exit-choice.test.mjs) | the kit row and give-up link; the settlement choice for each kind of withdrawal, the bound read from the drawn markup, the state after the settlement time |
 | [zkapi-abandon-verdict.test.mjs](../test/zkapi/zkapi-abandon-verdict.test.mjs) | every `blockedBy`, zero, dust and the limit, quotes (valid, expired, future, extreme), the ceiling, fail-closed switches, `isBareNote` against the store's own classification, BigInt parity with the installed SDK and the real `0.2.0` vectors |
 | [zkapi-abandon-note.test.mjs](../test/zkapi/zkapi-abandon-note.test.mjs) | the give-up service over the real store (and the real `0.2.0` store when present): no locks, a busy lock, `init` outside the lock, the re-check inside it, one commit, the note-id guard, late attempts, the drift guard over the keys the archive drops, **the support restore procedure** |
@@ -4379,3 +4345,28 @@ cannot share a module) are compared as syntax trees by
 Components that are not vm-evaluated (`RightPanel.js`,
 `PaymentModeRightPanel.js`, `ZkapiStateExperience.js`,
 `zkapiChatRuntimeCore.mjs`) import the facade directly.
+
+### October 17, 2026 — sponsored withdrawal integration on revision 4
+
+The existing fee choice is now integrated with the wallet-style withdrawal
+review. Choosing **Paid from this withdrawal** uses the sponsored quote for
+readiness; it no longer requires ETH in the signing account or displays the
+ordinary wallet top-up. The review shows the net amount after the fee. Legacy
+balances with no pinned sponsorship keep their ordinary withdrawal path.
+
+A quote is scoped to the note, current balance, method, signer, destination and
+withdrawal mode. Changed details invalidate review, including a balance changed
+by chat settlement. The host passes the exact shown `maxCostWei` (the previous
+50% headroom was removed), the flat-fee cap and a total cap including any
+contract-receiver credit surcharge. The revision-4 SDK checks and journals
+these bounds across replacement and resume. A saved withdrawal can explicitly
+check its fee again before continuing with a newly reviewed cap. Its receiving
+address is `payout`, never the intermediate contract address in `destination`.
+
+The real-SDK integration fixture now supports both revision 3's tree-bound
+withdrawals and revision 4's note-bound withdrawals. Run it with an unpacked
+SDK source checkout via `ZKAPI_V2_SDK_DIR`; published packages omit protocol
+fixtures, so a normal package-only run can skip it. Tests cover signed closes,
+escapes, finalization, stranded payout collection and wrong-note/payee/fee
+refusals. The deployment still needs complete reviewed gasless pins and its
+same-origin bundler route before the choice is offered.

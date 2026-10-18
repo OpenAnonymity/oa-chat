@@ -243,7 +243,7 @@ test('wiring:near-expiry a balance about to expire pauses chats, says when to wi
     // On the version that takes deposits there is nothing to upgrade to; on a closed one the upgrade
     // notice is its own and the near notice is still not about upgrading.
     const closed = derive({ active: CLOSED, snapshot: normalized('near_expiry') });
-    assert.ok(noticeOf(closed, 'upgrade'));
+    assert.equal(noticeOf(closed, 'upgrade'), undefined);
     assert.doesNotMatch(textOf(noticeOf(closed, 'near')), /upgrad/i);
 
     // The button opens the Withdraw view.
@@ -376,7 +376,8 @@ test('wiring:device-not-newest a balance another device used is explained, not o
     assert.ok(device);
     assert.equal(textOf(device), versionCopyText('exit.device'));
     assert.match(textOf(device), /another device or copy/);
-    assert.match(textOf(device), /zkAPI companion tool/);
+    assert.match(textOf(device), /device that used it last/);
+    assert.doesNotMatch(textOf(device), /exit kit/);
     // No in-app restore is promised: there is none.
     assert.doesNotMatch(textOf(device), /restore|import|recover/i);
     // The text says a withdrawal from here would be rejected, so it has no Withdraw button beside it.
@@ -519,199 +520,13 @@ test('wiring:other-deployment-withdrawals an operator notice shows its reference
 // The exit kit
 // ---------------------------------------------------------------------------
 
-test('wiring:exit-kit a balance with no kit, or one that was made and not saved, is asked for one; a stale kit is not a notice', () => {
-    freshDismissals();
-    const never = derive({ snapshot: normalized('kit_never_exported') });
-    const kit = noticeOf(never, 'kit');
-    assert.ok(kit);
-    assert.equal(kit.tone, 'info');
-    assert.equal(textOf(kit), versionCopyText('kit.never'));
-    assert.deepEqual(actionsOf(kit), ['export-exit-kit', 'dismiss']);
-    assert.equal(kit.actions[0].label, 'Create exit kit');
 
-    // Created and not saved: attention, not dismissible (the SDK counts it exported).
-    const unsaved = derive({ snapshot: normalized('kit_out_of_date'), kitUnsaved: true });
-    const warning = noticeOf(unsaved, 'kit');
-    assert.equal(warning.tone, 'attention');
-    assert.equal(textOf(warning), versionCopyText('kit.unsaved'));
-    assert.deepEqual(actionsOf(warning), ['export-exit-kit']);
-    assert.equal(warning.dismissible, false);
 
-    // A kit that is merely older than the latest chats is the balance card's row, not a banner.
-    const stale = derive({ snapshot: normalized('kit_out_of_date') });
-    assert.equal(stale.exit.kit.exported, true);
-    assert.equal(stale.exit.kit.outOfDate, true);
-    assert.equal(noticeOf(stale, 'kit'), undefined);
 
-    // Dismissing the "never created" prompt hides it for the page; it does not hide the "not saved" one.
-    dismissVersionNotice('kit');
-    assert.equal(noticeOf(never, 'kit'), undefined);
-    assert.ok(noticeOf(unsaved, 'kit'));
-    freshDismissals();
-});
 
-test('wiring:exit-kit the button opens the dialog and tells the facade what became of the file', async () => {
-    freshDismissals();
-    const state = derive({ snapshot: normalized('kit_never_exported') });
-    const run = async (outcome, members = {}) => {
-        const calls = [];
-        const facade = facadeWith({
-            state,
-            members: {
-                exportExitKit: async passphrase => { calls.push(['export', passphrase]); return 'KIT'; },
-                noteKitSaved: saved => { calls.push(['noteKitSaved', saved]); },
-                ...members
-            }
-        });
-        const page = context();
-        let opened = null;
-        const result = await handleVersionAction('export-exit-kit', {
-            facade,
-            ...page.context,
-            openExitKit: options => {
-                opened = options;
-                return { close() {}, result: Promise.resolve(outcome) };
-            }
-        });
-        return { calls, result, opened, page };
-    };
 
-    // Saved: the facade learns the kit is saved, and the page redraws.
-    let ran = await run({ saved: true, created: true });
-    assert.deepEqual(ran.result, { ok: true });
-    assert.deepEqual(ran.calls, [['noteKitSaved', true]]);
-    assert.equal(ran.page.events.refreshes, 1);
-    // The dialog's export is the facade's, with the passphrase as given.
-    assert.equal(await ran.opened.exportKit('PASS-PHRASE'), 'KIT');
-    assert.deepEqual(ran.calls.at(-1), ['export', 'PASS-PHRASE']);
 
-    // Created and not saved: said, so the notice keeps asking this page session.
-    ran = await run({ saved: false, created: true });
-    assert.deepEqual(ran.result, { ok: false, why: 'not_saved' });
-    assert.deepEqual(ran.calls, [['noteKitSaved', false]]);
 
-    // Cancelled before anything was made: nothing to say.
-    ran = await run({ saved: false, created: false });
-    assert.deepEqual(ran.result, { ok: false, why: 'not_saved' });
-    assert.deepEqual(ran.calls, []);
-
-    // A dialog that reports only whether the file was saved (no word on whether a kit was made) is
-    // taken at its word: not saved is said, saved is said.
-    ran = await run({ saved: false });
-    assert.deepEqual(ran.result, { ok: false, why: 'not_saved' });
-    assert.deepEqual(ran.calls, [['noteKitSaved', false]]);
-    ran = await run({ saved: true });
-    assert.deepEqual(ran.calls, [['noteKitSaved', true]]);
-
-    // A dialog that gave no answer at all says nothing, and the click is not an error.
-    ran = await run(null);
-    assert.deepEqual(ran.result, { ok: false, why: 'not_saved' });
-    assert.deepEqual(ran.calls, []);
-
-    // A facade that can not tell is not an error, and neither is one that throws.
-    ran = await run({ saved: true, created: true }, { noteKitSaved: undefined });
-    assert.deepEqual(ran.result, { ok: true });
-    ran = await run({ saved: true, created: true }, { noteKitSaved: () => { throw new Error('x'); } });
-    assert.deepEqual(ran.result, { ok: true });
-
-    // A client with no way to make a kit says so and opens nothing.
-    const page = context();
-    let opened = false;
-    const none = await handleVersionAction('export-exit-kit', {
-        facade: facadeWith({ state }), ...page.context, openExitKit: () => { opened = true; }
-    });
-    assert.deepEqual(none, { ok: false, why: 'unavailable' });
-    assert.equal(opened, false);
-    assert.deepEqual(page.events.notices, ['This browser can’t create an exit kit.']);
-});
-
-test('wiring:exit-kit the real dialog, driven end to end through the button', async () => {
-    freshDismissals();
-    const doc = createDocument();
-    const calls = [];
-    const facade = facadeWith({
-        state: derive({ snapshot: normalized('kit_never_exported') }),
-        members: {
-            exportExitKit: async passphrase => {
-                calls.push(['export', passphrase]);
-                return JSON.stringify({
-                    format: 'zkapi-exit-kit-v1',
-                    kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: 600000, salt: 'vUKxt2x70xzwmSNJ1ALPYQ==' },
-                    cipher: { name: 'AES-256-GCM', iv: '+p8NzqNzsBFTamwD' },
-                    ciphertext: 'U21leLs1D/1QFvelUBItpURd3EXycAzPcY0vXGm8BSDhClc3rmyL6DSKbfCy8wp2BqO2iZjZ'
-                });
-            },
-            noteKitSaved: saved => calls.push(['noteKitSaved', saved])
-        }
-    });
-    const originalCreate = URL.createObjectURL;
-    const originalRevoke = URL.revokeObjectURL;
-    URL.createObjectURL = blob => { calls.push(['url', blob.size > 0]); return 'blob:real'; };
-    URL.revokeObjectURL = () => {};
-    const originalCreateElement = doc.createElement.bind(doc);
-    doc.createElement = tag => {
-        const element = originalCreateElement(tag);
-        if (tag === 'a') element.click = () => calls.push(['download', element.download]);
-        return element;
-    };
-    try {
-        const page = context();
-        const pending = handleVersionAction('export-exit-kit', { facade, doc, ...page.context });
-        const dialog = doc.body.querySelector('[data-zkapi-exit-kit-dialog]');
-        assert.ok(dialog);
-        const passphrase = dialog.querySelector('[data-zkapi-kit-passphrase]').textContent;
-        const input = dialog.querySelector('[data-zkapi-kit-retype]');
-        input.value = passphrase;
-        input.dispatchEvent(new MiniEvent('input'));
-        dialog.querySelector('[data-zkapi-kit-action="create"]').click();
-        await new Promise(resolve => setImmediate(resolve));
-        dialog.querySelector('[data-zkapi-kit-action="save"]').click();
-        dialog.querySelector('[data-zkapi-kit-action="done"]').click();
-        assert.deepEqual(await pending, { ok: true });
-        assert.deepEqual(calls.map(call => call[0]), ['export', 'url', 'download', 'noteKitSaved']);
-        assert.equal(calls[0][1], passphrase);
-        assert.equal(calls[3][1], true);
-        assert.match(calls[2][1], /^oa-chat-exit-kit-\d{4}-\d{2}-\d{2}\.json$/);
-    } finally {
-        URL.createObjectURL = originalCreate;
-        URL.revokeObjectURL = originalRevoke;
-    }
-});
-
-test('wiring:exit-kit a dialog that closes late does not undo a kit that a newer dialog saved', async () => {
-    freshDismissals();
-    const state = derive({ snapshot: normalized('kit_never_exported') });
-    const told = [];
-    const facade = facadeWith({
-        state,
-        members: { exportExitKit: async () => 'KIT', noteKitSaved: saved => told.push(saved) }
-    });
-    // The first dialog was closed mid-export: it reports only when the SDK answers.
-    let answerFirst;
-    const first = handleVersionAction('export-exit-kit', {
-        facade, ...context().context,
-        openExitKit: () => ({ close() {}, result: new Promise(resolve => { answerFirst = resolve; }) })
-    });
-    // A second one is opened and saves a kit meanwhile.
-    const second = await handleVersionAction('export-exit-kit', {
-        facade, ...context().context,
-        openExitKit: () => ({ close() {}, result: Promise.resolve({ saved: true, created: true }) })
-    });
-    assert.deepEqual(second, { ok: true });
-    assert.deepEqual(told, [true]);
-    // The first one's late answer is "created, not saved": true of its own kit, not of the balance.
-    answerFirst({ saved: false, created: true });
-    assert.deepEqual(await first, { ok: false, why: 'not_saved' });
-    assert.deepEqual(told, [true], 'the page is not told the kit is unsaved');
-
-    // The other order is as it was: a later dialog that does not save is "not saved".
-    const third = await handleVersionAction('export-exit-kit', {
-        facade, ...context().context,
-        openExitKit: () => ({ close() {}, result: Promise.resolve({ saved: false, created: true }) })
-    });
-    assert.deepEqual(third, { ok: false, why: 'not_saved' });
-    assert.deepEqual(told, [true, false]);
-});
 
 // ---------------------------------------------------------------------------
 // Giving up a balance
@@ -724,7 +539,7 @@ test('an empty or very small balance on a closed version is offered to be given 
     freshDismissals();
     const snapshot = normalized('kit_never_exported');
     const withUpgrade = derive({ active: CLOSED, snapshot });
-    assert.deepEqual(idsOf(withUpgrade, 'dialog').slice(0, 1), ['upgrade']);
+    assert.deepEqual(idsOf(withUpgrade, 'dialog'), []);
 
     const zero = derive({ active: CLOSED, snapshot, abandon: ZERO_VERDICT });
     assert.equal(zero.abandon.available, true);
@@ -754,7 +569,7 @@ test('an empty or very small balance on a closed version is offered to be given 
     // this balance's own deadline out of the reminders the upgrade note is the neutral one, and that
     // surface carries no neutral note: nothing here puts funds at risk.
     assert.equal(withUpgrade.phase, 'upgrade-soon');
-    assert.deepEqual(idsOf(withUpgrade, 'ticket'), ['upgrade']);
+    assert.deepEqual(idsOf(withUpgrade, 'ticket'), []);
     assert.equal(dust.phase, 'upgrade-available');
     assert.deepEqual(idsOf(dust, 'ticket'), []);
 
@@ -932,7 +747,7 @@ test('panel placement: every notice reaches the panel and the dialog, the wait o
         },
         exitRefusal: error('ownership_proof_wait')
     });
-    const everyId = ['wait', 'frozen', 'device', 'payout', 'claim', 'setaside', 'kit'];
+    const everyId = ['wait', 'frozen', 'device', 'payout', 'claim', 'setaside'];
     const dialog = idsOf(loaded, 'dialog');
     for (const id of everyId) assert.ok(dialog.includes(id), `${id} on the dialog: ${dialog.join()}`);
     const panel = idsOf(loaded, 'panel');
@@ -970,7 +785,7 @@ test('a build with one protocol family, and a v1 page, show none of the new noti
             deadlines: [{ source: 'slot', expiryTs: Math.floor(GENERATED / 1000) + 20 * 86_400 }] })
     });
     assert.equal(legacy.exit, null);
-    const fresh = new Set(['near', 'wait', 'frozen', 'device', 'payout', 'claim', 'setaside', 'kit', 'abandon']);
+    const fresh = new Set(['near', 'wait', 'frozen', 'device', 'payout', 'claim', 'setaside', 'abandon']);
     for (const surface of ['panel', 'dialog', 'ticket']) {
         for (const id of idsOf(legacy, surface)) assert.equal(fresh.has(id), false, `${surface}: ${id}`);
     }
@@ -1012,12 +827,12 @@ test('notices whose words move with the clock say so, and the others do not', ()
         }
     }
     assert.deepEqual([...marked].sort(), ['frozen', 'near', 'setaside', 'wait']);
-    for (const id of ['device', 'payout', 'claim', 'kit']) assert.ok(unmarked.has(id), id);
+    for (const id of ['device', 'payout', 'claim']) assert.ok(unmarked.has(id), id);
     // It names words that move: a wait is counted from the clock and goes when it runs out.
     const wait = mount(renderVersionBanner(everything, { ...OPTIONS, surface: 'dialog' }));
     assert.equal(wait.querySelector('[data-zkapi-version-notice="wait"]').hasAttribute('data-zkapi-version-clock'), true);
     // The attribute is not structure: a block with and without it has the same signature.
-    assert.equal(buildVersionNotices(near, { ...OPTIONS, surface: 'dialog' }).signature, 'near:attention:1:open-withdraw|kit:info:1:export-exit-kit,dismiss');
+    assert.equal(buildVersionNotices(near, { ...OPTIONS, surface: 'dialog' }).signature, 'near:attention:1:open-withdraw');
 });
 
 test('the signature is structure only: text that moves with the clock does not change it, a new notice does', () => {
@@ -1027,13 +842,13 @@ test('the signature is structure only: text that moves with the clock does not c
     const later = buildVersionNotices(state, { ...OPTIONS, surface: 'dialog', now: GENERATED + 2 * SECOND });
     assert.notEqual(textOf(first.notices[0]), textOf(later.notices[0]), 'the countdown moved');
     assert.equal(first.signature, later.signature);
-    assert.match(first.signature, /^wait:attention:1:\|kit:info:1:export-exit-kit,dismiss$/);
+    assert.match(first.signature, /^wait:attention:1:$/);
 
     // A notice that is added or dropped, or whose buttons change, is a different block.
     const without = buildVersionNotices(derive({ snapshot: normalized('kit_never_exported') }), { ...OPTIONS, surface: 'dialog' });
     assert.notEqual(without.signature, first.signature);
     const unsaved = buildVersionNotices(derive({ snapshot: normalized('kit_never_exported'), kitUnsaved: true }), { ...OPTIONS, surface: 'dialog' });
-    assert.notEqual(unsaved.signature, without.signature, 'the tone changed with the kit being unsaved');
+    assert.equal(unsaved.signature, without.signature, 'legacy kit state does not affect the UI');
     // A reference line comes and goes with a note number and is reconciled by the patch itself, so it
     // is not structure: the same block with and without one has the same signature.
     const base = derive({ snapshot: normalized('kit_out_of_date') });
@@ -1069,7 +884,7 @@ test('a clock tick patches the words of a notice in place and renders nothing wh
 
     // A new notice is a render, and nothing was touched on the way to saying so.
     const richer = derive({ snapshot: normalized('kit_never_exported'), exitRefusal: error('ownership_proof_wait'), kitUnsaved: true });
-    assert.deepEqual(patchVersionNotices(root, richer, { ...options, now: GENERATED + 2 * SECOND }), { needsRender: true });
+    assert.deepEqual(patchVersionNotices(root, richer, { ...options, now: GENERATED + 2 * SECOND }), { needsRender: false });
     assert.equal(read(), 'Your earlier withdrawal request is about to expire. Try again in 2 seconds.');
     // So is one that is gone.
     const gone = derive({ snapshot: normalized('kit_out_of_date') });
@@ -1118,21 +933,21 @@ test('host markup that changed re-renders the block, though no notice did', () =
     freshDismissals();
     const state = derive({ snapshot: normalized('kit_never_exported') });
     const options = { ...OPTIONS, surface: 'panel' };
-    const first = renderVersionBanner(state, { ...options, extra: '<p data-host>Exit kit: never</p>' });
-    assert.match(first, /data-zkapi-version-sig="kit:info:1:export-exit-kit,dismiss\|\+"/, 'the legacy marker is kept');
+    const first = renderVersionBanner(state, { ...options, extra: '<p data-host>Activation: waiting</p>' });
+    assert.match(first, /data-zkapi-version-sig="\|\+"/, 'the legacy marker is kept');
     const digest = /data-zkapi-version-extra="([0-9a-z]+)"/.exec(first);
     assert.ok(digest, 'and a short digest of the markup is recorded');
     assert.ok(digest[1].length <= 7);
 
     const root = mount(`${renderVersionBadge(state, { surface: 'panel' })}${first}`);
-    assert.deepEqual(patchVersionNotices(root, state, { ...options, extra: '<p data-host>Exit kit: never</p>' }), { needsRender: false });
-    assert.deepEqual(patchVersionNotices(root, state, { ...options, extra: '<p data-host>Exit kit: created</p>' }), { needsRender: true });
+    assert.deepEqual(patchVersionNotices(root, state, { ...options, extra: '<p data-host>Activation: waiting</p>' }), { needsRender: false });
+    assert.deepEqual(patchVersionNotices(root, state, { ...options, extra: '<p data-host>Activation: ready</p>' }), { needsRender: true });
     assert.deepEqual(patchVersionNotices(root, state, options), { needsRender: true }, 'markup that went away');
 
     // Same markup, same digest; other markup, another.
-    const again = renderVersionBanner(state, { ...options, extra: '<p data-host>Exit kit: never</p>' });
+    const again = renderVersionBanner(state, { ...options, extra: '<p data-host>Activation: waiting</p>' });
     assert.equal(/data-zkapi-version-extra="([^"]+)"/.exec(again)[1], digest[1]);
-    const other = renderVersionBanner(state, { ...options, extra: '<p data-host>Exit kit: created</p>' });
+    const other = renderVersionBanner(state, { ...options, extra: '<p data-host>Activation: ready</p>' });
     assert.notEqual(/data-zkapi-version-extra="([^"]+)"/.exec(other)[1], digest[1]);
     // No markup: no attribute at all, as before.
     assert.doesNotMatch(renderVersionBanner(state, options), /data-zkapi-version-extra/);
@@ -1263,5 +1078,20 @@ test('styling: every class the new notices use is one the app ships', () => {
     for (const name of classes) {
         if (hooks.has(name)) continue;
         assert.ok(css.includes(`.${name}`) || css.includes(`.${escape(name)}`), `class ${name} is not in the shipped stylesheets`);
+    }
+});
+
+test('exit-kit creation is absent even when a stale page dispatches its old action', async () => {
+    const calls = [];
+    const facade = { exportExitKit: () => calls.push('export'), noteKitSaved: () => calls.push('save') };
+    const answer = await handleVersionAction('export-exit-kit', { facade, openExitKit: () => calls.push('open') });
+    assert.deepEqual(answer, { ok: false, why: 'unknown_action' });
+    assert.deepEqual(calls, []);
+    for (const kitUnsaved of [false, true]) {
+        const state = derive({ snapshot: normalized('kit_never_exported'), kitUnsaved });
+        for (const surface of ['panel', 'dialog', 'ticket']) {
+            assert.equal(noticeOf(state, 'kit', surface), undefined);
+            assert.doesNotMatch(renderVersionBanner(state, { ...OPTIONS, surface }), /exit kit|export-exit-kit/i);
+        }
     }
 });

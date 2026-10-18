@@ -178,9 +178,8 @@ test('the canonical text of the protocol keys, with and without their tokens', (
         ['exit.frozen', {}, 'This balance is frozen while a withdrawal of it has started and not finished. New '
             + 'chats resume when it finishes or can no longer go through. You can still withdraw.'],
         ['exit.device', {}, 'This balance was used on another device or copy after this browser last saved it, '
-            + 'so this browser can’t safely withdraw it. Withdraw it from the device that used it last, or use '
-            + 'your newest exit kit with the zkAPI companion tool. Trying here would cost network fees and be '
-            + 'rejected.'],
+            + 'so this browser can’t safely withdraw it. Withdraw it from the device that used it last. '
+            + 'Trying here would cost network fees and be rejected.'],
         ['exit.device.label', {}, 'Used on another device'],
         ['exit.rpc', {}, 'Keep a current exit kit so you can leave even if the service is unavailable.'],
         ['payout.alert', {}, 'A withdrawal paid out less than your balance minus your last chat’s budget. The '
@@ -344,7 +343,8 @@ test('the required sentences of the protocol texts are there, and the words that
         const text = versionCopy(key, EXIT_TOKENS);
         assert.equal(/\brestore|\bRPC\b|\bimport\b|\bsettings?\b/i.test(text), false, `${key}: ${text}`);
     }
-    assert.match(versionCopy('exit.device', {}), /zkAPI companion tool/);
+    assert.match(versionCopy('exit.device', {}), /device that used it last/);
+    assert.doesNotMatch(versionCopy('exit.device', {}), /exit kit/);
     // A held payout is neither returned nor sent, and an alert is never an apology.
     assert.equal(/returned|your wallet/i.test(versionCopy('payout.credited', EXIT_TOKENS)), false);
     assert.match(versionCopy('payout.credited', EXIT_TOKENS), /Payout held/);

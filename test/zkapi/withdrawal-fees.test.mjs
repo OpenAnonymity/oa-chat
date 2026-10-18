@@ -4,7 +4,9 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { getWalletMethod, setWalletMethod } from '../../chat/zkapi/services/walletMethod.mjs';
-import { refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady, withdrawalFeeReceiptAmounts, attachWithdrawalFees } from '../../chat/zkapi/components/WithdrawalFees.js';
+import { needsWithdrawalFees, refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady, withdrawalFeeReceiptAmounts, attachWithdrawalFees } from '../../chat/zkapi/components/WithdrawalFees.js';
+import { renderSponsoredFee } from '../../chat/zkapi/components/SponsoredFee.js';
+import { withdrawalDestination } from '../../chat/zkapi/services/addressFunding.js';
 
 const address = `0x${'1'.repeat(40)}`;
 function fixture(t) {
@@ -335,3 +337,80 @@ for (const failure of [false, true]) {
         assert.equal(button.dataset.copied, failure ? undefined : 'true');
     });
 }
+
+function useSponsored(t, owner) {
+    const quote = { available: true, mode: 'mutual', maxCostWei: '100000000000', flatFeeWei: '10000000000',
+        minimumReceivedWei: '890000000000', payoutWei: '1000000000000' };
+    const api = { supported: () => true, bundlerUrl: () => 'https://app.example/bundler', plan: q => ({
+        options: { fees: 'payout', maxCostWei: q.maxCostWei, feeCapWei: q.flatFeeWei },
+        sponsored: { maxCostWei: q.maxCostWei, feeCapWei: q.flatFeeWei }
+    }) };
+    t.mock.method(owner, 'sponsoredApi', () => api);
+    owner.sponsoredChoice = 'payout';
+    owner.sponsoredQuote = { key: owner.sponsoredKeyFor('mutual'), status: 'ready', quote };
+    t.mock.method(owner, 'renderSponsoredFee', () => renderSponsoredFee({ choice: 'payout', status: 'ready', quote }));
+    return quote;
+}
+
+test('payout-paid withdrawal reaches review with zero signer ETH and shows the net payout', async t => {
+    const { owner, quote } = fixture(t);
+    quote.balanceWei = '0'; quote.shortfallWei = quote.feeReserveWei;
+    await refreshWithdrawalFees(owner);
+    assert.equal(withdrawalFeeReady(owner), false);
+    useSponsored(t, owner);
+    assert.equal(needsWithdrawalFees(owner), false);
+    assert.equal(owner.withdrawalInputReady(), true);
+    const form = owner.renderWithdrawal();
+    assert.doesNotMatch(form, /Add <b>|Show deposit address|Checking available ETH/);
+    assert.match(form, /Paid from this withdrawal/);
+    assert.doesNotMatch(form, /id="zkapi-withdraw-btn"[^>]*disabled/);
+    owner.requestWithdrawal();
+    assert.ok(owner.withdrawalConfirmation);
+    const review = owner.renderWithdrawal();
+    assert.match(review, /No ETH is needed in your signing account/);
+    assert.match(review, /at least <b>0\.00000089 ETH<\/b>/);
+    const submit = t.mock.method(owner, 'submitWithdrawal', async () => {});
+    await owner.confirmWithdrawal();
+    assert.equal(submit.mock.callCount(), 1);
+});
+
+test('sponsored review is invalidated by changed balance, destination, signer or fee choice', async t => {
+    const { owner } = fixture(t);
+    const submit = t.mock.method(owner, 'submitWithdrawal', async () => assert.fail('stale review must not submit'));
+    for (const mutate of [() => { zkapiClient.wallet.note.current_balance++; },
+        () => { owner.fundingDestination = `0x${'4'.repeat(40)}`; },
+        () => { addressFundingWallet.state.address = `0x${'5'.repeat(40)}`; },
+        () => { owner.sponsoredChoice = 'wallet'; }]) {
+        useSponsored(t, owner);
+        owner.requestWithdrawal();
+        assert.ok(owner.withdrawalConfirmation);
+        mutate();
+        await owner.confirmWithdrawal();
+        assert.equal(owner.withdrawalConfirmation, null);
+    }
+    assert.equal(submit.mock.callCount(), 0);
+});
+
+test('saved payout-paid withdrawal resumes without wallet funding and keeps its receiving address', async t => {
+    const { owner } = fixture(t);
+    useSponsored(t, owner);
+    const payee = owner.fundingDestination;
+    zkapiClient.config.prepared_withdrawal = { mode: 'mutual', phase: 'prepared', fee_payer: 'payout',
+        destination: `0x${'6'.repeat(40)}`, payout: payee, max_cost_wei: '100', flat_fee_cap_wei: '10' };
+    owner.sponsoredChoice = 'wallet'; owner.sponsoredQuote = null;
+    assert.equal(withdrawalDestination(owner), payee);
+    assert.equal(needsWithdrawalFees(owner), false);
+    assert.equal(owner.withdrawalInputReady(), true);
+    assert.deepEqual(owner.sponsoredPlanFor('mutual').bounds, { maxCostWei: '100', feeCapWei: '10' });
+    assert.doesNotMatch(owner.renderWithdrawal(), /ETH for network fees|Add ETH|Checking available ETH/);
+});
+
+test('an old balance without sponsorship retains the ordinary wallet-funded path', async t => {
+    const { owner, quote } = fixture(t);
+    owner.sponsoredChoice = 'payout';
+    quote.balanceWei = '0'; quote.shortfallWei = quote.feeReserveWei;
+    await refreshWithdrawalFees(owner);
+    assert.equal(needsWithdrawalFees(owner), true);
+    assert.equal(owner.withdrawalInputReady(), false);
+    assert.match(owner.renderWithdrawal(), /Show deposit address/);
+});

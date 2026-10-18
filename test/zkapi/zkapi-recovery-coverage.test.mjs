@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import patch from '../../patches/zkapi-browser-sdk-wallet-recovery.mjs';
 import patchV2c from '../../patches/zkapi-browser-sdk-v2c-recovery.mjs';
 import patchV3 from '../../patches/zkapi-browser-sdk-v3-recovery.mjs';
+import patchV3Gasless from '../../patches/zkapi-browser-sdk-v3-gasless-recovery.mjs';
 import { ADAPTER_IDS, getAdapter } from '../../chat/zkapi/versioning/adapters/index.mjs';
 import { RegistryError } from '../../chat/zkapi/versioning/registryModel.mjs';
 import { WIRED } from '../../chat/zkapi/versioning/wiring.mjs';
@@ -72,7 +73,7 @@ const covered = () => withPatches(activatedRegistry(), ['wallet-recovery-v1'], {
 
 test('PATCH_COVERAGE names registered patches and adapter wiring, and is not part of a patch entry', () => {
     assert.ok(Object.isFrozen(PATCH_COVERAGE));
-    assert.deepEqual(Object.keys(PATCH_COVERAGE), ['wallet-recovery-v1', 'wallet-recovery-v2c', 'wallet-recovery-v3']);
+    assert.deepEqual(Object.keys(PATCH_COVERAGE), ['wallet-recovery-v1', 'wallet-recovery-v2c', 'wallet-recovery-v3', 'wallet-recovery-v3-gasless']);
     assert.deepEqual([...PATCH_COVERAGE['wallet-recovery-v1']], [RECHECK]);
     assert.deepEqual([...PATCH_COVERAGE['wallet-recovery-v2c']], [RECHECK]);
     const everyName = new Set(ADAPTER_IDS.flatMap(id => getAdapter(id).requiredWiring));
@@ -105,7 +106,8 @@ test('the reviewed patches are the map joined with the revision each patch is bo
     assert.deepEqual(reviewedRecoveryPatches(), {
         'wallet-recovery-v1': { revision: PATCH_REVISION, covers: [RECHECK] },
         'wallet-recovery-v2c': { revision: patchV2c.revision, covers: [RECHECK] },
-        'wallet-recovery-v3': { revision: patchV3.revision, covers: [RECHECK] }
+        'wallet-recovery-v3': { revision: patchV3.revision, covers: [RECHECK] },
+        'wallet-recovery-v3-gasless': { revision: patchV3Gasless.revision, covers: [RECHECK] }
     });
     // A copy: changing it cannot change the map or the next answer.
     reviewedRecoveryPatches()['wallet-recovery-v1'].covers.push('payout-alert');
@@ -147,7 +149,7 @@ test('a registry whose successor is pending, or whose live rows need nothing, ha
     assert.equal(shipped.versions[1].sdk.revision, patchV2c.revision);
     assert.equal(shipped.versions[2].adapter, 'concession-v2');
     assert.deepEqual(NETWORKS.map(network => shipped.versions[2].networks[network].status), ['pending', 'active']);
-    assert.deepEqual(shipped.versions[2].sdk.patches, ['wallet-recovery-v3', 'provider-verification-v3']);
+    assert.deepEqual(shipped.versions[2].sdk.patches, ['wallet-recovery-v3-gasless', 'provider-verification-v3-gasless']);
 });
 
 test('a live row of a family that lists the recheck, with no patch that covers it, is a gap', () => {
@@ -323,6 +325,7 @@ function mirror(t, registry) {
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     for (const relative of ['scripts/zkapiRegistry.mjs', 'scripts/patch-zkapi-sdk.mjs', 'chat/zkapi/versioning',
         'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-v2c-recovery.mjs', 'patches/zkapi-browser-sdk-v3-recovery.mjs', 'patches/zkapi-browser-sdk-v3-provider-verification.mjs',
+        'patches/zkapi-browser-sdk-v3-gasless-recovery.mjs', 'patches/zkapi-browser-sdk-v3-gasless-provider-verification.mjs',
         'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-v2c-provider-verification.mjs',
         'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
         fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true });

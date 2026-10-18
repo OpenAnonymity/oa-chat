@@ -3,7 +3,6 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
 import { zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import { walletMethodText } from '../services/walletMethod.mjs';
-import { versionCopyText } from '../versioning/copy.mjs';
 
 function escapeFallback(value) {
     return String(value ?? '')
@@ -388,20 +387,6 @@ export function renderZkapiComposerStatus(element, app, stateOverride = null) {
     attachZkapiSettlementActions(element, app);
 }
 
-// The loaded protocol version for the chip's accessible name, or ''. Only a
-// build with more than one live version names it (VersionState.show); a
-// single-version build, the SDK-default build and every test without a facade
-// keep the chip's name exactly as it was.
-function versionLabel() {
-    try {
-        const state = versionState();
-        if (!state || state.show !== true) return '';
-        return versionCopyText('pill', { F: state.current?.label || state.current?.id });
-    } catch {
-        return '';
-    }
-}
-
 export function updateZkapiBalanceControl(button, app) {
     if (!button) return;
     const state = getZkapiExperience(app);
@@ -420,8 +405,7 @@ export function updateZkapiBalanceControl(button, app) {
     button.dataset.status = status;
     button.dataset.phase = primary.phase;
     button.dataset.zkapiUxProposal = state.proposal;
-    const version = versionLabel();
-    button.title = `${primary.title}. ${primary.detail}${version ? ` · ${version}` : ''}`;
+    button.title = `${primary.title}. ${primary.detail}`;
     button.setAttribute('aria-label', button.title);
     button.setAttribute('aria-busy', primary.busy ? 'true' : 'false');
     if (label) label.textContent = text;

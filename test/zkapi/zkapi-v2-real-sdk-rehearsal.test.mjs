@@ -28,7 +28,7 @@
 //   wiring:ownership-proof-wait  A requested mutual close the SDK turns into
 //     an escape is signed within the cap the person was shown, with the
 //     recovery context the SDK itself builds.
-//   wiring:exit-kit  exportExitKit seals a kit, marks it exported before the
+//   legacy SDK export compatibility:  exportExitKit seals a kit, marks it exported before the
 //     host has delivered it, and names its failures.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -331,7 +331,7 @@ test('wiring:ownership-proof-wait a mutual request the SDK converts to an escape
 
 // ------------------------------------------------------------ the exit kit
 
-test('wiring:exit-kit exportExitKit seals a kit and marks it exported before the host delivers it, and names its failures', { skip }, async () => {
+test('legacy SDK export compatibility: exportExitKit seals a kit and marks it exported before the host delivers it, and names its failures', { skip }, async () => {
     await wipe();
     const runtime = new sdk.BrowserWalletRuntime();
     runtime.manifest = { deployment_id: DEPLOYMENT };

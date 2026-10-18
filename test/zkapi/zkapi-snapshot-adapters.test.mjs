@@ -100,7 +100,7 @@ test('adapters expose the documented interface and are immutable', () => {
     assert.ok(concessionV1.requiredWiring.length >= 8);
     assert.ok(concessionV1.requiredWiring.every(name => /^[a-z][a-z0-9-]*$/.test(name)));
     assert.equal(new Set(concessionV1.requiredWiring).size, concessionV1.requiredWiring.length);
-    for (const name of ['service-message', 'credited-payouts', 'exit-kit', 'ownership-proof-wait', 'near-expiry',
+    for (const name of ['service-message', 'credited-payouts', 'ownership-proof-wait', 'near-expiry',
         'withdrawal-operation-recheck', 'other-deployment-withdrawals', 'other-deployment-credits']) {
         assert.ok(concessionV1.requiredWiring.includes(name), name);
     }
