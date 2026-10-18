@@ -1582,11 +1582,16 @@ a.quick-ask-source:focus-visible {
 }
 
 /* Output already shown, model not finished: same shimmer as the pending
-   line, aligned to the response text. */
+   line, starting on the response text's left edge — 1rem + the 1px border
+   in bubble mode, 0.5rem in flat mode (the bubble's own padding there). */
 .council-lane-working,
 .message-still-working {
-    padding: 0 1rem 0.5rem;
+    padding: 0 1rem 0.5rem calc(1rem + 1px);
     line-height: 1.25;
+}
+html.flat-mode .council-lane-working,
+html.flat-mode .message-still-working {
+    padding-left: 0.5rem;
 }
 
 /* A lane stopped mid-answer keeps its text; one quiet line closes it. */

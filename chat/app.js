@@ -5238,11 +5238,12 @@ class ChatApp {
         const messageId = message.id;
         let timer = null;
         let shown = false;
+        let lastTextAt = Date.now();
         const show = (working) => {
             if (shown === working) return;
             shown = working;
             if (this.chatArea && this.isViewingSession(sessionId)) {
-                this.chatArea.setStreamingStillWorking?.(messageId, working);
+                this.chatArea.setStreamingStillWorking?.(messageId, working, lastTextAt);
             }
         };
         const clear = () => {
@@ -5252,13 +5253,14 @@ class ChatApp {
         };
         const arm = () => {
             clear();
+            lastTextAt = Date.now();
             timer = setTimeout(() => {
                 timer = null;
                 if (!turnStopped()) show(true);
             }, STILL_WORKING_DELAY_MS);
         };
         this.streamingReplyDisplays ??= new Map();
-        const display = { message, sessionId, isWorking: () => shown, turnStopped };
+        const display = { message, sessionId, isWorking: () => shown, since: () => lastTextAt, turnStopped };
         this.streamingReplyDisplays.set(messageId, display);
         const dispose = () => {
             clear();
@@ -5279,7 +5281,7 @@ class ChatApp {
         if (!this.isViewingSession(sessionId)) return;
         for (const [messageId, display] of this.streamingReplyDisplays || []) {
             if (display.sessionId === sessionId && !display.turnStopped() && display.isWorking()) {
-                this.chatArea?.setStreamingStillWorking?.(messageId, true);
+                this.chatArea?.setStreamingStillWorking?.(messageId, true, display.since());
             }
         }
     }

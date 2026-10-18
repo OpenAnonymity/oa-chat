@@ -1,3 +1,4 @@
+import { buildStillWorkingLabel, startStillWorkingClock } from './stillWorkingClock.js';
 import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
 import { restoredResponseForDisplay, wasReplyStreaming } from '../ui/restoredResponse.js';
 import { probeTurnOwnership, whenTurnReleased, OWNERSHIP_ELSEWHERE, OWNERSHIP_NONE } from '../services/turnOwnership.js';
@@ -2439,7 +2440,7 @@ export default class ChatArea {
     }
 
     /** Shows or clears the "Still working…" line under a single reply whose text has stalled. */
-    setStreamingStillWorking(messageId, working) {
+    setStreamingStillWorking(messageId, working, since = Date.now() - 1000) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return;
         const existing = messageEl.querySelector('.message-still-working');
@@ -2448,6 +2449,8 @@ export default class ChatArea {
             return;
         }
         if (existing) {
+            existing.dataset.stillWorkingSince = String(Math.round(since));
+            startStillWorkingClock();
             if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
             return;
         }
@@ -2456,13 +2459,15 @@ export default class ChatArea {
         const workingEl = document.createElement('div');
         workingEl.className = 'message-still-working';
         workingEl.setAttribute('role', 'status');
-        workingEl.innerHTML = '<span class="pending-response-label pending-response-streaming">Still working…</span>';
+        workingEl.dataset.stillWorkingSince = String(Math.round(since));
+        workingEl.innerHTML = buildStillWorkingLabel(since);
         bubble.insertAdjacentElement('afterend', workingEl);
         this.revealCouncilLanePart(workingEl);
+        startStillWorkingClock();
     }
 
     /** Shows or clears a lane's "Still working…" line under output that has already arrived. */
-    setCouncilLaneWorking(messageId, laneId, working) {
+    setCouncilLaneWorking(messageId, laneId, working, since = Date.now() - 1000) {
         const bodyEl = this.getCouncilLaneBody(messageId, laneId);
         if (!bodyEl) return;
         const existing = bodyEl.querySelector(':scope > .council-lane-working');
@@ -2471,6 +2476,8 @@ export default class ChatArea {
             return;
         }
         if (existing) {
+            existing.dataset.stillWorkingSince = String(Math.round(since));
+            startStillWorkingClock();
             // Coming back while it fades out: turn around from where it is.
             if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
             return;
@@ -2478,9 +2485,11 @@ export default class ChatArea {
         const workingEl = document.createElement('div');
         workingEl.className = 'council-lane-working';
         workingEl.dataset.councilLaneWorking = '';
-        workingEl.innerHTML = '<span class="pending-response-label pending-response-streaming">Still working…</span>';
+        workingEl.dataset.stillWorkingSince = String(Math.round(since));
+        workingEl.innerHTML = buildStillWorkingLabel(since);
         bodyEl.appendChild(workingEl);
         this.revealCouncilLanePart(workingEl);
+        startStillWorkingClock();
     }
 
     /** Fades in a lane's part when it arrives mid-stream (a re-render shows it at rest). */

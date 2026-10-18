@@ -392,13 +392,14 @@ test('lane images render, and a quiet running lane says it is still working', as
             id: 'm3', role: 'assistant', model: 'Parallel', content: '',
             council: { enabled: true, stage1: [
                 { label: 'Response A', laneId: 'primary', model: 'Image', status: 'complete', response: '', images: [image] },
-                { label: 'Response B', laneId: 'secondary', model: 'GPT Image', status: 'running', response: 'Making it now.', stillWorking: true }
+                { label: 'Response B', laneId: 'secondary', model: 'GPT Image', status: 'running', response: 'Making it now.', stillWorking: true, stillWorkingSince: Date.now() - 4200 }
             ] }
         }, helpers, [], 'Image');
         assert.match(html, /class="council-lane-images"[\s\S]*data:image\/png;base64,AAAA/);
         assert.doesNotMatch(html, /copy-council-lane-btn/, 'image-only answers have nothing to copy as text');
         assert.match(html, /regenerate-council-lane-btn/, 'image-only answers can still regenerate');
-        assert.match(html, /Still working…/);
+        assert.match(html, /Still working<span aria-hidden="true"> · <span class="still-working-seconds">4<\/span>s<\/span>/, 'the lane says how long it has been quiet');
+        assert.match(html, /data-still-working-since="\d+"/, 'a re-render keeps counting from the stored start');
 
         const streaming = buildMessageHTML({
             id: 'm4', role: 'assistant', model: 'Parallel', content: '',

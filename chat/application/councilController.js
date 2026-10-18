@@ -1623,11 +1623,16 @@ export default class CouncilController {
         // after output, say the model is still working instead of looking
         // finished. Streaming text needs no label, so it waits for a pause.
         let stillWorkingTimer = null;
+        let lastOutputAt = Date.now();
         const setWorking = (working) => {
-            if (laneState) laneState.stillWorking = working;
+            if (laneState) {
+                laneState.stillWorking = working;
+                if (working) laneState.stillWorkingSince = lastOutputAt;
+                else delete laneState.stillWorkingSince;
+            }
             if (!assistantMessage?.id || !laneId) return;
             if (this.app.chatArea && this.app.isViewingSession(session.id)) {
-                this.app.chatArea.setCouncilLaneWorking?.(assistantMessage.id, laneId, working);
+                this.app.chatArea.setCouncilLaneWorking?.(assistantMessage.id, laneId, working, lastOutputAt);
             }
         };
         const stopStillWorking = () => {
@@ -1639,6 +1644,7 @@ export default class CouncilController {
         };
         const armStillWorking = () => {
             stopStillWorking();
+            lastOutputAt = Date.now();
             stillWorkingTimer = setTimeout(() => {
                 stillWorkingTimer = null;
                 setWorking(true);

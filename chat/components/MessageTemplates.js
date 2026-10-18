@@ -16,6 +16,7 @@ import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAsse
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
 import { isReportedModelId } from '../domain/modelSelection.js';
 import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
+import { buildStillWorkingLabel, stillWorkingSinceAttribute, startStillWorkingClock } from './stillWorkingClock.js';
 import { keptAccessStages } from '../domain/accessTrace.js';
 import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
 
@@ -1552,10 +1553,13 @@ function buildCouncilErrorNotice({ message, detail = '' }) {
     return buildResponseErrorHtml(source ? `${message.replace(/\.$/, '')} (${source}).` : message);
 }
 
-function buildCouncilLaneWorkingIndicator() {
+function buildCouncilLaneWorkingIndicator(since) {
+    // A re-render keeps the lane's count: it runs from the stored start time.
+    const start = Number.isFinite(since) ? since : Date.now() - 1000;
+    startStillWorkingClock();
     return `
-        <div class="council-lane-working" data-council-lane-working>
-            <span class="pending-response-label pending-response-streaming">Still working…</span>
+        <div class="council-lane-working" data-council-lane-working${stillWorkingSinceAttribute(start)}>
+            ${buildStillWorkingLabel(start)}
         </div>
     `;
 }
@@ -1631,7 +1635,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
                 ${reasoningHtml}
                 ${contentHtml}
                 ${imagesHtml}
-                ${isStillWorking ? buildCouncilLaneWorkingIndicator() : ''}
+                ${isStillWorking ? buildCouncilLaneWorkingIndicator(entry.stillWorkingSince) : ''}
                 ${stoppedNote}
             </div>
             ${showLaneActions || status === 'cancelled' ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
