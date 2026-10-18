@@ -163,6 +163,7 @@ test('sync push chunks append-only invalidation records to server limits', async
         version: 1
     }));
     const batchSizes = [];
+    service.readUploadSnapshot = async () => ({});
     service._collectLocalBlobs = async () => blobs;
     service.fetchWithRetry = async (url, options) => {
         assert.match(url, /\/auth\/sync$/);

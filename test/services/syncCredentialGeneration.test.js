@@ -5,9 +5,13 @@ import { chatDB } from '../../chat/db.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
 
 test('an in-flight sync cannot finish with a replacement account session', async () => {
+    const originalSnapshot = syncService.readUploadSnapshot;
+    syncService.readUploadSnapshot = async () => ({});
     const originalCollect = syncService._collectLocalBlobs;
     const originalFetch = syncService.fetchWithRetry;
     let finishRequest;
+    let requestStarted;
+    const started = new Promise(resolve => { requestStarted = resolve; });
 
     try {
         syncService.setCredentials(
@@ -23,13 +27,14 @@ test('an in-flight sync cannot finish with a replacement account session', async
         }];
         syncService.fetchWithRetry = async () => new Promise(resolve => {
             finishRequest = resolve;
+            requestStarted();
         });
 
         const pendingPush = syncService._push(
             new Uint8Array(32).fill(1),
             generation
         );
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await started;
 
         syncService.clearCredentials();
         finishRequest({ ok: false, status: 401 });
@@ -38,6 +43,7 @@ test('an in-flight sync cannot finish with a replacement account session', async
         assert.equal(syncService.keyMaterial, null);
         assert.equal(syncService.accountId, null);
     } finally {
+        syncService.readUploadSnapshot = originalSnapshot;
         syncService._collectLocalBlobs = originalCollect;
         syncService.fetchWithRetry = originalFetch;
         syncService.clearCredentials();
@@ -141,6 +147,8 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
 });
 
 test('an invalidated sync does not overwrite replacement-account UI state', async () => {
+    const originalSaveSetting = chatDB.saveSetting;
+    chatDB.saveSetting = async () => {};
     const originalGetSetting = chatDB.getSetting;
     chatDB.getSetting = async key => key === 'account-settings' ? { accountId: 'account-a' } : null;
     const originalBuild = syncService._buildIdMapping;
@@ -177,6 +185,7 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
             new Uint8Array(32).fill(2),
             'account-b'
         );
+        syncService.lastSyncResult = { success: true, account: 'replacement' };
         finishBuild(new Map());
 
         const result = await pendingSync;
@@ -189,6 +198,7 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         assert.equal(syncService.syncInProgress, false);
     } finally {
         chatDB.getSetting = originalGetSetting;
+        chatDB.saveSetting = originalSaveSetting;
         syncService._buildIdMapping = originalBuild;
         syncService.isAccountScopeActive = originalScopeCheck;
         syncService.notify = originalNotify;
