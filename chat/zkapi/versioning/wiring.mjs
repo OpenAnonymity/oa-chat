@@ -67,5 +67,6 @@ export const WIRED = new FrozenNameSet([
     'exit-kit',
     'withdrawal-operation-recheck',
     'other-deployment-withdrawals',
-    'other-deployment-credits'
+    'other-deployment-credits',
+    'deposit-activation'
 ]);

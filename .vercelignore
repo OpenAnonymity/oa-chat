@@ -19,6 +19,8 @@
 !/patches/zkapi-browser-sdk-proof-cache.mjs
 !/patches/zkapi-browser-sdk-provider-verification.mjs
 !/patches/zkapi-browser-sdk-v2c-provider-verification.mjs
+!/patches/zkapi-browser-sdk-v3-recovery.mjs
+!/patches/zkapi-browser-sdk-v3-provider-verification.mjs
 !/deployments
 /deployments/*
 !/deployments/zkapi

@@ -712,7 +712,7 @@ test('activation gate: protocol wiring must be implemented before a row is live'
     validate(activatedRegistry(), { wired: ALL_WIRED });
     // The default is the checked-in WIRED set, which is every name the family
     // requires: with no override the gate is the production one, and open.
-    assert.deepEqual([...WIRED].sort(), [...ALL_WIRED].sort());
+    assert.ok([...ALL_WIRED].every(name => WIRED.has(name)));
     assert.equal(validateRegistry(activatedRegistry(), validationOptions({ wired: undefined })).versions[1].id, 'v2');
     // A set that is not a Set of names holds nothing.
     rejects(activatedRegistry(), 'gate_wiring', /not implemented/, { wired: null });
@@ -1359,7 +1359,7 @@ test('an unknown adapter or a row that disagrees with its adapter is refused', (
     assert.throws(() => getAdapter('future-family'), error => error.code === 'unknown_adapter');
     assert.throws(() => getAdapter('toString'), error => error.code === 'unknown_adapter');
     assert.throws(() => getAdapter(undefined), error => error.code === 'unknown_adapter');
-    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1']);
+    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1', 'concession-v2']);
 });
 
 test('the transition policy is data and is bounded', () => {
@@ -1427,7 +1427,7 @@ test('the give-up policy keys are optional row data, bounded by the family\'s sm
 // ---------------------------------------------------------------------------
 
 test('WIRED lists exactly the adapter\'s requiredWiring and cannot be changed through its API', () => {
-    const required = getAdapter('concession-v1').requiredWiring;
+    const required = [...new Set(ADAPTER_IDS.flatMap(id => getAdapter(id).requiredWiring))];
     assert.equal(WIRED.size, required.length);
     assert.deepEqual([...WIRED].sort(), [...required].sort());
     for (const name of required) assert.equal(WIRED.has(name), true, name);
@@ -1449,6 +1449,7 @@ test('the registry model, wiring and adapters are pure: no Node built-ins, SDK, 
         'chat/zkapi/versioning/adapters/index.mjs',
         'chat/zkapi/versioning/adapters/noteBoundV1.mjs',
         'chat/zkapi/versioning/adapters/concessionV1.mjs',
+        'chat/zkapi/versioning/adapters/concessionV2.mjs',
         'chat/zkapi/services/tokenAmount.mjs'
     ];
     // Comments may mention anything; only code is checked.

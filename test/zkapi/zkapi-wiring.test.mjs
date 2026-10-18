@@ -77,6 +77,9 @@ const RECOVERY_MODULE = 'chat/zkapi/services/withdrawalRecovery.mjs';
 const DIALOG_MODULE = 'chat/zkapi/components/AccountModal.js';
 
 const EVIDENCE = {
+    'deposit-activation': [
+        row(T('zkapi-proved-activation'), 'chat/zkapi/components/BalanceExtras.js', 'renderBalanceExtras')
+    ],
     // The service pause is said in the host's words by code, with "Check
     // again", from the snapshot, from errors, and from a refusal the snapshot
     // does not report.

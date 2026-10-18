@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import patch from '../../patches/zkapi-browser-sdk-wallet-recovery.mjs';
 import patchV2c from '../../patches/zkapi-browser-sdk-v2c-recovery.mjs';
+import patchV3 from '../../patches/zkapi-browser-sdk-v3-recovery.mjs';
 import { ADAPTER_IDS, getAdapter } from '../../chat/zkapi/versioning/adapters/index.mjs';
 import { RegistryError } from '../../chat/zkapi/versioning/registryModel.mjs';
 import { WIRED } from '../../chat/zkapi/versioning/wiring.mjs';
@@ -71,7 +72,7 @@ const covered = () => withPatches(activatedRegistry(), ['wallet-recovery-v1'], {
 
 test('PATCH_COVERAGE names registered patches and adapter wiring, and is not part of a patch entry', () => {
     assert.ok(Object.isFrozen(PATCH_COVERAGE));
-    assert.deepEqual(Object.keys(PATCH_COVERAGE), ['wallet-recovery-v1', 'wallet-recovery-v2c']);
+    assert.deepEqual(Object.keys(PATCH_COVERAGE), ['wallet-recovery-v1', 'wallet-recovery-v2c', 'wallet-recovery-v3']);
     assert.deepEqual([...PATCH_COVERAGE['wallet-recovery-v1']], [RECHECK]);
     assert.deepEqual([...PATCH_COVERAGE['wallet-recovery-v2c']], [RECHECK]);
     const everyName = new Set(ADAPTER_IDS.flatMap(id => getAdapter(id).requiredWiring));
@@ -103,7 +104,8 @@ test('PATCH_COVERAGE names registered patches and adapter wiring, and is not par
 test('the reviewed patches are the map joined with the revision each patch is bound to', () => {
     assert.deepEqual(reviewedRecoveryPatches(), {
         'wallet-recovery-v1': { revision: PATCH_REVISION, covers: [RECHECK] },
-        'wallet-recovery-v2c': { revision: patchV2c.revision, covers: [RECHECK] }
+        'wallet-recovery-v2c': { revision: patchV2c.revision, covers: [RECHECK] },
+        'wallet-recovery-v3': { revision: patchV3.revision, covers: [RECHECK] }
     });
     // A copy: changing it cannot change the map or the next answer.
     reviewedRecoveryPatches()['wallet-recovery-v1'].covers.push('payout-alert');
@@ -317,7 +319,7 @@ function mirror(t, registry) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'oa-registry-mirror-'));
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     for (const relative of ['scripts/zkapiRegistry.mjs', 'scripts/patch-zkapi-sdk.mjs', 'chat/zkapi/versioning',
-        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-v2c-recovery.mjs',
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-v2c-recovery.mjs', 'patches/zkapi-browser-sdk-v3-recovery.mjs', 'patches/zkapi-browser-sdk-v3-provider-verification.mjs',
         'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-v2c-provider-verification.mjs',
         'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
         fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true });

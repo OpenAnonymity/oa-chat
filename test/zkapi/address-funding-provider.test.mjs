@@ -15,7 +15,8 @@ const VAULT = `0x${'22'.repeat(20)}`;
 const DESTINATION = `0x${'44'.repeat(20)}`;
 const PASSWORD = 'not-a-real-wallet-password';
 const FUNDING = { chain_id: 1, contract_address: VAULT, demo_rpc_url: 'https://rpc.example',
-    billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000' };
+    billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000',
+    native_price_feed_address: `0x${'55'.repeat(20)}`, native_price_feed_decimals: 8, native_price_max_age_seconds: 3600 };
 const NATIVE_FUNDING = FUNDING;
 const PLAN = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
 const CONTEXT = { version: 1, deploymentId: 'fixture', chainId: 1, contractAddress: VAULT, kind: 'deposit',
@@ -1452,16 +1453,27 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
     } });
     await h.ready();
     const hash = await h.send();
+    // Anvil may acknowledge broadcast before its automined receipt is visible.
+    const waitReceipt = async transactionHash => {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+            const mined = await rpc('eth_getTransactionReceipt', [transactionHash]);
+            if (mined) return mined;
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.fail('local transaction was not mined');
+    };
+    assert.equal((await waitReceipt(hash)).status, '0x1');
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), 2_000_000_000_000_000n);
-    const client = new ZkapiClient();
-    client.config = { funding: { ...FUNDING, demo_rpc_url: url } };
-    client.browserMode = true;
-    const oldManifest = runtime.manifest;
-    runtime.manifest = { deployment_id: 'fixture' };
-    t.after(() => { runtime.manifest = oldManifest; });
+    // This payable fixture has no protocol note journal or NoteDeposited event.
+    // Verify the funding signer's exact replay and receipt acknowledgement here;
+    // the SDK's note-bound recovery is covered by the real-SDK recovery suites.
     const restored = new AddressFundingProvider({ ...h.init,
-        resumeTransaction: record => client.resumeExternalTransaction(record) });
-    client.setWalletProvider(restored);
+        resumeTransaction: async record => {
+            assert.equal(record.hash, hash);
+            assert.equal((await waitReceipt(record.hash)).status, '0x1');
+            await restored.acknowledgeTransaction(record.hash);
+            return { transactionHash: record.hash, status: 'confirmed' };
+        } });
     await restored.init();
     const recovered = await restored.recoverPending();
     assert.equal(recovered.transactionHash, hash);
@@ -1471,7 +1483,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
     assert.equal(broadcastBytes[0], broadcastBytes[1]);
     const returnHash = await restored.withAuthorizedAction({ kind: 'sweep', asset: 'eth', destination: DESTINATION, amount: 'max' },
         () => restored.transferEth(DESTINATION, 'max'));
-    const receipt = await rpc('eth_getTransactionReceipt', [returnHash]);
+    const receipt = await waitReceipt(returnHash);
     assert.equal(receipt.status, '0x1');
     const returnTransaction = Transaction.from(broadcastBytes.at(-1));
     const unusedFeeAllowance = returnTransaction.gasLimit * (returnTransaction.maxFeePerGas - BigInt(receipt.effectiveGasPrice));
@@ -1504,7 +1516,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
         { kind: 'deposit', amount: amount.toString(), preparedOperationId: nativeQuote.operationId,
             depositCommitment: nativeQuote.depositCommitment, feeLimitWei: nativeQuote.feeReserveWei,
             feeQuoteExpiresAt: nativeQuote.expiresAt });
-    const nativeReceipt = await rpc('eth_getTransactionReceipt', [depositHash]);
+    const nativeReceipt = await waitReceipt(depositHash);
     assert.equal(nativeReceipt.status, '0x1');
     const nativeActualFee = BigInt(nativeReceipt.gasUsed) * BigInt(nativeReceipt.effectiveGasPrice);
     assert(nativeActualFee <= BigInt(nativeQuote.feeReserveWei));

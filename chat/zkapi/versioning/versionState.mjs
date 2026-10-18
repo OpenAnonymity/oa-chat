@@ -460,6 +460,7 @@ function readSnapshot(value) {
         hasOpenWithdrawal: input.hasOpenWithdrawal === true,
         sdkDepositsClosed: input.sdkDepositsClosed === true,
         service: isRecord(input.service) ? input.service : null,
+        activation: isRecord(input.activation) ? input.activation : null,
         otherDeploymentWithdrawals: asArray(input.otherDeploymentWithdrawals),
         otherDeploymentCredits: asArray(input.otherDeploymentCredits),
         // Only the concession family reports these. A snapshot without them
@@ -1148,6 +1149,7 @@ export function deriveVersionState(input) {
         previous: partial.previous,
         unsent: partial.unsent,
         service: partial.service,
+        ...(snapshot.activation ? { activation: snapshot.activation } : {}),
         notices: collectNotices(others),
         exit,
         payouts: {

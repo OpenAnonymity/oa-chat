@@ -73,6 +73,15 @@ export function renderBalanceExtras(state, ctx = {}) {
     const reloadFirst = state.phase === 'reload-required' || state.reload?.required === true;
     const rows = [];
 
+    if (state.activation?.status === 'activating') {
+        const text = state.activation.paused
+            ? 'Your deposit is confirmed. Activation is paused by the vault owner; private chats must wait.'
+            : 'Your deposit is confirmed and waiting for activation. Private chats will become available automatically; you can withdraw before activation.';
+        rows.push(`<p class="zkapi-note zkapi-extras-note" data-zkapi-activation>${escapeHtml(text)}</p>`);
+    } else if (state.activation?.status === 'unknown') {
+        rows.push('<p class="zkapi-note zkapi-extras-note" data-zkapi-activation>Checking whether this balance is ready for private chats…</p>');
+    }
+
     const kit = ctx.canExport === false || reloadFirst || state.abandon?.available === true ? null : kitStateOf(state);
     if (kit !== null) {
         // The two states that need a sentence name the kit themselves; the

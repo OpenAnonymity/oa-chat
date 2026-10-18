@@ -61,6 +61,50 @@ also cites the same checkout's `sdk/build.mjs`, `demo/contracts/script/`,
 `protocol/rust/crates/zkapi-proof/`, `docs/design/concession-exit.md` and
 `docs-site/` by path and line.
 
+## Revision-4 Sepolia candidate
+
+The October 17 candidate adds version 3, adapter `concession-v2`, circuit
+`zkapi-v2-concession-v2` and vault revision 4. It is pending on both networks
+until reviewed deployment pins are installed. The current shipped registry has
+version 2 active and version 1 exit-only on Sepolia; Mainnet retains version 1
+active and version 2 pending. The older status description below is historical.
+
+The new family shares concession lifecycle and recovery semantics, adding
+`deposit-activation` wiring. A deposit records its note; an operator proof later
+activates it for requests. Pending activation does not prevent a wallet-funded
+exit. The host displays activation from the SDK snapshot without adding a new
+poller, event replay or client-side tree reconstruction. Unknown status is not
+presented as ready. A paused vault does not display an immediate-exit promise.
+
+Revision 4's exit tuple replaces the old root/leaf public inputs with the stored
+registration commitment and packed amount/expiry. The adapter pins the new
+mutual/escape selectors, 27 calldata words, byte offset 576 and proof length 256;
+the local funding signer still checks note, destination and value before signing.
+The SDK pin is `8f64e7c335e6a19a1180865a7835044d706bfade`. Its native confirmed
+wallet withdrawal identity checks are registered as `wallet-recovery-v3`; its
+host provider policy is `provider-verification-v3`, with exact file hashes.
+Recovery classification also includes the SDK's new deposit-retry helpers.
+
+Activation requires a finalized Sepolia manifest and profile published in a new
+SDK pin (the current package profile is still `not_deployed`), proof and runtime
+hash checks, an operational funded activator/challenger, and verification of the
+built artifact and public routes. Change only Sepolia version 2 to exit-only and
+version 3 to active, preserving old services and wallet stores. Mainnet version
+3 stays pending. No production frontend or Mainnet deployment is part of this
+candidate. The proof setup is single-party `dev`, as recorded in its manifest.
+
+Sponsored withdrawals stay disabled (`gasless: null`). The inherited SDK
+prepared-UserOp resume/claim paths do not fully enforce the confirmed operation
+identity; this review does not authorize enabling that feature. Wallet-funded
+withdrawal checks and fee estimates are covered by the new SDK tests.
+
+Tests: `zkapi-proved-activation.test.mjs` covers profile pairing, sanitized
+activation UI, real SDK calldata against an independent ABI encoder and recovery
+classification. `provider-verification-v3.test.mjs` exercises actual SDK startup,
+policy hooks, cancellation and cached-key rechecks. The provider test applies its
+pinned patch explicitly while the version is pending, so a fresh install is
+covered before postinstall begins treating the row as live.
+
 ## Contents
 
 1. [Purpose and non-goals](#1-purpose-and-non-goals)

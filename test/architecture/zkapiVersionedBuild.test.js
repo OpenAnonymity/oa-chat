@@ -1831,7 +1831,7 @@ test('registry rules still gate every plan: activation without its wiring is not
     }
     // The checked-in set lists every behavior the family requires, and it is
     // the default of a plan that is not told otherwise.
-    assert.equal(WIRED.size, requiredWiring.length);
+    assert.ok(requiredWiring.every(name => WIRED.has(name)));
     assert.equal(plan(WIRED).mode, 'multi');
     assert.equal(registryModule.planFromRegistry({
         network: 'mainnet', deployment: DEPLOYMENT, registry, profiles: registryModule.PROFILE_FILES

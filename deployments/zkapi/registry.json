@@ -169,6 +169,59 @@
           }
         }
       }
+    },
+    {
+      "id": "v3",
+      "ordinal": 3,
+      "label": "Version 3",
+      "adapter": "concession-v2",
+      "circuitId": "zkapi-v2-concession-v2",
+      "vaultRevision": 4,
+      "sdk": {
+        "alias": "zkapi-sdk-v3",
+        "source": "github:ethereum/zkapi#8f64e7c335e6a19a1180865a7835044d706bfade",
+        "revision": "8f64e7c335e6a19a1180865a7835044d706bfade",
+        "storeSha256": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
+        "patches": [
+          "wallet-recovery-v3",
+          "provider-verification-v3"
+        ],
+        "honorsDepositsFlag": true
+      },
+      "publicPath": "/zkapi/v3/",
+      "proxyPath": "/zkapi-deployment-v3/",
+      "transition": {
+        "closeByMarginSeconds": 259200,
+        "reminderDays": [
+          7,
+          3,
+          1
+        ],
+        "promptWindowDays": 14
+      },
+      "gate": {
+        "recoveryReview": {
+          "revision": "8f64e7c335e6a19a1180865a7835044d706bfade",
+          "verdict": "not_required",
+          "patch": null
+        },
+        "protocolWiring": "done",
+        "manifestSha256": null
+      },
+      "networks": {
+        "mainnet": {
+          "status": "pending",
+          "config": {
+            "deployment_status": "not_deployed"
+          }
+        },
+        "sepolia": {
+          "status": "pending",
+          "config": {
+            "deployment_status": "not_deployed"
+          }
+        }
+      }
     }
   ]
 }

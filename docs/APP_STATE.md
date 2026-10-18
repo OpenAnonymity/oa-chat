@@ -1,3 +1,23 @@
+## October 17, 2026 — revision-4 Sepolia integration candidate
+
+The `concession-v2` adapter supports circuit `zkapi-v2-concession-v2`, vault
+revision 4, and the SDK pinned at `8f64e7c335e6a19a1180865a7835044d706bfade`.
+Version 3 remains pending until its Sepolia deployment is finalized. Version 1
+and version 2 retain their SDK pins, profiles, wallet stores and routes.
+
+Deposits are recorded before the operator activates them in the request tree.
+The balance panel distinguishes waiting, paused and unknown activation status;
+only sanitized status, queue position and pause state reach the host snapshot.
+The new withdrawal ABI binds directly to the stored note, with 17 tuple words
+and 27 total words. The funding signer checks the new selectors and offsets.
+
+The SDK includes the existing confirmed withdrawal identity checks and fee
+budget API. A revision-specific, hash-checked provider verification patch keeps
+the host's verifier policy and cached-key recheck. Sponsored withdrawals remain
+disabled; their inherited prepared-UserOp resume identity gap is not covered by
+this wallet-transaction recovery review. See the revision-4 note in
+[the versioning guide](ZKAPI_VERSIONING.md#revision-4-sepolia-candidate).
+
 ## October 15, 2026 — late reasoning stays below the model header
 
 Live insertion of first visible or withheld reasoning now anchors after the model

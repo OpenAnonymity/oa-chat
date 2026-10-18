@@ -58,8 +58,8 @@ const asideDeadline = (expiryTs, recordId = null, deviceFlagged = false) => ({
 // ---------------------------------------------------------------------------
 
 test('adapters expose the documented interface and are immutable', () => {
-    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1']);
-    for (const adapter of [noteBoundV1, concessionV1]) {
+    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1', 'concession-v2']);
+    for (const adapter of ADAPTER_IDS.map(getAdapter)) {
         assert.equal(getAdapter(adapter.id), adapter);
         for (const method of ['validateProfile', 'fundingFromProfile', 'normalizeSnapshot', 'closeBy']) {
             assert.equal(typeof adapter[method], 'function', `${adapter.id}.${method}`);
@@ -124,7 +124,7 @@ test('adapter billing and abandon data match both SDK generations and the profil
     assert.equal(vectors.nativeUnitsPerEth, '1000000000');
     assert.deepEqual(vectors.chatSpendingTierUsd, [...CHAT_SPENDING_TIER_USD]);
 
-    for (const adapter of [noteBoundV1, concessionV1]) {
+    for (const adapter of ADAPTER_IDS.map(getAdapter)) {
         assert.deepEqual(adapter.billing, { asset: 'native_eth', unit: 'gwei', perEth: 1e9 }, adapter.id);
         assert.ok(Object.isFrozen(adapter.billing));
         // Ledger units per ETH is the profile's pin read the other way round.
@@ -495,7 +495,7 @@ test('fundingFromProfile returns the vault identity and refuses a non native-ETH
     assert.equal(next.chain_id, 11155111);
     assert.equal(next.contract_address, `0x${'2'.repeat(40)}`);
     assert.equal(next.demo_rpc_url, 'https://ethereum-sepolia-rpc.publicnode.com');
-    for (const adapter of [noteBoundV1, concessionV1]) {
+    for (const adapter of ADAPTER_IDS.map(getAdapter)) {
         for (const mutate of [
             c => { c.trusted_deployment.billing_asset = 'erc20'; },
             c => { c.trusted_deployment.billing_unit = 'wei'; },
@@ -517,7 +517,7 @@ test('fundingFromProfile returns the vault identity and refuses a non native-ETH
 test('closeBy is the note expiry minus the version margin, in epoch milliseconds', () => {
     const version = { transition: { closeByMarginSeconds: 259_200, reminderDays: [7, 3, 1], promptWindowDays: 14 } };
     const expiry = NOW_SECONDS + 30 * DAY;
-    for (const adapter of [noteBoundV1, concessionV1]) {
+    for (const adapter of ADAPTER_IDS.map(getAdapter)) {
         assert.equal(adapter.closeBy(expiry, version), (expiry - 259_200) * 1000);
         assert.equal(adapter.closeBy(expiry, { transition: { ...version.transition, closeByMarginSeconds: 0 } }), expiry * 1000);
         for (const bad of [null, undefined, 0, -5, 'soon', NaN, 1.5, {}]) {
@@ -751,7 +751,7 @@ test('every deposit-named method of the revision 3 SDK is classified', () => {
     // The methods that begin a deposit are the same set in both generations.
     assert.deepEqual(concessionV1.depositEntryPoints, noteBoundV1.depositEntryPoints);
     // Recovery of a started deposit is never guarded.
-    for (const adapter of [noteBoundV1, concessionV1]) {
+    for (const adapter of ADAPTER_IDS.map(getAdapter)) {
         for (const name of ['recoverBrowserDeposit', 'recoverUnknownDeposit', 'retryDroppedDeposit', 'retryUnknownDeposit',
             'prepareDepositRetry', 'resumeExternalTransaction']) {
             assert.ok(adapter.recoveryEntryPoints.client.includes(name), name);
@@ -1390,14 +1390,14 @@ test('set-aside deadlines: fuzzed snapshots only ever yield positive safe intege
         }
         const wallet = random() < 0.4 ? slotNote({ expiry_ts: pick(seconds) }) : { has_note: false, note: null };
         const snapshot = concessionClientSnapshot({ wallet, withdrawals: records, deposits });
-        for (const adapter of [noteBoundV1, concessionV1]) {
+        for (const adapter of ADAPTER_IDS.map(getAdapter)) {
             const result = adapter.normalizeSnapshot(snapshot, { nowMs: NOW_MS });
             const sources = result.deadlines.map(deadline => deadline.source);
             assert.ok(sources.every(source => source === 'slot' || source === 'set-aside'));
             assert.ok(sources.indexOf('slot') <= 0 && sources.filter(source => source === 'slot').length <= 1);
             for (const deadline of result.deadlines) {
                 // Only the concession family annotates its set-aside entries.
-                const annotated = adapter === concessionV1 && deadline.source === 'set-aside';
+                const annotated = adapter !== noteBoundV1 && deadline.source === 'set-aside';
                 assert.deepEqual(Object.keys(deadline).sort(),
                     annotated ? ['deviceFlagged', 'expiryTs', 'recordId', 'source'] : ['expiryTs', 'source']);
                 assert.ok(Number.isSafeInteger(deadline.expiryTs) && deadline.expiryTs > 0,
@@ -1421,7 +1421,7 @@ test('set-aside deadlines: fuzzed snapshots only ever yield positive safe intege
         if (count === 1 && rowExpiries.length && !wallet.has_note
             && ['parked', 'restored'].includes(only.phase) && validSeconds(only.noteId) !== null) {
             const joined = Math.min(...rowExpiries);
-            for (const adapter of [noteBoundV1, concessionV1]) {
+            for (const adapter of ADAPTER_IDS.map(getAdapter)) {
                 const result = adapter.normalizeSnapshot(snapshot, { nowMs: NOW_MS });
                 assert.equal(result.deadlines.length, 1);
                 const [{ expiryTs }] = result.deadlines;
