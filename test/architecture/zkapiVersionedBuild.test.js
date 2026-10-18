@@ -327,16 +327,17 @@ test('dormant registry: single mode emits exactly the legacy assets, bytes and r
         assert.deepEqual(routing.rewrites[0], { source: '/zkapi-deployment/:path*', destination: `${origin}/:path*` });
         assert.equal(routing.rewrites.filter(rewrite => rewrite.source.startsWith('/zkapi-deployment')).length, 1);
     }
-    // The activated network: both versions, deposits to version 2, version 1
+    // The activated network: three versions, deposits to version 3, version 1
     // at the root of its hostname and version 2 under its own /v0.2 subtree.
     const activated = registryModule.planFromRegistry({ network: 'sepolia', deployment: DEPLOYMENT });
     assert.equal(activated.mode, 'multi');
-    assert.deepEqual(activated.versions.map(version => version.id), ['v1', 'v2']);
-    assert.equal(activated.depositTarget, 'v2');
+    assert.deepEqual(activated.versions.map(version => version.id), ['v1', 'v2', 'v3']);
+    assert.equal(activated.depositTarget, 'v3');
     const root1 = new URL(activated.versions[0].config.trusted_deployment.protocol_server_url).origin;
     assert.deepEqual(generator.zkapiProxyRewrites(activated), [
         { source: '/zkapi-deployment/:path*', destination: `${root1}/:path*` },
-        { source: '/zkapi-deployment-v2c/v0.2/:path*', destination: `${root1}/v0.2/:path*` }
+        { source: '/zkapi-deployment-v2c/v0.2/:path*', destination: `${root1}/v0.2/:path*` },
+        { source: '/zkapi-deployment-v3/v0.3/:path*', destination: `${root1}/v0.3/:path*` }
     ]);
 });
 
@@ -1457,7 +1458,8 @@ test('a live version on the development setup is warned about once per build; mp
             warn: message => warnings.push(message)
         });
         if (network === 'sepolia') {
-            assert.equal(warnings.length, 1, warnings.join('\n'));
+            assert.equal(warnings.length, 2, warnings.join('\n'));
+            assert.match(warnings[1], /WARNING: zkAPI v3 on sepolia/);
             assert.match(warnings[0], /^\[build\] WARNING: zkAPI v2 on sepolia is built on the single-party development proof setup \(dev\)\./);
         } else {
             assert.deepEqual(warnings, [], network);
@@ -1944,7 +1946,7 @@ test('the bundled Vercel generator imports only node built-ins and routes every 
     for (const sources of [mainnetSources, sepoliaSources]) assert.equal(sources[0], '/zkapi-deployment/:path*');
     assert.deepEqual(mainnetSources.filter(source => source.startsWith('/zkapi-deployment')), ['/zkapi-deployment/:path*']);
     assert.deepEqual(sepoliaSources.filter(source => source.startsWith('/zkapi-deployment')),
-        ['/zkapi-deployment/:path*', '/zkapi-deployment-v2c/v0.2/:path*']);
+        ['/zkapi-deployment/:path*', '/zkapi-deployment-v2c/v0.2/:path*', '/zkapi-deployment-v3/v0.3/:path*']);
 });
 
 test('Vercel source uploads allow exactly the reviewed registry file besides the pins', async t => {

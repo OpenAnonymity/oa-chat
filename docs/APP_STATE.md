@@ -1,9 +1,12 @@
-## October 17, 2026 — revision-4 Sepolia integration candidate
+## October 17, 2026 — revision-4 Sepolia staging rollout
 
 The `concession-v2` adapter supports circuit `zkapi-v2-concession-v2`, vault
-revision 4, and the SDK pinned at `8f64e7c335e6a19a1180865a7835044d706bfade`.
-Version 3 remains pending until its Sepolia deployment is finalized. Version 1
-and version 2 retain their SDK pins, profiles, wallet stores and routes.
+revision 4, and the SDK pinned at `22ef8f770bd78573969901ec9a5a569b17ea9548`.
+Version 3 is active on Sepolia at vault
+`0x7ff4ba0662a8218d0954c1a11ae61df6c3548ea4`, creation block 11937653.
+Version 2 becomes exit-only there. Both older versions retain their SDK pins,
+profiles, wallet stores and routes. Mainnet remains on version 1; its newer
+versions stay pending. This source is authorized for staging only.
 
 Deposits are recorded before the operator activates them in the request tree.
 The balance panel distinguishes waiting, paused and unknown activation status;
@@ -16,7 +19,7 @@ budget API. A revision-specific, hash-checked provider verification patch keeps
 the host's verifier policy and cached-key recheck. Sponsored withdrawals remain
 disabled; their inherited prepared-UserOp resume identity gap is not covered by
 this wallet-transaction recovery review. See the revision-4 note in
-[the versioning guide](ZKAPI_VERSIONING.md#revision-4-sepolia-candidate).
+[the versioning guide](ZKAPI_VERSIONING.md#revision-4-sepolia-staging-rollout).
 
 ## October 15, 2026 — late reasoning stays below the model header
 

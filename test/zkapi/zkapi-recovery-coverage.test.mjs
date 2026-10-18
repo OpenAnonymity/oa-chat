@@ -142,9 +142,12 @@ test('a registry whose successor is pending, or whose live rows need nothing, ha
     // registered one for its own revision, so nothing is missing; mainnet is
     // pending and is not asked for what its family lists.
     assert.equal(shipped.versions[1].adapter, 'concession-v1');
-    assert.deepEqual(NETWORKS.map(network => shipped.versions[1].networks[network].status), ['pending', 'active']);
+    assert.deepEqual(NETWORKS.map(network => shipped.versions[1].networks[network].status), ['pending', 'exit-only']);
     assert.deepEqual(shipped.versions[1].sdk.patches, ['wallet-recovery-v2c', 'provider-verification-v2c']);
     assert.equal(shipped.versions[1].sdk.revision, patchV2c.revision);
+    assert.equal(shipped.versions[2].adapter, 'concession-v2');
+    assert.deepEqual(NETWORKS.map(network => shipped.versions[2].networks[network].status), ['pending', 'active']);
+    assert.deepEqual(shipped.versions[2].sdk.patches, ['wallet-recovery-v3', 'provider-verification-v3']);
 });
 
 test('a live row of a family that lists the recheck, with no patch that covers it, is a gap', () => {

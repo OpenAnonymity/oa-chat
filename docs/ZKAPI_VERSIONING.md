@@ -61,13 +61,13 @@ also cites the same checkout's `sdk/build.mjs`, `demo/contracts/script/`,
 `protocol/rust/crates/zkapi-proof/`, `docs/design/concession-exit.md` and
 `docs-site/` by path and line.
 
-## Revision-4 Sepolia candidate
+## Revision-4 Sepolia staging rollout
 
 The October 17 candidate adds version 3, adapter `concession-v2`, circuit
-`zkapi-v2-concession-v2` and vault revision 4. It is pending on both networks
-until reviewed deployment pins are installed. The current shipped registry has
-version 2 active and version 1 exit-only on Sepolia; Mainnet retains version 1
-active and version 2 pending. The older status description below is historical.
+`zkapi-v2-concession-v2` and vault revision 4. It is active on Sepolia at
+`0x7ff4ba0662a8218d0954c1a11ae61df6c3548ea4`, creation block 11937653.
+Versions 1 and 2 are exit-only on Sepolia. Mainnet retains version 1 active
+and both newer versions pending. The older status description above is historical.
 
 The new family shares concession lifecycle and recovery semantics, adding
 `deposit-activation` wiring. A deposit records its note; an operator proof later
@@ -80,18 +80,17 @@ Revision 4's exit tuple replaces the old root/leaf public inputs with the stored
 registration commitment and packed amount/expiry. The adapter pins the new
 mutual/escape selectors, 27 calldata words, byte offset 576 and proof length 256;
 the local funding signer still checks note, destination and value before signing.
-The SDK pin is `8f64e7c335e6a19a1180865a7835044d706bfade`. Its native confirmed
+The SDK pin is `22ef8f770bd78573969901ec9a5a569b17ea9548`. Its native confirmed
 wallet withdrawal identity checks are registered as `wallet-recovery-v3`; its
 host provider policy is `provider-verification-v3`, with exact file hashes.
 Recovery classification also includes the SDK's new deposit-retry helpers.
 
-Activation requires a finalized Sepolia manifest and profile published in a new
-SDK pin (the current package profile is still `not_deployed`), proof and runtime
-hash checks, an operational funded activator/challenger, and verification of the
-built artifact and public routes. Change only Sepolia version 2 to exit-only and
-version 3 to active, preserving old services and wallet stores. Mainnet version
-3 stays pending. No production frontend or Mainnet deployment is part of this
-candidate. The proof setup is single-party `dev`, as recorded in its manifest.
+The SDK ships the deployed Sepolia profile; the registry records the finalized
+manifest hash. The isolated `/v0.3` backend uses funded, separate activation and
+challenge signers. Public routes and the staging artifact must match these pins
+before cutover. Older services and wallet stores remain available. No production
+frontend or Mainnet deployment is part of this rollout. The proof setup is
+single-party `dev`, as recorded in its manifest.
 
 Sponsored withdrawals stay disabled (`gasless: null`). The inherited SDK
 prepared-UserOp resume/claim paths do not fully enforce the confirmed operation

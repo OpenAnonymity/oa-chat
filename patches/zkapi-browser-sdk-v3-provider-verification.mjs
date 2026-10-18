@@ -1,7 +1,7 @@
 // Preserve the reviewed host provider policy for the revision-4 SDK.
 export default {
     "name": "provider-verification-v3",
-    "revision": "8f64e7c335e6a19a1180865a7835044d706bfade",
+    "revision": "22ef8f770bd78573969901ec9a5a569b17ea9548",
     "files": [
         {
             "file": "sdk/configure.js",

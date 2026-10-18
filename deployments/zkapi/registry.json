@@ -103,7 +103,7 @@
           }
         },
         "sepolia": {
-          "status": "active",
+          "status": "exit-only",
           "activatedAt": "2026-10-15T16:07:56Z",
           "config": {
             "deployment_manifest_url": "https://zkapi-sepolia.openanonymity.ai/v0.2/config.json",
@@ -166,7 +166,8 @@
             "billing_token_decimals": 9,
             "require_oa_key_source": true,
             "deployment_api_proxy_path": "/zkapi-deployment-v2c/"
-          }
+          },
+          "depositsClosedSince": "2026-10-18T01:05:00Z"
         }
       }
     },
@@ -179,8 +180,8 @@
       "vaultRevision": 4,
       "sdk": {
         "alias": "zkapi-sdk-v3",
-        "source": "github:ethereum/zkapi#8f64e7c335e6a19a1180865a7835044d706bfade",
-        "revision": "8f64e7c335e6a19a1180865a7835044d706bfade",
+        "source": "github:ethereum/zkapi#22ef8f770bd78573969901ec9a5a569b17ea9548",
+        "revision": "22ef8f770bd78573969901ec9a5a569b17ea9548",
         "storeSha256": "f42a9ff0f793ce6c509797f02afb6d268f496162f76b168919ef2cd092038cce",
         "patches": [
           "wallet-recovery-v3",
@@ -201,12 +202,12 @@
       },
       "gate": {
         "recoveryReview": {
-          "revision": "8f64e7c335e6a19a1180865a7835044d706bfade",
+          "revision": "22ef8f770bd78573969901ec9a5a569b17ea9548",
           "verdict": "not_required",
           "patch": null
         },
         "protocolWiring": "done",
-        "manifestSha256": null
+        "manifestSha256": "13776694231314e07ed241b5dd18eeecd7eec537f15056680059eb4c28efdb56"
       },
       "networks": {
         "mainnet": {
@@ -216,9 +217,73 @@
           }
         },
         "sepolia": {
-          "status": "pending",
+          "status": "active",
+          "activatedAt": "2026-10-18T01:05:00Z",
           "config": {
-            "deployment_status": "not_deployed"
+            "deployment_manifest_url": "https://zkapi-sepolia.openanonymity.ai/v0.3/config.json",
+            "allowed_deployment_manifest_urls": [
+              "https://zkapi-sepolia.openanonymity.ai/v0.3/config.json"
+            ],
+            "trusted_deployment": {
+              "deployment_status": "deployed",
+              "deployment_id": "zkapi-native-eth-sepolia-concession-v2-r4-20261017",
+              "chain_id": 11155111,
+              "contract_address": "0x7ff4ba0662a8218d0954c1a11ae61df6c3548ea4",
+              "deploy_block": 11937653,
+              "billing_token_address": null,
+              "protocol_server_url": "https://zkapi-sepolia.openanonymity.ai/v0.3",
+              "indexer_url": "https://zkapi-sepolia.openanonymity.ai/v0.3",
+              "request_charge_cap": 50000,
+              "state_signing_key": {
+                "x": "0x0efceab86571c36ea876c262cea9c6c0b9c7a317760db448ef1a64e640d820a6",
+                "y": "0x114c178ba8bde6ee6f2df25a6d5b3974a326dc505b25db7bcc37646e97f60f61"
+              },
+              "clearance_signing_key": {
+                "x": "0x0f2a34d40a5781109527ee55d2f612ddd37e29c0cad3331bc8fdde8a8d3dc24a",
+                "y": "0x12d9e3b6634b0a3a0a33d2611fb08561262dc726e7cc54ca28d924d927dbd36e"
+              },
+              "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
+              "billing_asset": "native_eth",
+              "billing_unit": "gwei",
+              "native_asset_wei_per_unit": "1000000000",
+              "native_price_feed_address": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+              "native_price_feed_decimals": 8,
+              "native_price_max_age_seconds": 4500,
+              "circuit_id": "zkapi-v2-concession-v2",
+              "setup_id": "dev",
+              "request_proving_key_sha256": "a265fdbf2f19a7208bda87d8a7ca6e5c3b8423207eaa13198bc7fafda5b03b9f",
+              "withdrawal_proving_key_sha256": "cf5b86c0a77fd7b277bb5644e86497e69905992c90a5a03f061b8c8415f3ffd0",
+              "request_verifying_key_sha256": "45befacf21c0a369132538eebf054077c1bf2d3089e6189f6786c52d34f1f7ee",
+              "request_vk_keccak256": "0x78ee5bb1fd0d0eeedfc36e769a24e36b9df6e6464154344e57824f4812fd4496",
+              "withdrawal_vk_keccak256": "0x8ea30a21c1727fdc919a895dcd76c968f869055539e9212066988f1678d0ac30",
+              "insertion1_vk_keccak256": "0xbfe4bbfa7e02e038151d9cbfd804bbed7d3778cea9e235698da7af9bd08ead38",
+              "insertion4_vk_keccak256": "0x2b2aec8bfe7f9bb89197afbf0956a72f93ddc8fff3618fa4b2e4dbb38da69414",
+              "insertion16_vk_keccak256": "0x2433029b1c075abbd406f222554051dd40cbad992ca650c3d7f0f3ba8839aa9a",
+              "activator": "0x26090c66f7f47e2900ee3905ad010b5c8e70eaa7",
+              "vault_runtime_codehash": "0x1803c268a282fa7646520425d4dadfc158b8113611c61784abe06ca43af00a66",
+              "proof_adapter_address": "0xe419504cd99bd44275c966990074bf43f6089862",
+              "adapter_runtime_codehash": "0x6432e66b31bf832985fe65e82b12f82029f24ab60ba0523c8276ed62f8445de6",
+              "poseidon_library_address": "0xd511f1a9ea1f59faad19a51a643ab7d92e6d53cc",
+              "poseidon_runtime_codehash": "0xd1382a11d47e01588edd8269d11262a6824e1f0a611e37a122b763be45e344be",
+              "challenge_period": 43200,
+              "note_ttl": 2592000,
+              "max_pause_duration": 604800,
+              "settlement_window_seconds": 14705,
+              "vault_revision": 4,
+              "exit_concession": 1,
+              "clearance_ownership_proof": "required",
+              "allow_dev_setup": true,
+              "canary": null,
+              "verifier_url": "https://verifier2.openanonymity.ai",
+              "openrouter_inference_base": "https://openrouter.ai/api/v1",
+              "gasless": null
+            },
+            "proving_keys_base_url": "./proofs/",
+            "credits_per_usd": null,
+            "billing_token_symbol": "ETH",
+            "billing_token_decimals": 9,
+            "require_oa_key_source": true,
+            "deployment_api_proxy_path": "/zkapi-deployment-v3/"
           }
         }
       }
