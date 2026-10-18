@@ -1,3 +1,21 @@
+## October 18, 2026 — truthful upload acknowledgment (local candidate)
+
+Remote status checks establish download readiness only. They no longer turn a
+failed upload into “synced.” Account-scoped pending state and a local fingerprint
+of the exact accepted snapshot survive restart and detect edits before debounce.
+Every submitted blob ID must be accepted; partial acceptance remains pending.
+The existing identity-backed fixed cadence and early billing readiness event are
+preserved. See [upload acknowledgment](SYNC_UPLOAD_ACKNOWLEDGEMENT.md).
+Local follow-up adds exact UTF-8 byte batching at 3.5 MiB and 100 items; oversized
+single items fail before any batch sends. The desktop native layer separately
+allows 4 MiB on the validated sync POST only. A full 4 MiB unauthenticated probe
+reached the production auth gate; authenticated acceptance remains a candidate
+validation step. The signed local candidate has since returned HTTP 200 for all
+three real-wallet batches and cleared the Account checking-balance notice at
+578 tickets; cross-device confirmation remains separate. This is local source
+work, not a website deployment. See the
+same document for measurements, scope, and conservative-bound caveats.
+
 ## October 17, 2026 — restore earlier reasoning labels, retain stalled-text feedback
 
 The user confirmed restoring the summer rounded-seconds wording. Positive short durations round to seconds

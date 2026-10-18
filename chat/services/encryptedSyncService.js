@@ -13,6 +13,7 @@
  */
 
 import { ORG_API_BASE } from './orgEndpoints.js';
+import { buildSyncUploadBatches } from './syncUploadBatches.js';
 import { chatDB } from '../db.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
 import storageEvents from './storageEvents.js';
@@ -41,6 +42,8 @@ const SYNC_LAST_TIME_KEY = 'sync-lastSyncTime';
 const SYNC_SCHEMA_VERSION_KEY = 'sync-schema-version';
 const CURRENT_SYNC_SCHEMA_VERSION = 3;
 const SYNC_WALLET_WRITER_KEY = 'sync-wallet-writer-id';
+const SYNC_UPLOAD_PENDING_KEY = 'sync-upload-pending';
+const SYNC_UPLOAD_ACK_KEY = 'sync-upload-ack';
 
 // Settings keys for syncable data
 const TICKETS_ACTIVE_KEY = 'tickets-active';
@@ -68,7 +71,6 @@ const LOGICAL_IDS = {
     TICKET_REMOVALS: 'ticket-removals',
     // Preferences use their key as logical ID
 };
-const MAX_SYNC_BLOBS_PER_REQUEST = 100;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -204,6 +206,7 @@ export class SyncService {
         this.localChangeDebounceTimer = null;
         this.lastSyncTime = null;
         this.lastSyncResult = null;
+        this.uploadPending = null;
     }
 
     setCredentials(
@@ -216,6 +219,9 @@ export class SyncService {
         this.accountId = accountId;
         this.localScopeAccountId = accountId;
         this.identityBacked = identityBacked;
+        this.lastSyncResult = null;
+        this.lastSyncTime = null;
+        this.uploadPending = null;
         this.idMapping = null; // Reset mapping when credentials change
         this.idMappingGeneration = null;
     }
@@ -250,6 +256,8 @@ export class SyncService {
             SYNC_LAST_TIME_KEY,
             SYNC_SCHEMA_VERSION_KEY,
             SYNC_WALLET_WRITER_KEY,
+            SYNC_UPLOAD_PENDING_KEY,
+            SYNC_UPLOAD_ACK_KEY,
             ...SYNCABLE_PREF_KEYS,
             ...SYNCABLE_PREF_KEYS.map(key => this.getPreferenceTimestampKey(key))
         ];
@@ -268,6 +276,24 @@ export class SyncService {
             }
         }
         return snapshot;
+    }
+
+    async readUploadSnapshot() {
+        const snapshot = {};
+        const keys = [TICKETS_ACTIVE_KEY, TICKETS_ARCHIVE_KEY, TICKETS_TOMBSTONES_KEY,
+            TICKETS_INVALIDATED_KEYS_KEY, ...SYNCABLE_PREF_KEYS,
+            ...SYNCABLE_PREF_KEYS.map(key => this.getPreferenceTimestampKey(key))];
+        for (const key of keys) {
+            const value = await chatDB.getSetting(key);
+            if (value !== undefined) snapshot[key] = value;
+        }
+        return snapshot;
+    }
+
+    async uploadFingerprint(snapshot) {
+        // Local-only acknowledgment; never sent to diagnostics or the server.
+        const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(JSON.stringify(snapshot)));
+        return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
     }
 
     buildActiveAccountDataChanges(snapshot = {}) {
@@ -690,11 +716,29 @@ export class SyncService {
             // establish wallet readiness before that replay has completed.
             const hasChanges = localSchemaVersion < CURRENT_SYNC_SCHEMA_VERSION || serverLastSync > localLastSync;
 
-            // If no changes, we're confirmed in sync - update lastSyncTime
             if (!hasChanges) {
-                this.lastSyncTime = Date.now();
-                this.lastSyncResult = { success: true, pulled: 0, pushed: 0 };
+                // Download readiness is independent of upload acknowledgment;
+                // do not queue billing readiness behind a slow upload.
                 this.notify('status_checked');
+            }
+            const pending = await this.withSyncLock(async () => {
+                this.assertCredentialsCurrent(credentialGeneration);
+                await this.assertAccountBinding(this.accountId);
+                if (!await this.isAccountScopeActive()) throw new Error('Sync account scope changed');
+                const pendingUpload = await chatDB.getSetting(SYNC_UPLOAD_PENDING_KEY);
+                const acknowledged = await chatDB.getSetting(SYNC_UPLOAD_ACK_KEY);
+                const current = await this.uploadFingerprint(await this.readUploadSnapshot());
+                this.assertCredentialsCurrent(credentialGeneration);
+                return pendingUpload !== false || acknowledged !== current;
+            });
+            if (!this.credentialsAreCurrent(credentialGeneration)) return null;
+            // A remote timestamp cannot acknowledge local data or erase a failed
+            // upload. Fingerprint comparison also detects changes made before a
+            // crash/debounce and edits by a different tab.
+            this.uploadPending = pending;
+            if (pending && !this.syncInProgress && this.lastSyncResult?.success !== false) {
+                this.lastSyncResult = { success: false, pending: true, error: 'Local changes are waiting to sync' };
+                this.notify('sync_status_changed');
             }
 
             return hasChanges;
@@ -719,7 +763,7 @@ export class SyncService {
         if (hasChanges === null) {
             return { success: false, error: 'Sync status unavailable' };
         }
-        if (!hasChanges) {
+        if (!hasChanges && this.uploadPending === false && this.lastSyncResult?.success !== false) {
             return { skipped: true, reason: 'up-to-date' };
         }
 
@@ -850,6 +894,11 @@ export class SyncService {
                 throw new Error('Sync account scope changed');
             }
             this.assertCredentialsCurrent(credentialGeneration);
+            // Under the account-data lock: persist before any network work so
+            // crashes and pull-success/push-failure cannot look fully synced.
+            await chatDB.saveSetting(SYNC_UPLOAD_PENDING_KEY, true);
+            this.assertCredentialsCurrent(credentialGeneration);
+            this.uploadPending = true;
             // Build ID mapping first
             const idMapping = await this._buildIdMapping(
                 masterKey,
@@ -871,6 +920,18 @@ export class SyncService {
             );
             this.assertCredentialsCurrent(credentialGeneration);
 
+            // All local wallet/preference mutations share this lock. Only the
+            // snapshot accepted by the server is acknowledged before releasing it.
+            const liveFingerprint = await this.uploadFingerprint(await this.readUploadSnapshot());
+            this.assertCredentialsCurrent(credentialGeneration);
+            if (liveFingerprint !== pushResult.pushedFingerprint) {
+                throw new Error('Local changes are waiting to sync');
+            }
+            await chatDB.saveSetting(SYNC_UPLOAD_ACK_KEY, pushResult.pushedFingerprint);
+            this.assertCredentialsCurrent(credentialGeneration);
+            await chatDB.saveSetting(SYNC_UPLOAD_PENDING_KEY, false);
+            this.assertCredentialsCurrent(credentialGeneration);
+            this.uploadPending = false;
             const result = {
                 success: true,
                 pulled: pullResult.count,
@@ -1308,25 +1369,21 @@ export class SyncService {
         if (!this.credentialsAreCurrent(credentialGeneration)) {
             throw new Error('Sync credentials changed');
         }
-        const blobs = await this._collectLocalBlobs(masterKey);
+        const snapshot = await this.readUploadSnapshot();
+        this.assertCredentialsCurrent(credentialGeneration);
+        const pushedFingerprint = await this.uploadFingerprint(snapshot);
+        const blobs = await this._collectLocalBlobs(masterKey, snapshot);
         if (!this.credentialsAreCurrent(credentialGeneration)) {
             throw new Error('Sync credentials changed');
         }
         if (blobs.length === 0) {
-            return { count: 0 };
+            return { count: 0, pushedFingerprint };
         }
 
+        const batches = buildSyncUploadBatches(blobs);
         let acceptedCount = 0;
-        for (
-            let offset = 0;
-            offset < blobs.length;
-            offset += MAX_SYNC_BLOBS_PER_REQUEST
-        ) {
+        for (const { blobs: batch, body } of batches) {
             this.assertCredentialsCurrent(credentialGeneration);
-            const batch = blobs.slice(
-                offset,
-                offset + MAX_SYNC_BLOBS_PER_REQUEST
-            );
             const sendBatch = () => this.fetchWithRetry(
                 `${ORG_API_BASE}/auth/sync`,
                 {
@@ -1335,7 +1392,7 @@ export class SyncService {
                         'Content-Type': 'application/json'
                     },
                     credentials: 'include',
-                    body: JSON.stringify({ blobs: batch })
+                    body
                 },
                 'Sync push',
                 requestOptions
@@ -1349,19 +1406,25 @@ export class SyncService {
 
             const { accepted } = await response.json();
             this.assertCredentialsCurrent(credentialGeneration);
-            acceptedCount += accepted?.length || 0;
+            const acceptedIds = new Set(Array.isArray(accepted) ? accepted : []);
+            if (!Array.isArray(accepted) || accepted.length !== batch.length ||
+                acceptedIds.size !== batch.length || batch.some(blob => !acceptedIds.has(blob.id))) {
+                throw new Error('Sync upload was not fully accepted');
+            }
+            acceptedCount += batch.length;
         }
-        return { count: acceptedCount };
+        return { count: acceptedCount, pushedFingerprint };
     }
 
     /**
      * Collect local data, encrypt with type INSIDE, use opaque IDs.
      */
-    async _collectLocalBlobs(masterKey) {
+    async _collectLocalBlobs(masterKey, snapshot = null) {
+        snapshot ||= await this.readUploadSnapshot();
         const blobs = [];
 
         // Tickets (active)
-        const activeTickets = await chatDB.getSetting(TICKETS_ACTIVE_KEY);
+        const activeTickets = snapshot[TICKETS_ACTIVE_KEY];
         if (Array.isArray(activeTickets)) {
             const opaqueId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ACTIVE);
             const { ciphertext, iv } = await encryptBlob(
@@ -1373,7 +1436,7 @@ export class SyncService {
         }
 
         // Tickets (archived)
-        const archivedTickets = await chatDB.getSetting(TICKETS_ARCHIVE_KEY);
+        const archivedTickets = snapshot[TICKETS_ARCHIVE_KEY];
         if (Array.isArray(archivedTickets)) {
             const opaqueId = await deriveOpaqueBlobId(masterKey, LOGICAL_IDS.TICKETS_ARCHIVE);
             const { ciphertext, iv } = await encryptBlob(
@@ -1387,7 +1450,7 @@ export class SyncService {
         // Removed/exported tickets are represented only by encrypted hashes.
         // This preserves cash-style local deletion while preventing a stale
         // device from resurrecting the ticket.
-        const tombstones = await chatDB.getSetting(TICKETS_TOMBSTONES_KEY);
+        const tombstones = snapshot[TICKETS_TOMBSTONES_KEY];
         if (Array.isArray(tombstones)) {
             const opaqueId = await deriveOpaqueBlobId(
                 masterKey,
@@ -1432,7 +1495,7 @@ export class SyncService {
         // record per generation prevents concurrent devices from losing a
         // tombstone through last-write-wins updates of the aggregate blob.
         const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
-            await chatDB.getSetting(TICKETS_INVALIDATED_KEYS_KEY)
+            snapshot[TICKETS_INVALIDATED_KEYS_KEY]
         );
         if (invalidatedKeyIds.length > 0) {
             const aggregateId = await deriveOpaqueBlobId(
@@ -1472,10 +1535,10 @@ export class SyncService {
 
         // Preferences
         for (const key of SYNCABLE_PREF_KEYS) {
-            const value = await chatDB.getSetting(key);
+            const value = snapshot[key];
             if (value !== undefined) {
                 const updatedAt = this.normalizeTimestamp(
-                    await chatDB.getSetting(this.getPreferenceTimestampKey(key))
+                    snapshot[this.getPreferenceTimestampKey(key)]
                 );
                 const opaqueId = await deriveOpaqueBlobId(masterKey, key);
                 const { ciphertext, iv } = await encryptBlob(
@@ -1575,6 +1638,7 @@ export class SyncService {
         this.clearCredentials();
         this.lastSyncTime = null;
         this.lastSyncResult = null;
+        this.uploadPending = null;
         this.notify('cleared');
     }
 }
