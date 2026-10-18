@@ -2484,6 +2484,7 @@ export default class ChatArea {
         }
         const workingEl = document.createElement('div');
         workingEl.className = 'council-lane-working';
+        workingEl.setAttribute('role', 'status');
         workingEl.dataset.councilLaneWorking = '';
         workingEl.dataset.stillWorkingSince = String(Math.round(since));
         workingEl.innerHTML = buildStillWorkingLabel(since);

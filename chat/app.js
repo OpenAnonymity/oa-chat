@@ -5298,6 +5298,7 @@ class ChatApp {
 
     restoreStreamingReplyDisplays(sessionId) {
         if (!this.isViewingSession(sessionId)) return;
+        this.councilController?.restoreStillWorkingDisplays(sessionId);
         for (const [messageId, display] of this.streamingReplyDisplays || []) {
             if (display.sessionId === sessionId && !display.turnStopped() && display.isWorking()) {
                 this.chatArea?.setStreamingStillWorking?.(messageId, true, display.since());
