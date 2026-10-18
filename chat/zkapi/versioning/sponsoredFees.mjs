@@ -141,8 +141,9 @@ export function normalizeQuote(raw, { mode } = {}) {
         available: true,
         mode: mode === 'escape' ? 'escape' : 'mutual',
         payoutWei: weiString(raw.payoutWei),
-        // A close promises a floor; an emergency exit only an estimate (its
-        // fee is charged when it is finished, possibly days later).
+        // The SDK quote supplies a close floor at its quoted fees. The host
+        // displays this as an estimate because fees may change before signing.
+        // An escape is charged when finished, possibly days later.
         minimumReceivedWei: weiString(raw.minimumReceivedWei),
         estimatedReceivedWei: weiString(raw.estimatedReceivedWei),
         maxCostWei,
@@ -238,20 +239,25 @@ export function createSponsoredFees({ getClient, getRuntime, getContext, getOrig
         },
 
         /**
-         * The options a withdrawal is started with for a quote the person
-         * chose, and the bounds the signer holds it to. null for a quote
-         * that is not an available one.
+         * The displayed quote is an estimate. Use the deployment's existing
+         * policy limits so a fresh fee read or relay gas adjustment does not
+         * invalidate it. Explicit values also replace an older saved quote
+         * cap when this same withdrawal is continued.
          */
         plan(quote) {
             if (!isRecord(quote) || quote.available !== true || !supported()) return null;
+            const pins = trusted().gasless;
+            const feeCapWei = quote.flatFeeWei ?? String(pins.policy.flat_fee_wei);
+            const maxCostWei = String(pins.policy.max_sponsored_cost_wei);
+            const creditReserve = BigInt(pins.gas_policy.credit_gas ?? 0) * BigInt(pins.fee_ceilings.max_fee_wei);
             return {
-                options: { fees: 'payout', bundlerUrl: bundlerUrl(), feeCapWei: quote.flatFeeWei,
-                    maxCostWei: quote.maxCostWei,
-                    maxTotalFeeWei: String(BigInt(quote.maxCostWei) + BigInt(quote.flatFeeWei) + BigInt(quote.creditSurchargeWei || '0')),
+                options: { fees: 'payout', bundlerUrl: bundlerUrl(), feeCapWei,
+                    maxCostWei,
+                    maxTotalFeeWei: String(BigInt(maxCostWei) + BigInt(feeCapWei) + creditReserve),
                     allowExpensiveGas: false },
                 sponsored: {
-                    feeCapWei: quote.flatFeeWei,
-                    maxCostWei: quote.maxCostWei
+                    feeCapWei,
+                    maxCostWei
                 }
             };
         }

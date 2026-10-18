@@ -3877,7 +3877,8 @@ test('choosing to pay from the withdrawal asks once, for this balance and this w
     assert.equal(page.quotes[0].options.bundlerUrl, SPONSORED_ROUTE);
     const html = page.modal.renderWithdrawal();
     const words = textOf(html);
-    assert.match(words, /You’ll receive at least/);
+    assert.match(words, /You’ll receive about/);
+    assert.match(words, /Estimates may change before signing/);
     assert.match(words, /goes through this app to the service’s relay/);
     // Another way of leaving is another quote: the old one is not drawn for it.
     page.modal.withdrawMode = 'escape';
@@ -3901,7 +3902,7 @@ test('a refused quote is explained in plain words, keeps the wallet, and can be 
     assert.equal(started.withdrawals.length, 0);
 });
 
-test('a withdrawal that was chosen to pay its own fee starts with exactly the options and bounds that were shown', async t => {
+test('a payout-paid withdrawal uses deployment bounds rather than freezing its fee estimate', async t => {
     const page = sponsoredPage(t);
     t.mock.method(zkapiClient, 'connectWallet', async () => `0x${'c'.repeat(40)}`);
     const started = startable(t, page);
@@ -3913,13 +3914,13 @@ test('a withdrawal that was chosen to pay its own fee starts with exactly the op
     assert.equal(started.withdrawals.length, 1);
     assert.deepEqual(started.withdrawals[0].options, {
         fees: 'payout', bundlerUrl: SPONSORED_ROUTE, feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
-        maxCostWei: READY_QUOTE.maxCost,
-        maxTotalFeeWei: String(BigInt(READY_QUOTE.maxCost) + BigInt(SPONSORED_VECTORS.policy.flat_fee_wei)), allowExpensiveGas: false
+        maxCostWei: SPONSORED_VECTORS.policy.max_sponsored_cost,
+        maxTotalFeeWei: String(BigInt(SPONSORED_VECTORS.policy.max_sponsored_cost) + BigInt(SPONSORED_VECTORS.policy.flat_fee_wei)), allowExpensiveGas: false
     });
-    // The signer is held to exactly what was shown.
+    // The signer still enforces the deployment's network fee limit.
     assert.deepEqual(started.runs[0].details.sponsored, {
         feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
-        maxCostWei: READY_QUOTE.maxCost
+        maxCostWei: SPONSORED_VECTORS.policy.max_sponsored_cost
     });
     // The choice is spent by the attempt: the next withdrawal starts from the wallet.
     assert.equal(page.modal.sponsoredChoice, 'wallet');
@@ -3955,7 +3956,11 @@ test('a plan the SDK already bound to a holding address continues the way it sta
     drawWithdraw(page);
     await page.modal.submitWithdrawal();
     assert.equal(started.withdrawals.length, 1);
-    assert.deepEqual(started.withdrawals[0].options, { fees: 'payout', bundlerUrl: SPONSORED_ROUTE });
+    assert.deepEqual(started.withdrawals[0].options, { fees: 'payout', bundlerUrl: SPONSORED_ROUTE,
+        feeCapWei: SPONSORED_VECTORS.policy.flat_fee_wei,
+        maxCostWei: SPONSORED_VECTORS.policy.max_sponsored_cost,
+        maxTotalFeeWei: String(BigInt(SPONSORED_VECTORS.policy.max_sponsored_cost) + BigInt(SPONSORED_VECTORS.policy.flat_fee_wei)),
+        allowExpensiveGas: false });
 });
 
 test('a sponsored withdrawal\'s row names the person\'s address, not its holding address, and its buttons start the right work', async t => {

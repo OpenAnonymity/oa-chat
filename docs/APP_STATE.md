@@ -8696,3 +8696,20 @@ The revision-4 SDK additionally rechecks the exact prepared operation and
 statement under the wallet lock for sponsored resume and background replay.
 The host now carries `prepared_withdrawal.operation_id` through continuation;
 a concurrent replacement or concession change returns to review before send.
+
+## October 18, 2026 — withdrawal fee estimates can change
+
+Sponsored withdrawals no longer treat the displayed network-fee estimate as
+an exact approval cap. Live fee reads and relay gas adjustments may increase
+between the quote and signing, which previously caused repeated
+`gasless_cost_above_cap` refusals. The form and review now describe the network
+fee and net payout as estimates that can change before signing.
+
+The host passes the existing pinned deployment limit as `maxCostWei`, plus
+the flat fee and worst-case credit reserve as `maxTotalFeeWei`. This preserves
+contract policy limits, uneconomic-withdrawal checks, and note/destination/
+signature validation. Continuing an older prepared withdrawal supplies those
+explicit limits again, replacing its stale quote caps without discarding its
+journal or requiring another estimate. The SDK's optional explicit-cap API and
+CLI approval behavior are unchanged. This supersedes the exact-quote approval
+description in the October 17 entry above.

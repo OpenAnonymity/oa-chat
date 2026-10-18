@@ -342,8 +342,8 @@ function useSponsored(t, owner) {
     const quote = { available: true, mode: 'mutual', maxCostWei: '100000000000', flatFeeWei: '10000000000',
         minimumReceivedWei: '890000000000', payoutWei: '1000000000000' };
     const api = { supported: () => true, bundlerUrl: () => 'https://app.example/bundler', plan: q => ({
-        options: { fees: 'payout', maxCostWei: q.maxCostWei, feeCapWei: q.flatFeeWei },
-        sponsored: { maxCostWei: q.maxCostWei, feeCapWei: q.flatFeeWei }
+        options: { fees: 'payout', maxCostWei: '100000000000000', maxTotalFeeWei: String(100000000000000n + BigInt(q.flatFeeWei)), feeCapWei: q.flatFeeWei },
+        sponsored: { maxCostWei: '100000000000000', feeCapWei: q.flatFeeWei }
     }) };
     t.mock.method(owner, 'sponsoredApi', () => api);
     owner.sponsoredChoice = 'payout';
@@ -368,7 +368,10 @@ test('payout-paid withdrawal reaches review with zero signer ETH and shows the n
     assert.ok(owner.withdrawalConfirmation);
     const review = owner.renderWithdrawal();
     assert.match(review, /No ETH is needed in your signing account/);
-    assert.match(review, /at least <b>0\.00000089 ETH<\/b>/);
+    assert.match(review, /about <b>0\.00000089 ETH<\/b>/);
+    assert.match(review, /about 0\.00000011 ETH/);
+    assert.match(review, /Estimates may change before signing/);
+    assert.doesNotMatch(review, /at least|at most|up to/);
     const submit = t.mock.method(owner, 'submitWithdrawal', async () => {});
     await owner.confirmWithdrawal();
     assert.equal(submit.mock.callCount(), 1);
@@ -391,17 +394,23 @@ test('sponsored review is invalidated by changed balance, destination, signer or
     assert.equal(submit.mock.callCount(), 0);
 });
 
-test('saved payout-paid withdrawal resumes without wallet funding and keeps its receiving address', async t => {
+test('saved payout-paid withdrawal replaces stale quote caps without wallet funding or changing its address', async t => {
     const { owner } = fixture(t);
     useSponsored(t, owner);
     const payee = owner.fundingDestination;
     zkapiClient.config.prepared_withdrawal = { mode: 'mutual', phase: 'prepared', fee_payer: 'payout',
-        destination: `0x${'6'.repeat(40)}`, payout: payee, max_cost_wei: '100', flat_fee_cap_wei: '10' };
+        destination: `0x${'6'.repeat(40)}`, payout: payee, max_cost_wei: '100', max_total_fee_wei: '110', flat_fee_cap_wei: '10' };
     owner.sponsoredChoice = 'wallet'; owner.sponsoredQuote = null;
     assert.equal(withdrawalDestination(owner), payee);
     assert.equal(needsWithdrawalFees(owner), false);
     assert.equal(owner.withdrawalInputReady(), true);
-    assert.deepEqual(owner.sponsoredPlanFor('mutual').bounds, { maxCostWei: '100', feeCapWei: '10' });
+    assert.deepEqual(owner.sponsoredPlanFor('mutual').bounds, { maxCostWei: '100000000000000', feeCapWei: '10' });
+    assert.equal(owner.sponsoredPlanFor('mutual').options.maxTotalFeeWei, '100000000000010');
+    for (const status of ['loading', 'unavailable']) {
+        owner.sponsoredQuote = { key: owner.sponsoredKeyFor('mutual'), status };
+        assert.equal(owner.sponsoredPlanFor('mutual').options.maxCostWei, '100000000000000',
+            'continuing a saved withdrawal does not depend on another estimate');
+    }
     assert.doesNotMatch(owner.renderWithdrawal(), /ETH for network fees|Add ETH|Checking available ETH/);
 });
 
@@ -413,4 +422,32 @@ test('an old balance without sponsorship retains the ordinary wallet-funded path
     assert.equal(needsWithdrawalFees(owner), true);
     assert.equal(owner.withdrawalInputReady(), false);
     assert.match(owner.renderWithdrawal(), /Show deposit address/);
+});
+
+test('wallet-paid review retains its fee ceiling wording without sponsored estimate copy', async t => {
+    const { owner } = fixture(t);
+    await refreshWithdrawalFees(owner);
+    owner.requestWithdrawal();
+    const review = owner.renderWithdrawal();
+    assert.match(review, /up to 0\.001 ETH/);
+    assert.doesNotMatch(review, /Estimates may change before signing|You receive<[^]*?about <b>/);
+});
+
+test('payout-paid escape review retains two steps and labels fee and net amount as estimates', t => {
+    const { owner } = fixture(t);
+    const quote = useSponsored(t, owner);
+    owner.withdrawMode = 'escape';
+    quote.mode = 'escape';
+    quote.estimatedReceivedWei = quote.minimumReceivedWei;
+    quote.minimumReceivedWei = null;
+    owner.sponsoredQuote.key = owner.sponsoredKeyFor('escape');
+    owner.requestWithdrawal();
+    assert.ok(owner.withdrawalConfirmation);
+    const review = owner.renderWithdrawal();
+    assert.match(review, /Network fees/);
+    assert.match(review, /two steps/);
+    assert.match(review, /about <b>0\.00000089 ETH<\/b>/);
+    assert.match(review, /Estimates may change before signing/);
+    assert.match(review, /Start escape hatch/);
+    assert.doesNotMatch(review, /at least|at most|up to/);
 });

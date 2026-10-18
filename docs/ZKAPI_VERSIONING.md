@@ -3775,9 +3775,9 @@ object yet.*
 **What the person sees.** In the withdrawal form, under "Network fee", a choice
 between "Paid by your wallet" (what every withdrawal always did, and the
 default) and "Paid from this withdrawal". Choosing the second is the click that
-asks the relay service for a quote; the form then says what the person will
-receive at least (a close) or about what they would receive (an emergency exit,
-whose fee is charged when it finishes), what the fee is at most, and that the
+asks the relay service for a quote; the form then estimates what the person
+will receive and the network fee (an emergency exit's fee is charged when it
+finishes). Those estimates may change before signing. It also explains that the
 withdrawal goes through this app to the service's relay. No ETH is needed. If
 the quote is unavailable the line says why in plain words and the wallet choice
 stays. The protocol's own names (paymaster, bundler, user operation, transit
@@ -3899,9 +3899,11 @@ code in `SponsoredOperationError`):
 | Cost | The prefund (every gas limit times `maxFeePerGas`) is within the pinned policy and within `authorization.sponsored.maxCostWei`; both fee fields are within the pinned ceilings (`max_cost`, `fee_ceiling`) |
 | Signature | Recovers, over the EIP-191 digest of the hash computed here, to this browser address (`signature`) |
 
-`maxCostWei` is the quote's reservation with 50% headroom (fees move between a
-quote and a send); the SDK is also handed `feeCapWei` and `allowExpensiveGas:
-false`, so it refuses above the shown figures itself. The authorization is made
+`maxCostWei` is the deployment's pinned maximum sponsored cost, not the
+displayed fee estimate. `maxTotalFeeWei` adds the accepted flat fee and the
+credit-gas reserve at the pinned maximum gas price. The SDK also receives
+`feeCapWei` and `allowExpensiveGas: false`, retaining policy and uneconomic-cost
+checks while allowing fees to change after the quote. The authorization is made
 by `runAddressAction` ([addressFunding.js](../chat/zkapi/services/addressFunding.js)):
 `withdrawal` kinds carry `destination` = the receiving address, `mode`, and
 `sponsored`; `finalization` carries the same for a sponsored escape; and a new
@@ -3929,7 +3931,7 @@ at send time, only to answer the hook.
 | --- | --- | --- |
 | The fee choice | [SponsoredFee.js](../chat/zkapi/components/SponsoredFee.js), reached as `ui.sponsoredFee(...)`; the dialog reads `input[name="zkapi-sponsored-fee"]`, `[data-zkapi-sponsored-retry]` | Not drawn for a guided upgrade, a running submission, the journey view, or a plan that is already bound to how its fee is paid (a prepared plan with `fee_payer: "payout"` continues that way, with the route and no new quote) |
 | Quote, plan and refusal words | [sponsoredFees.mjs](../chat/zkapi/versioning/sponsoredFees.mjs) | `quote()` never rejects and returns a normalized object (decimal wei strings; nothing of the SDK's object); every refusal code of the SDK has a line in `SPONSORED_REASON_COPY`, ending in "You can pay the network fee from your wallet instead" unless that would be wrong (a withdrawal already started, a wrong account) |
-| Start | `AccountModal.submitWithdrawal` | A choice of "from the withdrawal" without a quote for exactly this balance and mode is refused ("The network fee has to be checked for this withdrawal first") and the quote is requested again; the options are `{fees: 'payout', bundlerUrl, feeCapWei, allowExpensiveGas: false}`. The choice is spent by the attempt |
+| Start | `AccountModal.submitWithdrawal` | A choice of "from the withdrawal" without a quote for exactly this balance and mode is refused ("The network fee has to be checked for this withdrawal first") and the quote is requested again; the options are `{fees: 'payout', bundlerUrl, feeCapWei, maxCostWei, maxTotalFeeWei, allowExpensiveGas: false}`, with the deployment policy bounds described above. The choice is spent by the attempt |
 | Error words | [zkapiErrorCopy.mjs](../chat/zkapi/services/zkapiErrorCopy.mjs) `sponsoredRefusalMessage` | The signer's own sentences are recognized inside the SDK's "The bundler refused ..." wrapper and shown alone; the SDK's gasless error codes read through the same table |
 
 #### Records, recovery and holdings
@@ -4293,8 +4295,8 @@ half of the withdrawal recheck.
 | [address-funding-escape-concession.test.mjs](../test/zkapi/address-funding-escape-concession.test.mjs) | the same rules through the real concession encoders (and the real `0.2.0` encoders when a successor SDK is present); the refusal words; the SDK clearing the plan before the words are restored |
 | [sponsored-operation.test.mjs](../test/zkapi/sponsored-operation.test.mjs) | the sponsored-operation verifier ([11.7](#117-sponsored-withdrawals-the-network-fee-paid-from-the-withdrawal)): the operation hash, transit account and init code equal Foundry's vectors ([zkapi-sponsored-vectors.json](../test/fixtures/zkapi-sponsored-vectors.json), computed independently of every SDK encoder); upstream's signed close is accepted for the withdrawal it belongs to and every other payee, owner, note, mode, paymaster, EntryPoint, fee cap, call, gas, signature and concession is refused with its own code; finalization and collection rules |
 | [address-funding-sponsored.test.mjs](../test/zkapi/address-funding-sponsored.test.mjs) | the provider's sponsored half: `personal_sign` only inside an authorized action with a `sponsored` confirmation, only a 32-byte hash, only this address, a bounded count; the bundler transport's method allowlist, request shape and refusals; the gate before `eth_sendUserOperation` (nothing reaches the route unless the verifier accepts); no transport without a pinned profile or a route; the `collection` authorization kind |
-| [sponsored-fees.test.mjs](../test/zkapi/sponsored-fees.test.mjs) | when the choice is offered (family, client, complete pins, origin); the route and its derivation; the generated rewrites and their order; a normalized quote and a plan whose options equal what was shown with bounded headroom; the product's words (no protocol names) |
-| [sponsored-withdrawal-real-sdk.test.mjs](../test/zkapi/sponsored-withdrawal-real-sdk.test.mjs) | the real successor client and runtime over the SDK's own scripted chain and bundler, through the host's signer: close, escape, finalization and collection are accepted when they are the confirmed withdrawal, and a wrong payee, note or fee is refused with nothing reaching the bundler; skipped without a successor SDK |
+| [sponsored-fees.test.mjs](../test/zkapi/sponsored-fees.test.mjs) | when the choice is offered (family, client, complete pins, origin); the route and its derivation; the generated rewrites and their order; a normalized estimate and a plan bounded by deployment policy rather than the displayed fee; the product's words (no protocol names) |
+| [sponsored-withdrawal-real-sdk.test.mjs](../test/zkapi/sponsored-withdrawal-real-sdk.test.mjs) | the real successor client and runtime over the SDK's own scripted chain and bundler, through the host's signer: close, escape, finalization and collection are accepted when they are the confirmed withdrawal, rising fees and relay gas adjustments remain within policy, saved exact quote caps migrate on replacement, and a wrong payee, note, mode or fee above policy is refused with nothing reaching the bundler; skipped without a successor SDK |
 | [address-deposit-flow-closed.test.mjs](../test/zkapi/address-deposit-flow-closed.test.mjs) | a closed flow stops polling; `verifyReady` error shape; `reopenIfAllowed` |
 | [retired-funding-scope.test.mjs](../test/zkapi/retired-funding-scope.test.mjs) | scope isolation, sweep, no cross-scope resume, no automatic balance read; the release rule and its outcomes |
 | [token-amount.test.mjs](../test/zkapi/token-amount.test.mjs) | the host amount parser equals the SDK's |
@@ -4356,11 +4358,12 @@ balances with no pinned sponsorship keep their ordinary withdrawal path.
 
 A quote is scoped to the note, current balance, method, signer, destination and
 withdrawal mode. Changed details invalidate review, including a balance changed
-by chat settlement. The host passes the exact shown `maxCostWei` (the previous
-50% headroom was removed), the flat-fee cap and a total cap including any
-contract-receiver credit surcharge. The revision-4 SDK checks and journals
-these bounds across replacement and resume. A saved withdrawal can explicitly
-check its fee again before continuing with a newly reviewed cap. Its receiving
+by chat settlement. As of October 18, the network-fee quote is an estimate;
+the host passes the deployment's `max_sponsored_cost_wei`, the flat-fee cap,
+and a total cap including worst-case credit bookkeeping. The revision-4 SDK
+checks and journals these policy bounds across replacement and resume. A saved
+withdrawal created by the earlier exact-quote build receives the policy bounds
+when continued, without requiring another estimate. Its receiving
 address is `payout`, never the intermediate contract address in `destination`.
 
 The real-SDK integration fixture now supports both revision 3's tree-bound

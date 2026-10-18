@@ -12,8 +12,8 @@
 //     version's own proxy rewrite;
 //   - a quote is normalized: nothing of the SDK's object is passed on, an
 //     unavailable one carries plain words and an available one decimal wei;
-//   - the options a withdrawal starts with are exactly the ones that were
-//     shown, with a bounded headroom for the signer;
+//   - network fee estimates may change; the options and signer retain the
+//     deployment policy limits rather than freezing the displayed quote;
 //   - the words are the product's: no protocol names.
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -315,12 +315,19 @@ test('a quote for the Send Ethereum method is read with that wallet installed, a
     assert.equal(refused.available, false);
 });
 
-test('the options and signer cap exactly match the fee shown, with no hidden headroom', () => {
-    const f = facadeFor();
+test('network fee estimates do not cap the operation; deployment limits still do', () => {
+    const creditGas = 223_000;
+    const f = facadeFor({ trusted: { gasless: gasless({ gas_policy: { credit_gas: creditGas } }) } });
     const quote = normalizeQuote({ available: true, mode: 'mutual', maxCost: '1000', flatFeeWei: '77', minimumReceivedWei: '5', payoutWei: '2000' });
     const plan = f.fees.plan(quote);
-    assert.deepEqual(plan.options, { fees: 'payout', bundlerUrl: ROUTE, feeCapWei: '77', maxCostWei: '1000', maxTotalFeeWei: '1077', allowExpensiveGas: false });
-    assert.deepEqual(plan.sponsored, { feeCapWei: '77', maxCostWei: '1000' });
+    const policyMax = V.policy.max_sponsored_cost;
+    const total = String(BigInt(policyMax) + 77n + BigInt(creditGas) * BigInt(V.policy.max_fee_ceiling));
+    assert.deepEqual(plan.options, { fees: 'payout', bundlerUrl: ROUTE, feeCapWei: '77', maxCostWei: policyMax, maxTotalFeeWei: total, allowExpensiveGas: false });
+    assert.deepEqual(plan.sponsored, { feeCapWei: '77', maxCostWei: policyMax });
+    assert.deepEqual(f.fees.plan({ ...quote, maxCostWei: '2000', creditSurchargeWei: '50' }), plan,
+        'changing the estimate does not alter the policy limits');
+    assert.equal(f.fees.plan({ available: true }).options.feeCapWei, V.policy.flat_fee_wei,
+        'a saved plan without a flat-fee cap uses the pinned flat fee');
     // Never "expensive gas allowed": that is a decision of its own.
     assert.equal(plan.options.allowExpensiveGas, false);
     for (const unavailable of [null, undefined, { available: false }, 'x', { available: true, maxCostWei: '1' }]) {
@@ -365,10 +372,12 @@ test('the fee choice says its words plainly, for every state, with and without p
             assert.equal((html.match(/name="zkapi-sponsored-fee"/g) || []).length, 2);
         }
     }
-    // The figures: a floor for a close, an estimate for an exit, the fee, and the relay's disclosure.
+    // The figures are estimates for both withdrawal modes, with the relay disclosure.
     const closeText = text(renderSponsoredFee({ choice: 'payout', status: 'ready', quote: ready, format: () => '$4.40' }));
-    assert.match(closeText, /You’ll receive at least \$4\.40 \(0\.001467 ETH\)\./);
-    assert.match(closeText, /network fee is at most/);
+    assert.match(closeText, /You’ll receive about \$4\.40 \(0\.001467 ETH\),/);
+    assert.match(closeText, /estimated network fee of/);
+    assert.match(closeText, /Estimates may change before signing/);
+    assert.doesNotMatch(closeText, /at least|at most|up to/);
     assert.match(closeText, /the service’s fee of/);
     assert.match(closeText, /goes through this app to the service’s relay/);
     assert.match(closeText, /receiving address is a contract/);
@@ -382,4 +391,19 @@ test('the fee choice says its words plainly, for every state, with and without p
     // Nothing from a quote reaches the markup unescaped.
     const hostile = { available: false, reason: 'unknown', text: '<img src=x onerror=alert(1)>' };
     assert.doesNotMatch(renderSponsoredFee({ choice: 'payout', status: 'unavailable', quote: hostile }), /<img/);
+});
+
+test('payout fee estimates and saved-plan text make no exact-quote promise', () => {
+    const quote = normalizeQuote({ available: true, mode: 'mutual', maxCost: '100000000000', flatFeeWei: '0',
+        minimumReceivedWei: '890000000000', payoutWei: '1000000000000', creditSurchargeWei: '10000000000' });
+    const ready = text(renderSponsoredFee({ choice: 'payout', status: 'ready', quote }));
+    assert.match(ready, /You’ll receive about/);
+    assert.match(ready, /estimated network fee/);
+    assert.match(ready, /Estimates may change before signing/);
+    assert.match(ready, /additional fee of about/);
+    assert.doesNotMatch(ready, /at least|at most|up to|amount you approved/);
+    const saved = text(renderSponsoredFee({ choice: 'payout', status: 'idle', locked: true }));
+    assert.match(saved, /The network fee is paid from this withdrawal\./);
+    assert.doesNotMatch(saved, /amount you approved|at least|at most|up to/);
+    assert.match(saved, /Check fee again/);
 });

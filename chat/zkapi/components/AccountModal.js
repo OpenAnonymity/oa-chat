@@ -2600,23 +2600,13 @@ export default class AccountModal {
         const prepared = zkapiClient.config?.prepared_withdrawal;
         const api = this.sponsoredApi();
         if (prepared?.fee_payer === 'payout') {
-            const url = api?.bundlerUrl?.();
             const view = this.sponsoredViewState(mode);
-            // A fresh explicit fee check can approve a changed cap for the
-            // same saved withdrawal; without one its original bound stays.
-            if (view.status === 'ready') {
-                const revised = api?.plan?.(view.quote);
-                if (revised) return { options: revised.options, bounds: revised.sponsored };
-            }
-            if (view.status === 'loading' || view.status === 'unavailable') {
-                return { refused: 'Check the network fee before continuing this withdrawal.' };
-            }
-            const bounds = {
-                ...(prepared.max_cost_wei != null ? { maxCostWei: prepared.max_cost_wei } : {}),
-                ...(prepared.max_total_fee_wei != null ? { maxTotalFeeWei: prepared.max_total_fee_wei } : {}),
-                ...(prepared.flat_fee_cap_wei != null ? { feeCapWei: prepared.flat_fee_cap_wei } : {})
-            };
-            return { options: { fees: 'payout', ...bounds, ...(url ? { bundlerUrl: url } : {}) }, bounds };
+            // Continue within the deployment policy, including plans saved
+            // by a build that treated its fee estimate as an exact cap.
+            const plan = api?.plan?.(view.status === 'ready' ? view.quote
+                : { available: true, flatFeeWei: prepared.flat_fee_cap_wei });
+            if (!plan) return { refused: 'Paying the network fee from this withdrawal isn’t available right now.' };
+            return { options: plan.options, bounds: plan.sponsored };
         }
         if (prepared || this.sponsoredChoice !== 'payout' || !api) return null;
         const view = this.sponsoredViewState(mode);
@@ -3062,7 +3052,7 @@ export default class AccountModal {
             const feeWei = payoutQuote?.available ? String(BigInt(payoutQuote.maxCostWei) + BigInt(payoutQuote.flatFeeWei) + BigInt(payoutQuote.creditSurchargeWei || '0'))
                 : feeQuote ? withdrawalFeeReceiptAmounts(feeQuote).needed : null;
             const feeUsd = feeWei ? fundingUsdText(feeWei) : null;
-            const feeText = feeWei ? `up to ${this.escapeHtml(feeUsd || `${formatFundingAmount(feeWei, 18)} ETH`)}` : '—';
+            const feeText = feeWei ? `${payoutQuote ? 'about' : 'up to'} ${this.escapeHtml(feeUsd || `${formatFundingAmount(feeWei, 18)} ETH`)}` : '—';
             const row = (label, value) => `<div class="zkapi-transfer-row"><span class="zkapi-transfer-label">${label}</span><span class="zkapi-transfer-value">${value}</span><span class="zkapi-transfer-control"></span></div>`;
             const amountText = amountKnown ? this.escapeHtml(displayAmount) : '';
             const receivedWei = payoutQuote?.available ? escapeReview ? payoutQuote.estimatedReceivedWei : payoutQuote.minimumReceivedWei : null;
@@ -3072,9 +3062,9 @@ export default class AccountModal {
                     ${row('You withdraw', amountKnown ? `<span data-withdraw-amount>${amountText}</span>` : '<span class="zkapi-transfer-muted">Checking…</span>')}
                     ${row('To', to)}
                     ${row(escapeReview ? 'Network fees' : 'Network fee', `${feeText}${escapeReview ? ' <small>· two steps</small>' : ''}`)}
-                    ${row('You receive', amountKnown ? `${payoutQuote ? escapeReview ? 'about ' : 'at least ' : ''}<b>${receivedText}</b>` : '—')}
+                    ${row('You receive', amountKnown ? `${payoutQuote ? 'about ' : ''}<b>${receivedText}</b>` : '—')}
                 </div>
-                ${payoutQuote ? '<p class="zkapi-note">The fee is paid from this withdrawal. No ETH is needed in your signing account.</p>' : ''}
+                ${payoutQuote ? '<p class="zkapi-note">The fee is paid from this withdrawal. No ETH is needed in your signing account. Estimates may change before signing.</p>' : ''}
                 <p class="zkapi-note">${!escapeReview
                     ? 'Once the server approves it, it can’t be cancelled, and this balance can’t be used for chat. Closing this window afterward does not cancel the withdrawal.'
                     : `Starting the escape hatch makes this balance unavailable for chat. Return after ${zkapiClient.escapePeriodPhrase()} to finish. Each step has a network fee. You can go back now without starting it.`}</p>
