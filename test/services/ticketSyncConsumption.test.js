@@ -116,7 +116,7 @@ test('removal records authenticate their opaque ID and notify hydrated wallet li
     });
 });
 
-test('fixed periodic sync uploads deferred spends without needing a server change', async () => {
+test('fixed periodic sync catches missed local uploads without needing a server change', async () => {
     const originals = {
         setInterval: globalThis.setInterval,
         clearInterval: globalThis.clearInterval,
@@ -144,7 +144,7 @@ test('fixed periodic sync uploads deferred spends without needing a server chang
     service.sync = async () => { uploads++; return { success: true }; };
     try {
         service.startPeriodicSync();
-        assert.equal(service.shouldDeferRedemptionSync(), true);
+        assert.equal(service.shouldDeferRedemptionSync(), false);
         assert.equal(uploads, 1, 'start reconciles pending local changes');
         const periodic = [...timers.values()].find(timer => timer.delay === 30_000);
         assert.ok(periodic, 'full sync runs at a fixed 30-second cadence');

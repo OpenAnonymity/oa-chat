@@ -220,12 +220,11 @@ Identity-backed accounts use the same encrypted ticket sync as legacy
 account-number accounts. Active and archived ticket wallets are encrypted
 client-side with per-blob AES-GCM keys and stored under HMAC-derived opaque IDs;
 the org receives ciphertext, not finalized ticket contents. Add/import/clear
-mutations schedule sync. Redemption consumption is persisted locally without an
-immediate sync for identity-backed accounts; its encrypted archive record is
-uploaded by the next
-initial/periodic sync so redemption is not followed by a deterministic
-identity-authenticated request. Identity-free legacy accounts retain immediate
-consumption sync. Empty arrays are encrypted. Clear/export operations erase the
+mutations and redemption consumption schedule the same two-second debounced
+pull/merge/push for all unlocked account types. Repeated local changes coalesce;
+a change during an in-flight sync retains one follow-up. The existing 30-second
+visible-client reconciliation and foreground resume remain fallbacks. Empty
+arrays are encrypted. Clear/export operations erase the
 redeemable secrets locally and sync encrypted SHA-256 deletion tombstones;
 remote merges honor those hashes and immediately invalidate other tabs without
 letting stale account notifications clear the current cache.
@@ -237,8 +236,9 @@ contain. Ticket redemption remains a separate, identity-free protocol request.
 However, ticket-wallet sync makes the strongest identity-unlinkability claim
 inapplicable to sync metadata: a malicious org can attempt to correlate a later
 identity-authenticated sync with redemption timing or wallet-size changes.
-Deferring redemption-triggered sync reduces that signal but does not
-cryptographically eliminate it.
+The spend-triggered two-second sync makes that timing signal stronger. This
+responsiveness/privacy tradeoff was explicitly accepted on 2026-10-19; absence
+of retained logs does not remove network observability.
 
 Google cannot be attached to an existing legacy account. OAuth login
 creates or resolves a dedicated identity account partition; `link` mode is

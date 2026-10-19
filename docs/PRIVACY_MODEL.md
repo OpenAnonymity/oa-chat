@@ -296,17 +296,19 @@ an OA sync account. In those opt-in flows:
    high-entropy SHA-256 deletion tombstones for cash-style transfers, and
    preferences. Per-blob keys are derived locally; logical IDs and payload types
    are inside ciphertext or represented only by HMAC-derived opaque IDs.
-   For these accounts, redemption consumption does not trigger
-   immediate sync; it propagates during the next initial/periodic sync.
-   Visible unlocked clients reconcile every 30 seconds and on foreground resume,
-   independently of whether a redemption occurred. Each installation also keeps
+   Local ticket changes, including redemption consumption, schedule an
+   authenticated pull/merge/push about two seconds after the last local change.
+   This product tradeoff was explicitly accepted on 2026-10-19. Visible unlocked
+   clients also reconcile every 30 seconds and on foreground resume. Each
+   installation also keeps
    a separate encrypted removal snapshot at a stable HMAC-derived address so
    concurrent devices cannot overwrite each other's spent/deleted-ticket state.
    Its random writer ID is inside ciphertext and local account-scoped storage.
    This adds a stable installation-level opaque record and increases sync traffic
-   and the frequency of observable ciphertext-size changes. Fixed scheduling
-   avoids a direct redemption-triggered request, but does not eliminate timing
-   or size correlation. Background/offline clients catch up on resume.
+   and the frequency of observable ciphertext-size changes. Spend-triggered
+   uploads add a direct timing-correlation signal. Not retaining request logs
+   does not prevent observation of network timing. Background/offline clients
+   catch up on resume; failed local-change syncs use the periodic/resume fallback.
 7. Neither a provider identity nor a username can be linked onto an existing
    legacy account. Each resolves a dedicated account partition so it cannot
    inherit a namespace with historical ticket-sync metadata.
@@ -319,9 +321,9 @@ remains unlinkable to redemption, ephemeral provider keys remain anonymous, and
 no OA component enters the prompt or response path. The org can nevertheless
 observe identity-bound sync timing,
 ciphertext sizes, and stable opaque blob IDs and attempt metadata correlation
-with redemption. Deferring redemption-triggered sync removes the direct
-two-second signal, but does not cryptographically eliminate correlation around
-later syncs. These metadata do not reveal ticket plaintext or prompt contents.
+with redemption. The two-second redemption-triggered sync intentionally
+accepts a stronger timing signal in exchange for faster wallet propagation.
+These metadata do not reveal ticket plaintext or prompt contents.
 See
 [Encryption Passkeys](ENCRYPTION_PASSKEYS.md) and
 [Google Sign-In](GOOGLE_SIGN_IN.md), and
@@ -575,7 +577,7 @@ network layer, the following metadata vectors exist and should be mitigated:
 | IP address         | The command-line daemon uses direct HTTPS and local DNS by default, exposing the source IP to destination services; users can opt in to Wisp with a nonempty `relay_url`. The browser's built-in proxy covers accountless invitation issuance, ticket redemption, and access requests when enabled, hiding the browser IP from the org/station. Account-authenticated billing issuance intentionally uses the narrow SuperTokens transport directly to the configured org (or a first-party same-origin deployment proxy), so a direct production org can observe the subscriber's source IP and request timing. It still sees only blinded requests and cannot link them to later finalized-ticket redemption. Users who need network-layer separation for this identity-bound issuance can use a trusted VPN/Tor; deployments may provide a first-party reverse proxy. |
 | CLI key reuse | The default 60-second fixed window shares one credential across eligible calls, including unrelated chats and local clients. The provider can link those calls, and they share the original aggregate cap. Set `key_reuse_window_seconds` to 0 for a fresh key per call; this does not hide IP addresses or prompt content. |
 | Browser User-Agent | Standard browser fingerprinting concern; use a common browser or randomize UA.                                                                                                                                       |
-| Account sync metadata | For Google and username accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. A username also exposes the chosen stable pseudonym during authentication. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
+| Account sync metadata | For Google and username accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. A username also exposes the chosen stable pseudonym during authentication. Consumption schedules a two-second debounced authenticated sync; this strengthens timing correlation, as explicitly accepted on 2026-10-19. |
 
 
 These vectors do not reveal prompt contents or break the blind-signature proof,
@@ -602,7 +604,7 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The provider sees prompts, so zero-trust is violated."                      | False. OA's claim is unlinkable inference, not invisible inference. Prompts reach the provider (they must for inference to work), but anonymously issued credentials do not carry a user identity. The provider can link calls sharing a key, including cross-chat CLI calls within its configured reuse window; IP, timing and content correlation remain separate concerns.                                                                                                                                                                                                                         |
 | "Google login has exactly the same unlinkability as an identity-free account." | False. OAuth authorizes a dedicated identity account and its encrypted ticket-wallet sync exposes timing, size, and stable opaque-ID metadata. The org cannot decrypt a finalized ticket or prompt, and the identity credential is absent from redemption and inference requests, but metadata correlation is a documented Google-account tradeoff. |
 | "Station operator cookies stored in verifier memory affect user privacy."    | False. Station operator credentials are governance data for compliance checks on the operator's provider account. They are not end-user data. The verifier never receives or stores any end-user identity material.                                                                                                                                                                                                                                                                   |
-| "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated when the built-in proxy is enabled; the command-line daemon defaults to direct HTTPS, which exposes its source IP. Ticket consumption by Google and username accounts deliberately does not trigger immediate sync, but later authenticated sync timing and size remain correlatable metadata. |
+| "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated when the built-in proxy is enabled; the command-line daemon defaults to direct HTTPS, which exposes its source IP. Ticket consumption by Google and username accounts schedules a two-second debounced authenticated sync; its timing and size are correlatable metadata, even without retained request logs. |
 | "The org is closed-source, so it's an unauditable trust anchor."             | Blinding/unblinding and sync encryption run client-side in open-source JS, so the org cannot decrypt ticket blobs or prompt contents. The identity-free flow does not rely on it for unlinkability. Google and username flows accept the explicitly documented sync-metadata correlation surface. See [UNLINKABILITY_PROOF.md](UNLINKABILITY_PROOF.md) for the blind-signature proof. |
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. Distinct keys do not provide a persistent pseudonym across sessions. CLI calls sharing a cached key are explicitly linkable during the configured window. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |

@@ -202,6 +202,7 @@ export class SyncService {
 
         // Debounce for local change sync
         this.localChangeDebounceTimer = null;
+        this.localChangeSyncPending = false;
         this.lastSyncTime = null;
         this.lastSyncResult = null;
     }
@@ -211,6 +212,7 @@ export class SyncService {
         accountId,
         { identityBacked = false } = {}
     ) {
+        this.cancelLocalChangeSync();
         this.credentialGeneration += 1;
         this.keyMaterial = keyMaterial;
         this.accountId = accountId;
@@ -222,16 +224,21 @@ export class SyncService {
 
     clearCredentials() {
         this.credentialGeneration += 1;
-        if (this.localChangeDebounceTimer) {
-            clearTimeout(this.localChangeDebounceTimer);
-            this.localChangeDebounceTimer = null;
-        }
+        this.cancelLocalChangeSync();
         this.keyMaterial = null;
         this.accountId = null;
         this.identityBacked = false;
         this.idMapping = null;
         this.idMappingGeneration = null;
         this.stopPeriodicSync();
+    }
+
+    cancelLocalChangeSync() {
+        if (this.localChangeDebounceTimer) {
+            clearTimeout(this.localChangeDebounceTimer);
+            this.localChangeDebounceTimer = null;
+        }
+        this.localChangeSyncPending = false;
     }
 
     async init() {
@@ -624,6 +631,8 @@ export class SyncService {
      */
     triggerSync(delayMs = 2000) {
         if (!this.isEnabled()) return;
+        this.localChangeSyncPending = true;
+        const credentialGeneration = this.credentialGeneration;
 
         if (this.localChangeDebounceTimer) {
             clearTimeout(this.localChangeDebounceTimer);
@@ -631,7 +640,12 @@ export class SyncService {
 
         this.localChangeDebounceTimer = setTimeout(() => {
             this.localChangeDebounceTimer = null;
-            this.sync().catch(err => {
+            if (!this.credentialsAreCurrent(credentialGeneration) || !this.isEnabled()) return;
+            // Retain one follow-up if the debounce expires during another pass.
+            // sync() schedules it after that pass releases the wallet lock.
+            if (this.syncInProgress) return;
+            this.localChangeSyncPending = false;
+            this.sync({ background: true }).catch(err => {
                 console.warn('[SyncService] Triggered sync failed:', err);
             });
         }, delayMs);
@@ -642,7 +656,9 @@ export class SyncService {
     }
 
     shouldDeferRedemptionSync() {
-        return this.identityBacked;
+        // Product decision 2026-10-19: all unlocked account wallets use the
+        // same two-second local-change debounce, including ticket consumption.
+        return false;
     }
 
     /**
@@ -822,14 +838,25 @@ export class SyncService {
         this.syncInProgress = true;
         this.notify('sync_start');
 
-        return this.withSyncLock(
-            () => this._doSync(
-                masterKey,
-                accountId,
-                credentialGeneration,
-                { background }
-            )
-        );
+        try {
+            return await this.withSyncLock(
+                () => this._doSync(
+                    masterKey,
+                    accountId,
+                    credentialGeneration,
+                    { background }
+                )
+            );
+        } finally {
+            // Also release the busy state if acquiring the lock itself failed.
+            this.syncInProgress = false;
+            if (this.localChangeSyncPending && !this.localChangeDebounceTimer && this.isEnabled()) {
+                this.triggerSync();
+            }
+            if (this.credentialsAreCurrent(credentialGeneration)) {
+                this.notify('sync_end');
+            }
+        }
     }
 
     async _doSync(
@@ -892,11 +919,6 @@ export class SyncService {
             this.lastSyncResult = result;
             this.notify('sync_error', { error: error.message });
             return result;
-        } finally {
-            this.syncInProgress = false;
-            if (this.credentialsAreCurrent(credentialGeneration)) {
-                this.notify('sync_end');
-            }
         }
     }
 
@@ -1510,8 +1532,8 @@ export class SyncService {
             }
         };
 
-        // Upload even when the server is unchanged: identity-backed redemption
-        // deliberately skips triggerSync(). Keep cadence independent of spends.
+        // Reconcile even when the server is unchanged: this catches missed
+        // local-change timers, failed uploads, and remote spends on idle clients.
         const doFullSync = async () => {
             if (document.visibilityState === 'visible' && this.isEnabled()) {
                 await this.sync({ background: true }).catch(() => {});

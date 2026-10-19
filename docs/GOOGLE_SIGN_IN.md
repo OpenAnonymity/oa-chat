@@ -92,9 +92,9 @@ accounts' encrypted data unrecoverable even when Google authentication succeeds.
 - Identity-backed accounts sync encrypted active/archived ticket wallets and
   preferences using the same opaque blob format as legacy accounts. Existing
   device tickets are adopted when the Google account is first created.
-- Ticket redemption does not trigger an immediate identity-authenticated sync.
-  Consumed-state tombstones propagate on the next initial/periodic sync. This
-  reduces direct timing correlation, but identity-bound sync timing and blob
+- Ticket consumption schedules a two-second debounced identity-authenticated
+  sync, as explicitly approved on 2026-10-19. This improves propagation but
+  strengthens timing correlation; identity-bound sync timing and blob
   sizes remain observable metadata.
 
 ## Deployment configuration
@@ -148,8 +148,8 @@ callback remains on canonical `localhost:8005`.
    the new encryption passkey.
 5. Create an account with an existing local wallet, then verify that wallet and
    later ticket additions/clears restore on a second passkey-unlocked browser.
-   Verify redemption itself schedules no immediate sync, its consumed state
-   restores after a periodic/next-login sync, and tickets/preferences do not
+   Verify consumption schedules a sync about two seconds after the last local
+   change, its consumed state restores after the receiving client syncs, and tickets/preferences do not
    cross account scopes.
 6. Reject an unallowlisted return origin, missing/mismatched nonce, replayed
    OAuth state, every link request, and a keyring overwrite.

@@ -141,6 +141,8 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
 });
 
 test('an invalidated sync does not overwrite replacement-account UI state', async () => {
+    const originalLock = syncService.withSyncLock;
+    syncService.withSyncLock = async handler => handler();
     const originalGetSetting = chatDB.getSetting;
     chatDB.getSetting = async key => key === 'account-settings' ? { accountId: 'account-a' } : null;
     const originalBuild = syncService._buildIdMapping;
@@ -155,20 +157,14 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
             accountAKey,
             'account-a'
         );
-        const generation = syncService.credentialGeneration;
         syncService.lastSyncResult = { success: true, account: 'replacement' };
-        syncService.syncInProgress = true;
         syncService.notify = event => events.push(event);
         syncService._buildIdMapping = async () => new Promise(resolve => {
             finishBuild = resolve;
         });
         syncService.isAccountScopeActive = async () => true;
 
-        const pendingSync = syncService._doSync(
-            accountAKey,
-            'account-a',
-            generation
-        );
+        const pendingSync = syncService.sync();
         while (!finishBuild) {
             await new Promise(resolve => setTimeout(resolve, 0));
         }
@@ -185,9 +181,10 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
             syncService.lastSyncResult,
             { success: true, account: 'replacement' }
         );
-        assert.deepEqual(events, []);
+        assert.deepEqual(events, ['sync_start']);
         assert.equal(syncService.syncInProgress, false);
     } finally {
+        syncService.withSyncLock = originalLock;
         chatDB.getSetting = originalGetSetting;
         syncService._buildIdMapping = originalBuild;
         syncService.isAccountScopeActive = originalScopeCheck;

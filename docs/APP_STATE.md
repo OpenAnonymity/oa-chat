@@ -1,3 +1,18 @@
+## October 19, 2026 — local-change ticket sync (local candidate)
+
+User explicitly approved mobile-style two-second spend-triggered sync for web
+and desktop after discussion of authenticated timing correlation. This supersedes
+the July 30 deferred-redemption policy below, not the separate staging-only timing
+experiment restriction. The declined ten-second periodic candidate is excluded.
+
+See [ticket sync on local changes](TICKET_SYNC_ON_CHANGE.md) for behavior,
+acceptance criteria, privacy boundaries and remaining live-test requirements.
+Pending timers are cleared on credential replacement/logout. A timer that expires
+during a pass retains one follow-up; sync stays busy through account-lock release.
+Local automatic work uses bounded background transport so a slow body cannot hold
+the wallet lock for foreground retry durations. Failed passes retry on normal
+periodic/resume work; remote merges must not trigger echo uploads.
+
 ## October 19, 2026 — local review of database-close recovery
 
 `831654b` is distinct from the withdrawn history-hardening candidate: healthy

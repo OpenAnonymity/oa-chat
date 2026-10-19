@@ -476,7 +476,7 @@ test('empty ticket wallets are encrypted so the remote snapshot can be cleared',
     }
 });
 
-test('SSO redemption defers sync while other mutations and legacy redemption sync', async () => {
+test('SSO and legacy redemption schedule sync just like other ticket mutations', async () => {
     const fixture = installSettingsMap([
         ['sync-account-scope', 'identity-account'],
         ['tickets-active', [{ finalized_ticket: 'identity-ticket' }]],
@@ -496,7 +496,7 @@ test('SSO redemption defers sync while other mutations and legacy redemption syn
 
     try {
         await ticketStore.consumeTickets(1, async () => 'redeemed');
-        assert.equal(syncTriggerCount, 0);
+        assert.equal(syncTriggerCount, 1);
         assert.deepEqual(fixture.settings.get('tickets-active'), []);
         assert.equal(
             fixture.settings.get('tickets-archive')[0].finalized_ticket,
@@ -506,7 +506,7 @@ test('SSO redemption defers sync while other mutations and legacy redemption syn
         await ticketStore.addTickets([
             { finalized_ticket: 'new-identity-ticket' }
         ]);
-        assert.equal(syncTriggerCount, 1);
+        assert.equal(syncTriggerCount, 2);
 
         syncTriggerCount = 0;
         syncService.clearCredentials();

@@ -531,9 +531,8 @@ export class TicketStore {
                     updatedAt: Date.now()
                 });
             }
-            // Trigger sync on local changes (debounced). Redemption paths opt out:
-            // an immediate identity-authenticated request after anonymous ticket
-            // redemption would create a direct timing correlation.
+            // Local changes, including redemption, use the shared two-second
+            // debounce. Remote hydration explicitly opts out to avoid echoes.
             if (!options.skipSync) {
                 syncService.triggerTicketSync();
             }
