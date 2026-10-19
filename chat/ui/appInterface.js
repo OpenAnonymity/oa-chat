@@ -41,9 +41,9 @@ export function createComponentDataInterface(options = {}) {
         deleteMessage: (messageId) => db.deleteMessage(messageId),
         deleteSessionMessages: (sessionId) => db.deleteSessionMessages(sessionId),
         saveSession: (session) => db.saveSession(session),
-        async saveSessionWithMessages(session, messages) {
+        async saveSessionWithMessages(session, messages, ...options) {
             if (typeof db.saveSessionWithMessages === 'function') {
-                await db.saveSessionWithMessages(session, messages);
+                await db.saveSessionWithMessages(session, messages, ...options);
                 return;
             }
 

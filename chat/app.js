@@ -2953,6 +2953,18 @@ class ChatApp {
             this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
         });
 
+        // Reopening after an unexpected close is silent; only a failed reopen
+        // needs the person. It says nothing about stored chats being gone.
+        window.addEventListener('oa-db-reconnect-failed', () => {
+            this.showToast('Chat storage is unavailable right now. Reload to continue.', 'error');
+        });
+
+        // Only after the browser recreated chat storage and this tab tried to
+        // save into a chat from before: say why, once, and how to keep it.
+        window.addEventListener('oa-db-reset-write-refused', () => {
+            this.showToast('This browser cleared chat storage while this tab was open. Chats shown here from before are no longer saved; copy anything you need before reloading.', 'error', 9000);
+        });
+
         window.addEventListener('oa-db-compat-mode', () => {
             this.showToast('Chat storage is running in compatibility mode. Close other tabs and reload to finish the upgrade.', 'error');
         });
