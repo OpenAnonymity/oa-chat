@@ -369,8 +369,9 @@ function accountFixture(t, { verify = true } = {}) {
     const originals = Object.fromEntries(keys.map(key => [key, accountService[key]]));
     const originalState = { ...accountService.state };
     const originalVerify = sessionService.verifySession;
+    const originalFetch = sessionService.fetch;
     const originalScope = syncService.getLocalAccountScope();
-    const calls = { verify: 0, initializeSync: 0, locks: 0 };
+    const calls = { verify: 0, identity: 0, initializeSync: 0, locks: 0 };
     Object.assign(accountService.state, {
         accountId: ACCOUNT, sessionVerified: true, username: null,
         googleLinked: true, oauthProvider: 'google', oauthEmail: 'member@example.test',
@@ -385,6 +386,12 @@ function accountFixture(t, { verify = true } = {}) {
     accountService.syncInitializationInFlight = null;
     accountService.lock = () => { calls.locks += 1; };
     sessionService.verifySession = async () => { calls.verify += 1; return verify; };
+    sessionService.fetch = async (url, options) => {
+        calls.identity += 1;
+        assert.equal(new URL(url).pathname, '/auth/keyring');
+        assert.equal(options.method, 'GET');
+        return Response.json({ accountId: ACCOUNT });
+    };
     accountService.initializeSync = async () => { calls.initializeSync += 1; return true; };
     syncService.setLocalAccountScope(ACCOUNT);
     t.after(() => {
@@ -392,6 +399,7 @@ function accountFixture(t, { verify = true } = {}) {
         Object.keys(accountService.state).forEach(key => { if (!(key in originalState)) delete accountService.state[key]; });
         Object.assign(accountService.state, originalState);
         sessionService.verifySession = originalVerify;
+        sessionService.fetch = originalFetch;
         syncService.setLocalAccountScope(originalScope);
     });
     return calls;
@@ -411,6 +419,7 @@ test('after a plain close the account record is untouched and sync restarts', as
     assert.equal(await accountService.recoverAfterStorageReconnect(), true);
     assert.equal((await chatDB.getSetting('account-settings')).marker, 'original');
     assert.equal(calls.verify, 0);
+    assert.equal(calls.identity, 0);
     assert.equal(calls.initializeSync, 1);
 });
 
@@ -432,6 +441,7 @@ test('a removed database gets this tab\'s account record and key bundle back, in
         entry.writes.some(w => w.key === 'account-settings'));
     assert.ok(commits.at(-1).writes.some(w => w.key === 'account-key-bundle-v1'));
     assert.equal(calls.verify, 1);
+    assert.equal(calls.identity, 1);
     assert.equal(calls.initializeSync, 1);
     assert.deepEqual(await chatDB.getAllSessions(), []); // never writes chats
 });
@@ -548,3 +558,61 @@ test('a focus while storage cannot open leaves the account alone', async t => {
     await accountService.reconcileSharedAccount();
     assert.equal(calls.locks, 0);
 });
+
+for (const schemaChange of [false, true]) {
+    test(`a ${schemaChange ? 'schema change' : 'second close'} during marker adoption cannot announce recovery`, async t => {
+        const { events } = await fixture(t);
+        await chatDB.saveSetting('kept', 'original');
+        await closeUnexpectedly();
+        const adopt = chatDB.adoptIncarnation;
+        t.after(() => { chatDB.adoptIncarnation = adopt; });
+        chatDB.adoptIncarnation = async db => {
+            const marker = await adopt.call(chatDB, db);
+            if (schemaChange) db.onversionchange();
+            else { db.close(); db.onclose(); }
+            return marker;
+        };
+        await assert.rejects(chatDB.init(), schemaChange ? /Reload to continue/ : /closed during recovery/);
+        assert.equal(chatDB.reconnectCount, 0);
+        assert.equal(events.includes('oa-db-reconnected'), false);
+        assert.equal(events.includes('oa-db-reset'), false);
+        assert.equal(chatDB.initInFlight, null);
+        if (schemaChange) {
+            assert.equal(chatDB.closedForVersionChange, true);
+            await assert.rejects(chatDB.init(), /Reload to continue/);
+        } else {
+            assert.equal(chatDB.connectionLost, true);
+            chatDB.adoptIncarnation = adopt;
+            chatDB.reopenFailure = null; // model the retry-backoff period elapsing
+            await chatDB.init();
+            assert.equal(chatDB.connectionLost, false);
+            assert.equal(await chatDB.getSetting('kept'), 'original');
+            assert.equal(events.filter(event => event === 'oa-db-reconnected').length, 1);
+        }
+    });
+}
+
+for (const outcome of ['different account', 'missing identity', 'failed identity request', 'account switches during identity request']) {
+    test(`reset recovery never restores keys with ${outcome}`, async t => {
+        await fixture(t);
+        const calls = accountFixture(t);
+        await signedInRecord();
+        await closeUnexpectedly({ removeData: true });
+        await chatDB.init();
+        sessionService.fetch = async () => {
+            if (outcome === 'failed identity request') throw Error('Synthetic unavailable identity');
+            if (outcome === 'account switches during identity request') {
+                accountService.loginGeneration += 1;
+                accountService.state.accountId = OTHER_ACCOUNT;
+                return Response.json({ accountId: ACCOUNT });
+            }
+            return Response.json(outcome === 'missing identity' ? {} : { accountId: OTHER_ACCOUNT });
+        };
+        const generation = accountService.loginGeneration;
+        t.after(() => { accountService.loginGeneration = generation; });
+        assert.equal(await accountService.runStorageReconnectRecovery(), false);
+        assert.equal(await chatDB.getSetting('account-settings'), undefined);
+        assert.equal(await chatDB.getSetting('account-key-bundle-v1'), undefined);
+        assert.equal(calls.initializeSync, 0);
+    });
+}

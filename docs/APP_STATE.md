@@ -1,3 +1,30 @@
+## October 19, 2026 — local review of database-close recovery
+
+`831654b` is distinct from the withdrawn history-hardening candidate: healthy
+message saves still resolve on request success. Local Mac full-suite validation
+of that commit passed (4,477 tests, 12 skipped). A fresh adversarial review found
+two recovery edge cases; local follow-up changes address them:
+
+- If the reopened handle closes or receives `versionchange` while its database
+  marker is being adopted, reject recovery and retain the lost/reload-required
+  state. Do not announce a dead handle as recovered. Late schema-change events
+  on replaced handles cannot close the current database.
+- Before restoring account settings/keys from memory after a reset, verify the
+  authenticated `/auth/keyring` account ID matches the captured account under
+  the account-data lock. Session existence alone was insufficient after a
+  missed cross-tab account switch. Missing/mismatched identity, request failure,
+  or a concurrent account change prevents restoration and sync. This request
+  is only in reset recovery; normal saves and startup add no such request.
+
+Final candidate plus follow-up: 4,483 tests passed, 12 skipped, zero failures.
+Independent re-review approved the fixes and reran all 36 focused tests.
+Follow-up remains uncommitted in the isolated review worktree; publish neither
+the original candidate alone nor this staging-based source to production.
+New regression tests cover the lifecycle race and identity failures. No staging,
+production, desktop publication, live sign-in, chat send or ticket spend occurred.
+The supplied storage benchmark is not an end-to-end response/startup benchmark.
+See workspace `release-evidence/db-close-recovery-20261019/VALIDATION.md`.
+
 ## October 18, 2026 — chat storage closed under an open tab (recovery, not a cause)
 
 Context: staging lost every conversation (the database had 0 sessions) and the
@@ -52,8 +79,8 @@ whatever closed the database.
   carries tickets and preferences only, never chats.
 - Speed: 1000 `saveMessage` and 200 `getSessionsPage` per round, headless
   Chromium, 6+ alternating rounds against `3fa32bdb`: no difference beyond
-  noise (about 0.6 ms per save both ways). Normal-state cost is one resolved
-  `connection()` per operation.
+  noise (about 0.6 ms per save both ways). Normal-state operations check the connection flags and do not await
+  `connection()` unless storage is missing or lost.
 
 ## October 18, 2026 — truthful upload acknowledgment (web release candidate)
 

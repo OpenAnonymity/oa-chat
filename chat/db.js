@@ -176,9 +176,17 @@ class ChatDatabase {
                 this.compatMode = resolvedCompatMode;
                 // The browser can close a connection without the page asking
                 // (storage cleared or evicted, disk errors). It never says why.
-                db.onclose = () => this.markConnectionLost(db);
-                this.db.onversionchange = () => {
-                    this.db.close();
+                let closedDuringAdoption = false;
+                db.onclose = () => {
+                    closedDuringAdoption = true;
+                    this.markConnectionLost(db);
+                };
+                db.onversionchange = () => {
+                    closedDuringAdoption = true;
+                    // A late event from a replaced handle must not close the
+                    // current connection.
+                    if (this.db !== db) return;
+                    db.close();
                     this.db = null;
                     this.closedForVersionChange = true;
                     if (typeof window !== 'undefined') {
@@ -194,6 +202,23 @@ class ChatDatabase {
                 const known = this.incarnation;
                 void this.adoptIncarnation(db).then(current => {
                     this.initInFlight = null;
+                    // The marker read is asynchronous: this handle can close
+                    // again before it finishes. Never announce a dead handle
+                    // as recovered or erase the new connection-lost state.
+                    if (closedDuringAdoption || this.db !== db || this.closedForVersionChange) {
+                        const error = new Error(this.closedForVersionChange
+                            ? 'Chat storage updated in another tab. Reload to continue.'
+                            : 'Chat storage closed during recovery. Please try again.');
+                        if (this.connectionLost) {
+                            this.reopenFailure = { at: Date.now(), error };
+                            if (!this.reconnectFailureReported) {
+                                this.reconnectFailureReported = true;
+                                this.dispatchWindowEvent('oa-db-reconnect-failed');
+                            }
+                        }
+                        reject(error);
+                        return;
+                    }
                     // A failed marker read is "unknown", never "different".
                     if (current) this.incarnation = current;
                     if (reopened) {

@@ -1660,14 +1660,17 @@ class AccountService {
         if (first.pending || (first.savedAccountId && first.savedAccountId !== accountId)) return false;
         if (!first.savedAccountId) {
             if (!databaseWasRecreated) return false;
-            // The browser's session record (SuperTokens cookies, kept when site
-            // storage is removed) must still exist: a sign-out in this browser
-            // removes it, and then this tab must not restore the account.
-            if (!await sessionService.verifySession().catch(() => false)) return false;
-            if (!isCurrent()) return false;
             const wrote = await withAccountDataLock(async () => {
                 const again = await readRecord();
                 if (again.pending || again.savedAccountId || !isCurrent()) return false;
+                // A surviving cookie can belong to another account if this
+                // tab missed its sign-in broadcast before storage was reset.
+                // Session existence alone cannot authorize restoring old keys.
+                if (!await sessionService.verifySession().catch(() => false)) return false;
+                const identity = await fetchJson('/auth/keyring', null, { method: 'GET' }).catch(() => null);
+                if (!isCurrent() || normalizeAccountId(identity?.accountId) !== accountId) return false;
+                const latest = await readRecord();
+                if (latest.pending || latest.savedAccountId || !isCurrent()) return false;
                 // One write: never a record without its key bundle.
                 await chatDB.updateSettings([
                     { key: ACCOUNT_SETTINGS_KEY, value: this.accountSettingsPayload() },
