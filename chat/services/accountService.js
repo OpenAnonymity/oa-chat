@@ -1578,7 +1578,17 @@ class AccountService {
 
     async persistSettings({ onlyIfCurrent = false } = {}) {
         if (!chatDB) return;
-        const payload = {
+        const payload = this.accountSettingsPayload();
+        await withAccountDataLock(async () => {
+            if (onlyIfCurrent) {
+                await syncService.assertAccountBinding(payload.accountId);
+            }
+            await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
+        });
+    }
+
+    accountSettingsPayload() {
+        return {
             accountId: this.state.accountId,
             username: this.state.username,
             credentialId: this.state.credentialId,
@@ -1590,12 +1600,105 @@ class AccountService {
             oauthEmail: this.state.oauthEmail,
             updatedAt: Date.now()
         };
-        await withAccountDataLock(async () => {
-            if (onlyIfCurrent) {
-                await syncService.assertAccountBinding(payload.accountId);
-            }
-            await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
-        });
+    }
+
+    /**
+     * The browser closed chat storage under this tab and it was reopened.
+     * A plain close leaves every record in place; the wallet scope and sync
+     * restart so they read the reopened database. Only when the reopen had to
+     * create the database again (the browser removed it) and the account's
+     * record is therefore missing, the record and key bundle this tab holds
+     * in memory are written back, so the next focus or reload does not ask
+     * for a new sign-in. A record missing after a plain close was removed by
+     * someone (a sign-out elsewhere) and is left alone, as are a sign-in in
+     * progress elsewhere, a different saved account and a session that no
+     * longer exists in this browser.
+     */
+    recoverAfterStorageReconnect() {
+        if (this.storageRecoveryInFlight) return this.storageRecoveryInFlight;
+        this.handledStorageReconnect = chatDB?.reconnectCount || 0;
+        const run = this.runStorageReconnectRecovery()
+            .catch(error => {
+                console.warn('[AccountService] Account recovery after storage reconnect failed:', error);
+                return false;
+            })
+            .then(async result => {
+                if (this.storageRecoveryInFlight === run) this.storageRecoveryInFlight = null;
+                // Another reconnect while this ran gets its own pass.
+                if ((chatDB?.reconnectCount || 0) !== this.handledStorageReconnect) {
+                    return this.recoverAfterStorageReconnect();
+                }
+                return result;
+            });
+        this.storageRecoveryInFlight = run;
+        return run;
+    }
+
+    async runStorageReconnectRecovery() {
+        const accountId = normalizeAccountId(this.state.accountId);
+        if (!chatDB || !accountId || this.state.sessionVerified !== true ||
+            !this.cryptoKey || !this.syncDerivationKey || !this.syncIdKey) return false;
+        // Work on the reopened database; this pass covers that reconnect.
+        await chatDB.connection?.();
+        const reconnect = chatDB.reconnectCount || 0;
+        this.handledStorageReconnect = reconnect;
+        const databaseWasRecreated = reconnect > 0 && chatDB.resetReconnectCount === reconnect;
+        const generation = this.loginGeneration;
+        const isCurrent = () => generation === this.loginGeneration &&
+            normalizeAccountId(this.state.accountId) === accountId &&
+            this.state.sessionVerified === true;
+        const readRecord = async () => {
+            const saved = await chatDB.getSettingsSnapshot([
+                ACCOUNT_SETTINGS_KEY, ACCOUNT_LOGIN_PENDING_KEY
+            ]);
+            return {
+                pending: !!saved[ACCOUNT_LOGIN_PENDING_KEY],
+                savedAccountId: normalizeAccountId(saved[ACCOUNT_SETTINGS_KEY]?.accountId)
+            };
+        };
+        const first = await readRecord();
+        if (first.pending || (first.savedAccountId && first.savedAccountId !== accountId)) return false;
+        if (!first.savedAccountId) {
+            if (!databaseWasRecreated) return false;
+            // The browser's session record (SuperTokens cookies, kept when site
+            // storage is removed) must still exist: a sign-out in this browser
+            // removes it, and then this tab must not restore the account.
+            if (!await sessionService.verifySession().catch(() => false)) return false;
+            if (!isCurrent()) return false;
+            const wrote = await withAccountDataLock(async () => {
+                const again = await readRecord();
+                if (again.pending || again.savedAccountId || !isCurrent()) return false;
+                // One write: never a record without its key bundle.
+                await chatDB.updateSettings([
+                    { key: ACCOUNT_SETTINGS_KEY, value: this.accountSettingsPayload() },
+                    {
+                        key: ACCOUNT_KEY_BUNDLE,
+                        value: {
+                            accountId,
+                            cryptoKey: this.cryptoKey,
+                            derivationKey: this.syncDerivationKey,
+                            idKey: this.syncIdKey,
+                            version: 1
+                        }
+                    }
+                ]);
+                return true;
+            });
+            if (!wrote || !isCurrent()) return false;
+        }
+        if (!isCurrent()) return false;
+        // Never cancel a sync start already under way (its caller would treat
+        // the cancellation as an account change); start one only if it fails.
+        // A start that began before this reconnect activated the scope in
+        // the old database; it is awaited, then a fresh one runs.
+        const inFlight = this.syncInitializationInFlight;
+        const startedAfterReconnect = this.syncInitializationReconnect === (chatDB?.reconnectCount || 0);
+        if (inFlight) {
+            const ok = await inFlight.catch(() => false) === true;
+            if (ok && startedAfterReconnect) return true;
+        }
+        if (!isCurrent()) return false;
+        return await this.initializeSync(false).catch(() => false) === true;
     }
 
     clearErrors() {
@@ -1969,6 +2072,7 @@ class AccountService {
      *   retry. Startup callers keep the historical fire-and-forget behavior.
      */
     initializeSync(enableForNewAccount = false, options = {}) {
+        this.syncInitializationReconnect = chatDB?.reconnectCount || 0;
         const run = this.runSyncInitialization(enableForNewAccount, options);
         this.syncInitializationInFlight = run;
         run.catch(() => {}).finally(() => {
@@ -3675,6 +3779,19 @@ class AccountService {
     }
 
     async restoreSharedAccount() {
+        // Reopen storage first if the browser closed it: reopening starts the
+        // account recovery, and this check must wait for it. Reading a
+        // recreated database before its account record is back would sign
+        // this tab out. Storage that cannot open is not an account change.
+        try {
+            await chatDB?.connection?.();
+        } catch {
+            return;
+        }
+        if ((chatDB?.reconnectCount || 0) !== (this.handledStorageReconnect || 0)) {
+            void this.recoverAfterStorageReconnect();
+        }
+        if (this.storageRecoveryInFlight) await this.storageRecoveryInFlight;
         if (this.state.busy && !this.state.accountHandoffPending) return;
         let generation;
         let restored = false;
@@ -3749,6 +3866,12 @@ class AccountService {
             this.setState({ accountHandoffPending: false });
         } catch (error) {
             if (generation !== undefined && generation !== this.loginGeneration) return;
+            // Storage closing under this check says nothing about the account;
+            // the next focus or send checks again on the reopened database.
+            if (chatDB?.connectionLost) {
+                this.setState({ accountHandoffPending: false });
+                return;
+            }
             this.lock({ accountChanged: true });
             this.setState({ accountHandoffPending: false });
         }
@@ -3773,6 +3896,8 @@ class AccountService {
             };
             globalThis.window?.addEventListener?.('focus', onFocus);
             globalThis.document?.addEventListener?.('visibilitychange', onVisible);
+            const onStorageReconnected = () => { void this.recoverAfterStorageReconnect(); };
+            globalThis.window?.addEventListener?.('oa-db-reconnected', onStorageReconnected);
             const stopLogoutListener = storageEvents.on(ACCOUNT_SIGNED_OUT_EVENT, payload => {
                 const accountId = payload?.accountId;
                 if (!accountId || this.state.accountId !== accountId) return;
@@ -3785,6 +3910,7 @@ class AccountService {
                 stopLoginListener(); stopCompleteListener(); stopLogoutListener();
                 globalThis.window?.removeEventListener?.('focus', onFocus);
                 globalThis.document?.removeEventListener?.('visibilitychange', onVisible);
+                globalThis.window?.removeEventListener?.('oa-db-reconnected', onStorageReconnected);
             };
         } catch (error) {
             console.warn('[AccountService] Could not listen for sign-out in other tabs:', error);

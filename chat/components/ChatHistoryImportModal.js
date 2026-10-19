@@ -487,7 +487,9 @@ class ChatHistoryImportModal {
             }
 
             try {
-                await this.app.data.saveSessionWithMessages(session, messages);
+                // An import is an explicit restore: it may bring back chats from before
+                // the browser last recreated chat storage.
+                await this.app.data.saveSessionWithMessages(session, messages, { allowRecreate: true });
             } catch (error) {
                 this.state.progress.errors += 1;
                 this.state.progress.processed += 1;

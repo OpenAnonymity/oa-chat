@@ -1,3 +1,60 @@
+## October 18, 2026 — chat storage closed under an open tab (recovery, not a cause)
+
+Context: staging lost every conversation (the database had 0 sessions) and the
+Account controls needed a refresh. The cause is unknown; browser eviction under
+disk pressure is one unproven hypothesis. This change fixes the recovery gap,
+whatever closed the database.
+
+- Before this change, a browser-closed `IDBDatabase` (site data removed, eviction,
+  disk error) stayed dead: every operation threw `InvalidStateError` until reload,
+  and the next window focus ran `restoreSharedAccount`, whose catch called
+  `lock({ accountChanged: true })`. That locked the tab out of its account (reproduced in real
+  Chromium with CDP `Storage.clearDataForOrigin`, and in
+  `test/services/dbConnectionRecovery.test.js`).
+- `chatDB` now marks the connection lost on `close` or `InvalidStateError` but
+  **keeps the dead reference**: external `chatDB.db` checks must not read
+  "no database" and fall back to empty values (the ticket wallet could be
+  saved back empty). `init()` reopens whenever `connectionLost` is set, so every
+  caller does, and it holds all the bookkeeping. After a failed reopen it fails fast for 3 s.
+  `versionchange` still refuses to reopen ("Reload to continue").
+- **Reset detection.** Each created database stores a random `db-incarnation` in
+  `settings`. Databases from before markers get one on first open. A reopen
+  that created the database, or that finds a missing or different marker
+  (because another tab or an older build recreated it), sets `resetAt` and
+  `resetReconnectCount` and fires `oa-db-reset`. A marker that cannot be read
+  counts as unknown, not as a reset.
+- **After a reset**, `saveSession` and `saveSessionWithMessages` refuse to create
+  a row that is absent and was created before the reset (`CHAT_STORAGE_RESET`),
+  and `saveMessage` refuses a message whose chat row is absent. Imports pass
+  `{ allowRecreate: true }`. New chats save normally ("new" means `createdAt >=
+  resetAt` by wall clock; a clock moved backwards after a reset can refuse a new
+  chat's save. The toast shows and the composer keeps its text, so nothing is
+  lost, but don't build on this check). One toast says the browser
+  cleared chat storage and to copy what's needed before reloading. **Export
+  reads the database, not the tab, so the copy never promises Export.**
+  `collectChats` now throws on a read failure instead of producing an empty file.
+  A failed ticket read while the connection is lost throws instead of reading
+  as an empty wallet.
+- **Account.** `oa-db-reconnected` fires synchronously before the reopened
+  connection is handed out. `restoreSharedAccount` first awaits
+  `chatDB.connection()`, starts recovery itself if this reconnect hasn't been
+  handled, and waits for it. When storage can't open, or the connection was
+  lost mid-check, it does not lock.
+- **Recovery.** If the account record is present, re-run sync (await one already
+  started after this reconnect, never cancel it). If the record is missing
+  *and* the latest reconnect was a reset *and* SuperTokens still has a session
+  in this browser, write the record and key bundle back from memory in one
+  `updateSettings` call. A record missing after a plain close means a sign-out
+  and is left alone.
+- **Persistent storage.** `storageManager` records `persisted()`/`persist()`
+  locally only (no telemetry, no UI: the owner declined a Settings note on
+  2026-10-19). Persistence is requested again on `appinstalled`. Encrypted sync
+  carries tickets and preferences only, never chats.
+- Speed: 1000 `saveMessage` and 200 `getSessionsPage` per round, headless
+  Chromium, 6+ alternating rounds against `3fa32bdb`: no difference beyond
+  noise (about 0.6 ms per save both ways). Normal-state cost is one resolved
+  `connection()` per operation.
+
 ## October 18, 2026 — truthful upload acknowledgment (web release candidate)
 
 Remote status checks establish download readiness only. They no longer turn a

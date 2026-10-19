@@ -10,6 +10,15 @@ const COMPAT_RELOAD_KEY = 'oa-db-force-compat';
 const OPEN_TIMEOUT_MS = 2500;
 const UPGRADE_TIMEOUT_MS = 12000;
 const OVERALL_TIMEOUT_MS = 20000;
+const REOPEN_RETRY_MS = 3000;
+const INCARNATION_KEY = 'db-incarnation';
+
+function newIncarnation() {
+    try {
+        if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+    } catch { /* fall through */ }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 function canUseSessionStorage() {
     try {
@@ -57,6 +66,21 @@ class ChatDatabase {
         this.version = 4;
         this.db = null;
         this.compatMode = false;
+        this.connectionLost = false;
+        this.reconnectFailureReported = false;
+        this.closedForVersionChange = false;
+        // Set when a reopen found the database had to be created again: the
+        // browser removed it. Rows from before that moment are not written
+        // back on their own (see refusesPreResetRow).
+        this.resetAt = 0;
+        this.resetRefusalReported = false;
+        this.reconnectCount = 0;
+        this.resetReconnectCount = 0;
+        // Random per created database, stored in `settings`. A reopen that
+        // finds another (or none) means the database was replaced, whichever
+        // tab recreated it.
+        this.incarnation = null;
+        this.reopenFailure = null;
         this.initInFlight = null;
         this.broadcastTimers = new Map();
         this.messageReplacements = new Map();
@@ -64,11 +88,25 @@ class ChatDatabase {
     }
 
     async init() {
-        if (this.db) return this.db;
+        // Another tab is upgrading the schema; this code must not reopen it.
+        if (this.closedForVersionChange) {
+            throw new Error('Chat storage updated in another tab. Reload to continue.');
+        }
+        // A lost connection stays referenced (so `chatDB.db` checks elsewhere
+        // do not read "no database" and fall back to empty values); any init()
+        // or operation reopens it.
+        if (this.db && !this.connectionLost) return this.db;
         if (this.initInFlight) return this.initInFlight;
+        // After a failed reopen, fail fast for a moment instead of making
+        // every save (including streaming checkpoints) wait for a new open.
+        if (this.connectionLost && this.reopenFailure &&
+            Date.now() - this.reopenFailure.at < REOPEN_RETRY_MS) {
+            throw this.reopenFailure.error;
+        }
 
         this.initInFlight = new Promise((resolve, reject) => {
             let settled = false;
+            let createdFresh = false;
             let timeoutId = null;
             let upgradeTimeoutId = null;
             let overallTimeoutId = null;
@@ -132,11 +170,17 @@ class ChatDatabase {
                 settled = true;
                 cleanup();
                 const resolvedCompatMode = compatMode && db.version < this.version;
+                const reopened = this.connectionLost;
+                const previous = this.db;
                 this.db = db;
                 this.compatMode = resolvedCompatMode;
+                // The browser can close a connection without the page asking
+                // (storage cleared or evicted, disk errors). It never says why.
+                db.onclose = () => this.markConnectionLost(db);
                 this.db.onversionchange = () => {
                     this.db.close();
                     this.db = null;
+                    this.closedForVersionChange = true;
                     if (typeof window !== 'undefined') {
                         window.dispatchEvent(new CustomEvent('oa-db-versionchange'));
                     }
@@ -144,8 +188,35 @@ class ChatDatabase {
                 if (resolvedCompatMode && typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('oa-db-compat-mode'));
                 }
-                this.initInFlight = null;
-                resolve(this.db);
+                if (previous && previous !== db) {
+                    try { previous.close(); } catch { /* already closed */ }
+                }
+                const known = this.incarnation;
+                void this.adoptIncarnation(db).then(current => {
+                    this.initInFlight = null;
+                    // A failed marker read is "unknown", never "different".
+                    if (current) this.incarnation = current;
+                    if (reopened) {
+                        this.connectionLost = false;
+                        this.reconnectFailureReported = false;
+                        this.reopenFailure = null;
+                        this.reconnectCount += 1;
+                        // Replaced if this open created it, or if the marker
+                        // differs from the one this tab knew (another tab, or
+                        // an older build that left none, recreated it first;
+                        // a missing marker is replaced by a new one on read).
+                        if (createdFresh || (known && current && current !== known)) {
+                            this.resetReconnectCount = this.reconnectCount;
+                            this.resetAt = Date.now();
+                            this.resetRefusalReported = false;
+                            this.dispatchWindowEvent('oa-db-reset');
+                        }
+                        // Synchronous, before any caller gets the connection,
+                        // so account recovery starts before anything reads.
+                        this.dispatchWindowEvent('oa-db-reconnected');
+                    }
+                    resolve(this.db);
+                });
             };
 
             const fail = (error) => {
@@ -153,10 +224,16 @@ class ChatDatabase {
                 settled = true;
                 cleanup();
                 this.initInFlight = null;
+                if (this.connectionLost) this.reopenFailure = { at: Date.now(), error };
+                if (this.connectionLost && !this.reconnectFailureReported) {
+                    this.reconnectFailureReported = true;
+                    this.dispatchWindowEvent('oa-db-reconnect-failed');
+                }
                 reject(error);
             };
 
             const upgradeSchema = (event) => {
+                if (event.oldVersion === 0) createdFresh = true;
                 const db = event.target.result;
                 const transaction = event.target.transaction;
 
@@ -183,6 +260,11 @@ class ChatDatabase {
 
                 if (!db.objectStoreNames.contains('settings')) {
                     db.createObjectStore('settings', { keyPath: 'key' });
+                }
+                if (event.oldVersion === 0 && transaction?.objectStore) {
+                    try {
+                        transaction.objectStore('settings').put({ key: INCARNATION_KEY, value: newIncarnation() });
+                    } catch { /* the marker is adopted on open instead */ }
                 }
 
                 if (!db.objectStoreNames.contains('networkLogs')) {
@@ -267,6 +349,94 @@ class ChatDatabase {
         return this.initInFlight;
     }
 
+    // Read this database's marker; a database made before markers existed
+    // gets one (only if still absent, so concurrent tabs agree on it).
+    // Never fails the open: without a marker a later reopen counts as a reset.
+    adoptIncarnation(db) {
+        return new Promise(resolve => {
+            let value = null;
+            try {
+                const transaction = db.transaction(['settings'], 'readwrite');
+                const store = transaction.objectStore('settings');
+                const request = store.get(INCARNATION_KEY);
+                request.onsuccess = () => {
+                    value = request.result?.value || null;
+                    if (!value) {
+                        value = newIncarnation();
+                        store.put({ key: INCARNATION_KEY, value });
+                    }
+                };
+                transaction.oncomplete = () => resolve(value);
+                transaction.onerror = () => resolve(null);
+                transaction.onabort = () => resolve(null);
+            } catch {
+                resolve(null);
+            }
+        });
+    }
+
+    // An unexpected close leaves no usable connection. The next operation
+    // (or any init() call) reopens the database instead of failing until a
+    // reload. Reopening says nothing about what the database still holds;
+    // nothing here rewrites what other code had loaded.
+    markConnectionLost(db) {
+        if (!db || this.db !== db || this.connectionLost) return;
+        this.connectionLost = true;
+        this.dispatchWindowEvent('oa-db-connection-lost');
+    }
+
+    async connection() {
+        if (this.db && !this.connectionLost) return this.db;
+        return this.init();
+    }
+
+    // A connection the browser is closing throws InvalidStateError before its
+    // close event arrives. That request never ran; the following one reopens.
+    openTransaction(storeNames, mode) {
+        const db = this.db;
+        if (!db || this.connectionLost) throw new Error('Chat storage is reconnecting. Please try again.');
+        try {
+            return db.transaction(storeNames, mode);
+        } catch (error) {
+            if (error?.name === 'InvalidStateError') this.markConnectionLost(db);
+            throw error;
+        }
+    }
+
+    // After the browser recreated the database, a session row from before
+    // that moment is written only by an explicit restore (import), never by
+    // background saves of what this tab still shows. New chats save normally.
+    refusesPreResetRow(session, existing, options = {}) {
+        return Boolean(this.resetAt && !options.allowRecreate && !existing &&
+            !(Number(session?.createdAt) >= this.resetAt));
+    }
+
+    // The reset checks' own read (not getSession, which callers may wrap).
+    readSessionRow(sessionId) {
+        return new Promise((resolve, reject) => {
+            const request = this.openTransaction(['sessions'], 'readonly').objectStore('sessions').get(sessionId);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    resetWriteRefused() {
+        const error = new Error('This chat is no longer saved on this device. Copy anything you need from this tab before reloading it.');
+        error.code = 'CHAT_STORAGE_RESET';
+        if (!this.resetRefusalReported) {
+            this.resetRefusalReported = true;
+            this.dispatchWindowEvent('oa-db-reset-write-refused');
+        }
+        return error;
+    }
+
+    dispatchWindowEvent(type) {
+        if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new CustomEvent(type));
+        } catch { /* no listeners possible */ }
+    }
+
     // Sessions
     // A save without a key that lands on a stored, unexpired key is how a key
     // vanishes with no discard (a stale copy from another tab). The read runs
@@ -287,28 +457,40 @@ class ChatDatabase {
         store.put(session);
     }
 
-    async saveSession(session) {
+    async saveSession(session, options = {}) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const transaction = this.openTransaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
+            let refused = false;
             // A successful put can still be rolled back by an aborted
             // transaction (including a reload). Access callers must not
             // advance to inference until the credential record is committed.
             transaction.oncomplete = () => {
+                if (refused) { reject(this.resetWriteRefused()); return; }
                 this.emitStorageEvent('sessions-updated', { sessionId: session.id });
                 resolve();
             };
             transaction.onerror = () => reject(transaction.error || new Error('The chat session could not be saved.'));
             transaction.onabort = () => reject(transaction.error || new Error('The chat session was not committed.'));
-            this.putSessionNotingOverwrite(store, session);
+            if (!this.resetAt || options.allowRecreate) {
+                this.putSessionNotingOverwrite(store, session);
+                return;
+            }
+            const existing = store.get(session.id);
+            existing.onsuccess = () => {
+                if (this.refusesPreResetRow(session, existing.result, options)) { refused = true; return; }
+                this.putSessionNotingOverwrite(store, session);
+            };
         });
     }
 
     // Mutate only an existing row, atomically with the read. Background results
     // must not recreate deleted chats or overwrite unrelated session edits.
     async updateExistingSession(sessionId, update) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const transaction = this.openTransaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
             let changed = false;
             transaction.oncomplete = () => {
@@ -331,14 +513,22 @@ class ChatDatabase {
         });
     }
 
-    async saveSessionWithMessages(session, messages) {
+    async saveSessionWithMessages(session, messages, options = {}) {
         if (this.messageReplacements.has(session.id)) {
-            await this.saveSession(session);
+            await this.saveSession(session, options);
             for (const message of messages || []) await this.saveMessage(message);
             return;
         }
+        if (this.connectionLost || !this.db) await this.connection();
+        if (this.resetAt && !options.allowRecreate) {
+            // Rare path (only after the browser recreated the database):
+            // check the parent row first, then write both together.
+            const existing = await this.readSessionRow(session.id);
+            if (this.refusesPreResetRow(session, existing, options)) throw this.resetWriteRefused();
+            if (this.connectionLost || !this.db) await this.connection();
+        }
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            const transaction = this.openTransaction(['sessions', 'messages'], 'readwrite');
             const sessionsStore = transaction.objectStore('sessions');
             const messagesStore = transaction.objectStore('messages');
 
@@ -361,8 +551,9 @@ class ChatDatabase {
     }
 
     async updateSessionSearchIndex(sessionId, fields) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const transaction = this.openTransaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
             const request = store.get(sessionId);
 
@@ -386,8 +577,9 @@ class ChatDatabase {
     }
 
     async getSession(sessionId) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             const request = store.get(sessionId);
 
@@ -397,8 +589,9 @@ class ChatDatabase {
     }
 
     async getAllSessions() {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             const request = store.getAll();
 
@@ -408,8 +601,9 @@ class ChatDatabase {
     }
 
     async getSessionsPage(limit = 80, cursor = null) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             let source;
             try {
@@ -453,8 +647,9 @@ class ChatDatabase {
     }
 
     async searchSessions(matchFn, limit = 200) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             const request = store.openCursor();
             const matches = [];
@@ -505,8 +700,9 @@ class ChatDatabase {
     }
 
     async findSession(matchFn) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             const request = store.openCursor();
 
@@ -532,8 +728,9 @@ class ChatDatabase {
         // one readwrite transaction over every session record; it used to run
         // on every page load, and a send issued while it ran queued behind it
         // (the user message is written to the same store).
+        if (this.connectionLost || !this.db) await this.connection();
         const needsWalk = await new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             let total = null;
             let indexed = null;
@@ -548,8 +745,9 @@ class ChatDatabase {
             withUpdatedAt.onerror = () => reject(withUpdatedAt.error);
         });
         if (!needsWalk) return;
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const transaction = this.openTransaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
             const request = store.openCursor();
 
@@ -571,8 +769,9 @@ class ChatDatabase {
     }
 
     async collectImportedSessionKeys(source) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const transaction = this.openTransaction(['sessions'], 'readonly');
             const store = transaction.objectStore('sessions');
             const request = store.openCursor();
             const keys = new Set();
@@ -597,8 +796,9 @@ class ChatDatabase {
     }
 
     async deleteSession(sessionId) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const transaction = this.openTransaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
             const request = store.delete(sessionId);
 
@@ -611,8 +811,9 @@ class ChatDatabase {
     }
 
     async deleteSessionWithMessages(sessionId) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            const transaction = this.openTransaction(['sessions', 'messages'], 'readwrite');
             transaction.oncomplete = () => {
                 this.emitStorageEvent('sessions-updated', { sessionId });
                 this.emitStorageEventDebounced('messages-updated', sessionId, { sessionId }, 500);
@@ -630,8 +831,9 @@ class ChatDatabase {
     }
 
     async clearAllChats() {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            const transaction = this.openTransaction(['sessions', 'messages'], 'readwrite');
             const sessionsStore = transaction.objectStore('sessions');
             const messagesStore = transaction.objectStore('messages');
 
@@ -665,8 +867,9 @@ class ChatDatabase {
         if (this.messageReplacements.get(draft.sessionId) !== draft) return;
         let committed = false;
         try {
+            if (this.connectionLost || !this.db) await this.connection();
             await new Promise((resolve, reject) => {
-                const tx = this.db.transaction(['sessions', 'messages'], 'readwrite');
+                const tx = this.openTransaction(['sessions', 'messages'], 'readwrite');
                 const store = tx.objectStore('messages');
                 let failure = null;
                 tx.oncomplete = () => { committed = commit; resolve(); };
@@ -709,10 +912,22 @@ class ChatDatabase {
     // Messages
     async saveMessage(message) {
         if (this.discardedReplacementIds.has(message.id)) return;
-        const draft = this.messageReplacements.get(message.sessionId);
+        let draft = this.messageReplacements.get(message.sessionId);
         if (draft) { draft.save(message); return; }
+        if (this.connectionLost || !this.db) await this.connection();
+        // A replacement can begin while a reopen was pending.
+        if (this.discardedReplacementIds.has(message.id)) return;
+        draft = this.messageReplacements.get(message.sessionId);
+        if (draft) { draft.save(message); return; }
+        if (this.resetAt) {
+            // Only after the browser recreated the database: a message whose
+            // chat row is gone would be an orphan nobody can open.
+            const parent = await this.readSessionRow(message.sessionId);
+            if (!parent) throw this.resetWriteRefused();
+            if (this.connectionLost || !this.db) await this.connection();
+        }
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['messages'], 'readwrite');
+            const transaction = this.openTransaction(['messages'], 'readwrite');
             const store = transaction.objectStore('messages');
             const request = store.put(message);
 
@@ -725,10 +940,13 @@ class ChatDatabase {
     }
 
     async getSessionMessages(sessionId) {
-        const draft = this.messageReplacements.get(sessionId);
+        let draft = this.messageReplacements.get(sessionId);
+        if (draft) return draft.messages();
+        if (this.connectionLost || !this.db) await this.connection();
+        draft = this.messageReplacements.get(sessionId);
         if (draft) return draft.messages();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['messages'], 'readonly');
+            const transaction = this.openTransaction(['messages'], 'readonly');
             const store = transaction.objectStore('messages');
             const index = store.index('sessionId');
             const request = index.getAll(sessionId);
@@ -744,8 +962,9 @@ class ChatDatabase {
     }
 
     async deleteSessionMessages(sessionId) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['messages'], 'readwrite');
+            const transaction = this.openTransaction(['messages'], 'readwrite');
             const store = transaction.objectStore('messages');
             const index = store.index('sessionId');
             const request = index.openCursor(IDBKeyRange.only(sessionId));
@@ -765,11 +984,17 @@ class ChatDatabase {
     }
 
     async deleteMessage(messageId) {
-        for (const draft of this.messageReplacements.values()) {
-            if (draft.has(messageId)) { draft.delete(messageId); return; }
-        }
+        const inDraft = () => {
+            for (const draft of this.messageReplacements.values()) {
+                if (draft.has(messageId)) { draft.delete(messageId); return true; }
+            }
+            return false;
+        };
+        if (inDraft()) return;
+        if (this.connectionLost || !this.db) await this.connection();
+        if (inDraft()) return;
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['messages'], 'readwrite');
+            const transaction = this.openTransaction(['messages'], 'readwrite');
             const store = transaction.objectStore('messages');
             const request = store.delete(messageId);
 
@@ -783,8 +1008,9 @@ class ChatDatabase {
 
     // Settings
     async saveSetting(key, value) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const transaction = this.openTransaction(['settings'], 'readwrite');
             const store = transaction.objectStore('settings');
             const request = store.put({ key, value });
 
@@ -794,8 +1020,9 @@ class ChatDatabase {
     }
 
     async saveSettings(entries) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const transaction = this.openTransaction(['settings'], 'readwrite');
             const store = transaction.objectStore('settings');
 
             transaction.oncomplete = () => resolve();
@@ -813,8 +1040,9 @@ class ChatDatabase {
      * otherwise associate one account's live data with another account marker.
      */
     async updateSettings(entries = [], deleteKeys = []) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const transaction = this.openTransaction(['settings'], 'readwrite');
             const store = transaction.objectStore('settings');
 
             transaction.oncomplete = () => resolve();
@@ -835,8 +1063,9 @@ class ChatDatabase {
     /** Compare ownership markers and delete atomically, including against older tabs
      * that do not participate in our Web Lock. Resolves only on commit. */
     async deleteSettingsIfUnchanged(expected, deleteKeys) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const tx = this.db.transaction(['settings'], 'readwrite');
+            const tx = this.openTransaction(['settings'], 'readwrite');
             const store = tx.objectStore('settings');
             let matches = true;
             let remaining = expected.length;
@@ -856,8 +1085,9 @@ class ChatDatabase {
     }
 
     async getSetting(key) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readonly');
+            const transaction = this.openTransaction(['settings'], 'readonly');
             const store = transaction.objectStore('settings');
             const request = store.get(key);
 
@@ -869,8 +1099,9 @@ class ChatDatabase {
     // Read related account markers together. Separate getSetting transactions
     // can observe opposite sides of a cross-tab account transition.
     async getSettingsSnapshot(keys) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readonly');
+            const transaction = this.openTransaction(['settings'], 'readonly');
             const store = transaction.objectStore('settings');
             const values = Object.create(null);
             transaction.oncomplete = () => resolve(values);
@@ -888,8 +1119,9 @@ class ChatDatabase {
     // A missing record and a cleared (null) setting both mean no current value.
     async compareAndSetSetting(key, expected, value) {
         const expectedJson = JSON.stringify(expected ?? null);
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const transaction = this.openTransaction(['settings'], 'readwrite');
             const store = transaction.objectStore('settings');
             let matched = false;
             transaction.oncomplete = () => resolve(matched);
@@ -910,8 +1142,9 @@ class ChatDatabase {
     }
 
     async deleteSetting(key) {
+        if (this.connectionLost || !this.db) await this.connection();
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const transaction = this.openTransaction(['settings'], 'readwrite');
             const store = transaction.objectStore('settings');
             const request = store.delete(key);
 

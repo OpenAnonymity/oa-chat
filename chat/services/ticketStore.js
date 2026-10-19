@@ -457,7 +457,9 @@ export class TicketStore {
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
-            if (options.requireDurable) throw error;
+            // While storage is reconnecting an empty result could be written
+            // back over the real wallet by the caller's next save.
+            if (options.requireDurable || chatDB.connectionLost) throw error;
             return {
                 active: [],
                 archived: [],
