@@ -5,11 +5,13 @@
 import concessionV1 from './concessionV1.mjs';
 import concessionV2 from './concessionV2.mjs';
 import noteBoundV1 from './noteBoundV1.mjs';
+import leafBoundV2 from './leafBoundV2.mjs';
 
 const ADAPTERS = Object.freeze({
     [noteBoundV1.id]: noteBoundV1,
     [concessionV1.id]: concessionV1,
-    [concessionV2.id]: concessionV2
+    [concessionV2.id]: concessionV2,
+    [leafBoundV2.id]: leafBoundV2
 });
 
 export const ADAPTER_IDS = Object.freeze(Object.keys(ADAPTERS));

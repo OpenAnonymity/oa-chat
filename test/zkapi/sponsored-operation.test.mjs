@@ -18,6 +18,7 @@ import test from 'node:test';
 import { Wallet, getBytes } from 'ethers';
 import vectors from '../fixtures/zkapi-sponsored-vectors.json' with { type: 'json' };
 import { concessionV1 } from '../../chat/zkapi/versioning/adapters/concessionV1.mjs';
+import leafBoundV2 from '../../chat/zkapi/versioning/adapters/leafBoundV2.mjs';
 import { noteBoundV1 } from '../../chat/zkapi/versioning/adapters/noteBoundV1.mjs';
 import {
     SponsoredOperationError, concessionConfirmed, deriveTransitAccount, expectedInitCode, judgeSponsoredOperation,
@@ -338,4 +339,28 @@ test('the pins are read strictly: a profile that pins nothing, or pins it badly,
     assert.throws(() => readSponsoredPins({ gasless: { ...trusted().gasless, account_creation_code_keccak256: `0x${'00'.repeat(32)}` } }),
         SponsoredOperationError);
     assert.throws(() => readSponsoredPins({ gasless: { ...trusted().gasless, account_creation_code: '0xzz' } }), SponsoredOperationError);
+});
+
+
+test('leaf-bound sponsored calls use the packed note identity and reject overflow or another note', async () => {
+    const leafProfile = leafBoundV2.callProfile;
+    const packed = (7n << 192n) | (1000n << 64n) | 1800000010n;
+    for (const mode of ['mutual', 'escape']) {
+        const words = vaultWords();
+        words[8] = word(packed);
+        words[12] = word(mode === 'mutual' ? 1n : 0n);
+        words[13] = word(mode === 'mutual' ? 0n : 0x2bn);
+        const selector = leafProfile.exits.find(exit => exit.mode === mode).selector;
+        const auth = authorization({ noteId: 7, mode, conceded: '0' });
+        const make = fields => signed({ callData: withdrawData(vaultCall(selector, fields)) });
+        const op = await make(words);
+        assert.equal(judgeSponsoredOperation(op, auth, context({ profile: leafProfile })).noteId, 7);
+        refusal(() => judgeSponsoredOperation(op, { ...auth, noteId: 8 }, context({ profile: leafProfile })), 'note');
+        for (const bad of [(8n << 192n) | 1800000010n, packed | (1n << 224n), 7n]) {
+            const altered = [...words]; altered[8] = word(bad);
+            const invalid = await make(altered);
+            refusal(() => judgeSponsoredOperation(invalid, auth, context({ profile: leafProfile })), 'note');
+        }
+        refusal(() => judgeSponsoredOperation(op, auth, context()), 'call');
+    }
 });

@@ -5,6 +5,7 @@ import { browserSdkTransport } from '@openanonymity/zkapi-browser-sdk/configure'
 import { bufferedGasLimit, MAX_TRANSACTION_GAS_LIMIT as MAX_GAS } from '@openanonymity/zkapi-browser-sdk/gas';
 import { getActiveAdapter, getActiveVersion, getVersionTable } from '../versioning/activeVersion.mjs';
 import { noteBoundV1 } from '../versioning/adapters/noteBoundV1.mjs';
+import { withdrawalCallNoteId } from '../versioning/callFields.mjs';
 import { createAddressFundingStore, isBrowserCustodyKey } from './addressFundingStore.mjs';
 import { withWalletProviderRead } from './walletProviderAccess.mjs';
 import { SPONSORED_NOT_CONFIRMED_REFUSAL } from '../versioning/sponsored.mjs';
@@ -907,10 +908,12 @@ export class AddressFundingProvider {
                 }
             } else if (exit) {
                 const { fields } = profile;
+                const noteId = withdrawalCallNoteId(fields, wordUint);
+                if (noteId === null) deny();
                 if (authorization.kind !== 'withdrawal' || !['withdrawal', 'background-withdrawal', 'background-replacement'].includes(recovery.kind)
                     || !exactWords(exit.words) || !recovery.operationId || !recovery.submissionId
                     || wordUint(fields.chainId) !== ctx.chainId || wordAddress(fields.vault) !== ctx.vault
-                    || wordUint(fields.noteId) !== uint(recovery.noteId, 'note')
+                    || noteId !== uint(recovery.noteId, 'note')
                     || wordUint(fields.finalBalance) !== uint(recovery.finalBalance, 'withdrawal amount')
                     || wordAddress(fields.destination) !== address(authorization.destination)
                     || wordAddress(fields.destination) !== address(recovery.destination)
@@ -926,7 +929,7 @@ export class AddressFundingProvider {
                     // The other direction never happens and is refused.
                     || (authorization.mode && authorization.mode !== recovery.mode
                         && !(exit.concededWord !== null && authorization.mode === 'mutual' && recovery.mode === 'escape'))
-                    || (authorization.noteId != null && uint(authorization.noteId, 'note') !== wordUint(fields.noteId))
+                    || (authorization.noteId != null && uint(authorization.noteId, 'note') !== noteId)
                     // The operation the person looked at is the operation
                     // signed (set only where a prepared withdrawal's
                     // identity is known).

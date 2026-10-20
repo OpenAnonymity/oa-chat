@@ -44,6 +44,7 @@
     "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0",
     "zkapi-sdk-v2c": "github:OpenAnonymity/zkapi#67e505c1788d636da07c7ac1a7f65b30fad1fe15",
-    "zkapi-sdk-v3": "github:ethereum/zkapi#d482e4d2fb8b8e6914bd01846eb46969ed85dbf5"
+    "zkapi-sdk-v3": "github:ethereum/zkapi#d482e4d2fb8b8e6914bd01846eb46969ed85dbf5",
+    "zkapi-sdk-v4": "github:ethereum/zkapi#3bc02642ae6c1b8d47169b0b88dac294c0c3ef47"
   }
 }

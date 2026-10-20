@@ -58,7 +58,7 @@ const asideDeadline = (expiryTs, recordId = null, deviceFlagged = false) => ({
 // ---------------------------------------------------------------------------
 
 test('adapters expose the documented interface and are immutable', () => {
-    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1', 'concession-v2']);
+    assert.deepEqual([...ADAPTER_IDS], ['note-bound-v1', 'concession-v1', 'concession-v2', 'leaf-bound-v2']);
     for (const adapter of ADAPTER_IDS.map(getAdapter)) {
         assert.equal(getAdapter(adapter.id), adapter);
         for (const method of ['validateProfile', 'fundingFromProfile', 'normalizeSnapshot', 'closeBy']) {

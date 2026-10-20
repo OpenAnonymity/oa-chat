@@ -38,6 +38,7 @@
 //
 // Pure: no DOM, no storage, no clock, no network.
 import { AbiCoder, getAddress, getCreate2Address, getBytes, keccak256, verifyMessage } from 'ethers';
+import { withdrawalCallNoteId } from '../versioning/callFields.mjs';
 import {
     SPONSORED_CONCESSION_REFUSAL, SPONSORED_COST_REFUSAL, SPONSORED_COST_SHOWN_REFUSAL, SPONSORED_FEE_REFUSAL,
     SPONSORED_REFUSAL_MESSAGE
@@ -316,7 +317,8 @@ export function judgeSponsoredOperation(rawOperation, authorization, context) {
         const exit = (profile?.exits || []).find(entry => entry.selector === selector);
         const { fields } = profile || {};
         if (!exit || !fields || !exactWords(exit.words)) refuse('call');
-        noteId = wordUint(fields.noteId);
+        noteId = withdrawalCallNoteId(fields, wordUint);
+        if (noteId === null) refuse('note');
         mode = exit.mode;
         if (wordUint(fields.chainId) !== BigInt(chainId) || !sameAddress(wordAddress(fields.vault), vault)
             || !sameAddress(wordAddress(fields.destination), transitAccount)

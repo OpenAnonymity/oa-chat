@@ -22,6 +22,7 @@ import { AddressFundingProvider } from '../../chat/zkapi/services/addressFunding
 import { readSponsoredPins } from '../../chat/zkapi/services/sponsoredOperation.mjs';
 import { concessionV1 } from '../../chat/zkapi/versioning/adapters/concessionV1.mjs';
 import { concessionV2 } from '../../chat/zkapi/versioning/adapters/concessionV2.mjs';
+import leafBoundV2 from '../../chat/zkapi/versioning/adapters/leafBoundV2.mjs';
 import { createSponsoredFees } from '../../chat/zkapi/versioning/sponsoredFees.mjs';
 
 const repoRoot = path.resolve(fileURLToPath(new URL('../../', import.meta.url)));
@@ -112,9 +113,13 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     runtime.gaslessStatus = null;
     runtime.bundlerChainCheck = null;
     runtime.exitRpcChainCheck = null;
+    const leafBound = globalThis.zkapiWallet.ABI.mutualClose === leafBoundV2.callProfile.exits[0].selector;
+    const adapter = leafBound ? leafBoundV2 : depositPath ? concessionV1 : concessionV2;
+    const versionId = leafBound ? 'v4' : depositPath ? 'v2' : 'v3';
     const state = noteState({ current_balance: payoutBalance,
         ...(depositPath ? { deposit_path: depositPath('0x51') } : {}) });
-    const bundlerUrl = 'https://chat.example/zkapi-deployment-v3/_bundler';
+    const proxyPath = `/zkapi-deployment-${versionId}/`;
+    const bundlerUrl = `https://chat.example${proxyPath}_bundler`;
     const gasless = gaslessProfileFromVectors({ spelling: 'profile', bundlerUrl });
     const h = createHarness(function SharedRuntime() { return runtime; });
     h.worker.mutate = plan => { plan.proof.proof = Buffer.alloc(256, h.worker.proofs).toString('base64'); };
@@ -137,7 +142,7 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     const provider = new AddressFundingProvider({
         getConfig: () => funding, store: memoryStore(), locks: locks(), createChannel: () => null,
         createWallet: () => new Wallet(ownerKey),
-        protocol: () => ({ adapter: depositPath ? concessionV1 : concessionV2, deploymentId: DEPLOYMENT_ID, version: { id: depositPath ? 'v2' : 'v3' } }),
+        protocol: () => ({ adapter, deploymentId: DEPLOYMENT_ID, version: { id: versionId } }),
         sponsoredPins: () => readSponsoredPins(runtime.browserConfig.trusted_deployment),
         bundlerUrl: () => bundlerUrl,
         // The only network this signer is given is the bundler's.
@@ -204,7 +209,7 @@ async function scenario({ payoutBalance = 500_000_000 } = {}) {
     const record = async () => (await store.listBrowserWithdrawals(DEPLOYMENT)).find(entry => entry.noteId === state.note_id);
     const prepared = async () => (await store.readBrowserWallet()).preparedWithdrawal || null;
     const sponsoredFees = createSponsoredFees({ getClient: () => client, getRuntime: () => runtime,
-        getContext: () => ({ adapter: depositPath ? concessionV1 : concessionV2, version: { proxyPath: '/zkapi-deployment-v3/' } }),
+        getContext: () => ({ adapter, version: { proxyPath } }),
         getOrigin: () => 'https://chat.example' });
     return { h, chain, bundler, provider, client, statuses, withdraw, authorization, finalizing, collecting, record, S, nullifier,
         closeKey, closeBundle, state, runtime, store, bundlerCalls, DEPLOYMENT, VECTORS, fake, secp, prepared, sponsoredFees };

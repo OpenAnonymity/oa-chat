@@ -1,3 +1,20 @@
+## October 20, 2026 — PR31 leaf-bound Sepolia integration
+
+The `leaf-bound-v2` host adapter distinguishes PR31's revision-4 ABI from the
+older `concession-v2` proved-activation ABI even though their circuit IDs and
+revision numbers are the same. The new withdrawal tuple has 16 words: word 3
+is the stored leaf and word 8 packs the note ID, deposit amount and expiry.
+Both the Send Ethereum transaction signer and the sponsored-operation signer
+read the high 32 bits of that canonical 224-bit word as the note ID; malformed
+high bits are refused before signing or forwarding. They retain the existing
+destination, concession, operation and fee checks.
+
+This family inherits the normal balance UI and has no activation wait or
+exit-kit controls. Its profile pins the minimum deposit and fresh-slot gas
+schedule. Historical staging families retain their adapters, SDK pins, wallet
+records and recovery routes; no intermediate migration is introduced. Mainnet
+continues to use its existing version 1 profile.
+
 ## October 19, 2026 — local review of database-close recovery
 
 `831654b` is distinct from the withdrawn history-hardening candidate: healthy

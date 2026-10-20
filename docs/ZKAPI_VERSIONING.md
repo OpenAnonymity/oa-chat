@@ -4373,3 +4373,24 @@ fixtures, so a normal package-only run can skip it. Tests cover signed closes,
 escapes, finalization, stranded payout collection and wrong-note/payee/fee
 refusals. The deployment still needs complete reviewed gasless pins and its
 same-origin bundler route before the choice is offered.
+
+
+## PR31 leaf-bound frontier family
+
+`leaf-bound-v2` is a distinct host adapter for the frontier-tree design, with
+`leaf_bound_exit: 1`, `min_deposit_units`, and `fresh_slot_gas` required in its
+profile. Do not reuse the existing `concession-v2` adapter: that earlier
+revision 4 uses a different 17-word withdrawal statement and a proved
+activation queue. PR31 has a 16-word statement and immediate tree insertion.
+The withdrawal selectors are `bce12a6c` (close) and `8cd67c60` (escape).
+
+Word 8 is `noteId << 192 | depositAmount << 64 | expiryTs`. The shared pure
+`versioning/callFields.mjs` decoder rejects bits above 223 and extracts the note
+ID for both host signers. It never masks overflowing words into a valid note.
+Normal destination, amount, kind, successor and concession checks still apply.
+The SDK independently validates the packed fields and proof binding.
+
+The same circuit name alone is not sufficient to distinguish these families.
+Registry rows pin each SDK revision, proof hashes, vault identity, and adapter
+separately. New deposits use the new row; historical rows remain available for
+their saved balances. No browser records are rewritten, migrated or cleared.

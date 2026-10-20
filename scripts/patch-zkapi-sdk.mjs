@@ -13,6 +13,8 @@ import patchV3 from '../patches/zkapi-browser-sdk-v3-recovery.mjs';
 import providerVerificationV3 from '../patches/zkapi-browser-sdk-v3-provider-verification.mjs';
 import patchV3Gasless from '../patches/zkapi-browser-sdk-v3-gasless-recovery.mjs';
 import providerVerificationV3Gasless from '../patches/zkapi-browser-sdk-v3-gasless-provider-verification.mjs';
+import patchV4 from '../patches/zkapi-browser-sdk-v4-recovery.mjs';
+import providerVerificationV4 from '../patches/zkapi-browser-sdk-v4-provider-verification.mjs';
 import registry from '../deployments/zkapi/registry.json' with { type: 'json' };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,7 +42,9 @@ const SDK_PATCHES = Object.freeze({
     'wallet-recovery-v3': patchV3,
     [providerVerificationV3.name]: providerVerificationV3,
     'wallet-recovery-v3-gasless': patchV3Gasless,
-    [providerVerificationV3Gasless.name]: providerVerificationV3Gasless
+    [providerVerificationV3Gasless.name]: providerVerificationV3Gasless,
+    'wallet-recovery-v4': patchV4,
+    [providerVerificationV4.name]: providerVerificationV4
 });
 
 // The patches of the legacy SDK, in the order their file chains apply.
@@ -69,7 +73,8 @@ export const PATCH_COVERAGE = Object.freeze({
     [LEGACY_PATCH]: Object.freeze(['withdrawal-operation-recheck']),
     [V2C_PATCH]: Object.freeze(['withdrawal-operation-recheck']),
     'wallet-recovery-v3': Object.freeze(['withdrawal-operation-recheck']),
-    'wallet-recovery-v3-gasless': Object.freeze(['withdrawal-operation-recheck'])
+    'wallet-recovery-v3-gasless': Object.freeze(['withdrawal-operation-recheck']),
+    'wallet-recovery-v4': Object.freeze(['withdrawal-operation-recheck'])
 });
 
 export function zkapiSdkPatchProvenance(name = LEGACY_PATCH) {
