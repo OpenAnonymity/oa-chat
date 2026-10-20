@@ -36,9 +36,9 @@ const cases = [
         const draft = await db.beginMessageReplacement('test', 'answer');
         await db.saveMessage(response('partial'));
         equal(await reader.getSessionMessages('test'), original, 'draft leaked to another connection');
-        await db.finishMessageReplacement(draft, { notice: 'stopped' });
+        await db.finishMessageReplacement(draft);
         equal(withoutNotice(await reader.getSessionMessages('test')), original, 'original transcript lost');
-        assert((await reader.getSessionMessages('test'))[1].regenerationNotice === 'stopped', 'Stop notice missing');
+        assert(!('regenerationNotice' in (await reader.getSessionMessages('test'))[1]), 'a notice was written');
         await db.saveMessage(response('partial'));
         assert(!(await reader.getSessionMessages('test')).some(row => row.id === 'partial'), 'late write resurrected draft');
         reader.db.close(); reader.db = null; await reader.init();
@@ -68,7 +68,7 @@ const cases = [
         delete db.db.transaction;
         assert(rejected, 'aborted commit reported success');
         equal(await reader.getSessionMessages('test'), original, 'aborted transaction changed original');
-        await db.finishMessageReplacement(draft, { notice: 'failed' });
+        await db.finishMessageReplacement(draft);
         assert(db.messageReplacements.size === 0, 'draft left busy');
         equal(withoutNotice(await reader.getSessionMessages('test')), original, 'rollback changed transcript');
     }],
@@ -84,7 +84,7 @@ const cases = [
             let rejected = false;
             try { await db.finishMessageReplacement(draft, { commit: true }); } catch { rejected = true; }
             assert(rejected, 'concurrent change overwritten');
-            await db.finishMessageReplacement(draft, { notice: 'failed' });
+            await db.finishMessageReplacement(draft);
             equal(await reader.getSessionMessages('test'), concurrent, 'rollback overwrote concurrent change');
             assert(db.messageReplacements.size === 0, 'draft left busy');
             await db.saveMessage(response('conflict'));

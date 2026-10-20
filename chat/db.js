@@ -888,7 +888,7 @@ class ChatDatabase {
         return draft;
     }
 
-    async finishMessageReplacement(draft, { commit = false, notice = null } = {}) {
+    async finishMessageReplacement(draft, { commit = false } = {}) {
         if (this.messageReplacements.get(draft.sessionId) !== draft) return;
         let committed = false;
         try {
@@ -914,9 +914,6 @@ class ChatDatabase {
                         if (commit) {
                             for (const message of current) store.delete(message.id);
                             for (const message of draft.messages()) store.put(message);
-                        } else if (notice) {
-                            const original = current.find(message => message.id === draft.messageId);
-                            if (original) store.put({ ...original, regenerationNotice: notice });
                         }
                     };
                 };

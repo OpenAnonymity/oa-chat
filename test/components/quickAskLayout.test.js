@@ -128,3 +128,18 @@ test('Ask enhances supplied source links on each answer update using the shared 
     assert.equal(calls[1].id, 'quick-ask-7');
     assert.equal(answer.innerHTML, `enhanced:${calls[1].html}`);
 }));
+
+test('interrupted Ask preserves reasoning and uses its normal partial-answer renderer', () => {
+    const area = Object.create(ChatArea.prototype);
+    const answer = { closest: () => null, innerHTML: '', insertAdjacentHTML(position, html) { this.innerHTML += html; } };
+    area.quickAsk = { window: { querySelector: () => answer } };
+    area.updateQuickAskStatus = () => {};
+    area.updateQuickAskCitations = () => {};
+    area.escapeHtml = text => text;
+    area.updateQuickAskReasoning = () => assert.fail('reasoning must be kept');
+    area.updateQuickAskAnswer = text => { answer.innerHTML = `rendered:${text}`; };
+    area.updateQuickAskError('connection closed', { partial: 'math and links' });
+    assert.equal(answer.innerHTML, 'rendered:math and links<p><strong>Error:</strong> connection closed</p>');
+    area.updateQuickAskError('connection closed');
+    assert.match(answer.innerHTML, /connection closed/);
+});

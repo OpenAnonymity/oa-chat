@@ -117,9 +117,9 @@ test('a provider\'s numeric error code is named as a provider error, apart from 
     await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false, abortController: new AbortController(), initialPendingPhase: 'requesting-key' });
     const secondary = savedMessages.at(-1).council.stage1[1];
     assert.equal(secondary.error, 'Request failed. (PROVIDER_CODE_429)');
-    assert.deepEqual(describeCouncilLaneError(secondary.error), { message: 'Too many requests.', detail: 'Provider error 429' });
+    assert.deepEqual(describeCouncilLaneError(secondary.error), { message: 'The model is temporarily busy. Please try again.', detail: '' });
     // The same number as the response status reads as the response status.
-    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'Too many requests.', detail: 'Error 429' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'The model is temporarily busy. Please try again.', detail: '' });
 });
 
 test('an HTTP status is the response\'s; a provider code off the list is a stream error; a typed code stays the detail', async () => {
@@ -138,4 +138,21 @@ test('an HTTP status is the response\'s; a provider code off the list is a strea
     assert.equal(await run(routerError(599)), 'Request failed. (PROVIDER_STREAM_ERROR)');
     assert.equal(await run(Object.assign(new Error('nope'), { status: 403, code: 'KEY_LIMIT' })), 'Request failed. (HTTP 403, KEY_LIMIT)');
     assert.equal(await run(new Error('closed')), 'Request failed.');
+});
+
+
+test('legacy Parallel wait sentences are hidden and new long waits are not stored in the lane', async () => {
+    const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
+    const { controller, session, userMessage, savedMessages } = createHarness({
+        sendLaneCompletion: async ({ entry }) => {
+            if (entry.laneId === 'primary') return { content: 'ok', model: 'openai/gpt' };
+            throw Object.assign(new Error('Provider returned error'), { status: 429, retryAfterMs: 30000 });
+        }
+    });
+    await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false, abortController: new AbortController(), initialPendingPhase: 'requesting-key' });
+    const stored = savedMessages.at(-1).council.stage1[1].error;
+    assert.equal(stored, 'Request failed. (HTTP 429)');
+    const expected = { message: 'The model is temporarily busy. Please try again.', detail: '' };
+    assert.deepEqual(describeCouncilLaneError(stored), expected);
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429) The provider asked to wait 30 s.'), expected);
 });

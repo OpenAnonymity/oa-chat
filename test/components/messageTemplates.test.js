@@ -367,7 +367,7 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm1', role: 'assistant', model: 'Parallel', content: 'Hello',
             council: { enabled: true, stage1: lanes, errors: [{ model: 'Image', message: 'Request failed. (HTTP 429)' }] }
         }, helpers, [], 'GPT');
-        assert.match(parallel, /response-error[\s\S]*<strong>Error:<\/strong> Too many requests \(HTTP 429\)\./);
+        assert.match(parallel, /response-error[\s\S]*<strong>Error:<\/strong> The model is temporarily busy\. Please try again\./);
         assert.match(parallel, /regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
         assert.doesNotMatch(parallel, /council-lane-error|council-lane-retry-btn/);
         assert.doesNotMatch(parallel, /model request failed|Request failed\.|council-stage-warning|>Failed</);
@@ -377,7 +377,7 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm2', role: 'assistant', model: 'Council', content: '',
             council: { enabled: true, stage1: lanes, synthesis: { model: 'Fable', status: 'partial', response: 'Review' } }
         }, helpers, [], 'GPT');
-        assert.match(council, /Too many requests \(HTTP 429\)\./);
+        assert.match(council, /The model is temporarily busy\. Please try again\./);
         assert.doesNotMatch(council, /data-council-lane-id="secondary"[^>]*data-tooltip="Regenerate/);
     } finally { restoreGlobals(); }
 });
@@ -413,7 +413,7 @@ test('lane images render, and a quiet running lane says it is still working', as
 
 test('describeCouncilLaneError states the error: the status by name, the code as detail', async () => {
     const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
-    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'Too many requests.', detail: 'Error 429' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'The model is temporarily busy. Please try again.', detail: '' });
     assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 503, PROVIDER_ERROR)'), { message: 'Service unavailable.', detail: 'Error 503' });
     assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 418)'), { message: 'Request failed.', detail: 'Error 418' });
     assert.deepEqual(describeCouncilLaneError('Request failed.'), { message: 'Request failed.', detail: '' });
@@ -423,7 +423,7 @@ test('describeCouncilLaneError states the error: the status by name, the code as
 test('lane display distinguishes provider SSE codes from actual HTTP errors', async () => {
     const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
     assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_429)'),
-        { message: 'Too many requests.', detail: 'Provider error 429' });
+        { message: 'The model is temporarily busy. Please try again.', detail: '' });
     assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_502)'),
         { message: 'Bad gateway.', detail: 'Provider error 502' });
     assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_STREAM_ERROR)'),
@@ -432,16 +432,15 @@ test('lane display distinguishes provider SSE codes from actual HTTP errors', as
         { message: 'Request failed.', detail: '' });
 });
 
-test('stopped replacement keeps the original reply with a neutral, retryable status', async () => {
+test('a reply saved with an old replacement notice renders as the plain answer, no status box', async () => {
     const restore = installTemplateGlobals();
     try {
         const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
-        const saved = {id:'original',sessionId:'chat',role:'assistant',content:'The original answer.',model:'Test',timestamp:1,regenerationNotice:'stopped'};
-        const html = buildMessageHTML(saved, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
-        assert.match(html,/The original answer/);
-        assert.match(html,/Stopped\. Your previous answer was kept\./);
-        assert.match(html,/regeneration-status/);
-        assert.match(html,/Retry response/);
-        assert.doesNotMatch(html,/inference-failure-warning/);
+        for (const notice of ['stopped', 'failed']) {
+            const saved = {id:'original',sessionId:'chat',role:'assistant',content:'The original answer.',model:'Test',timestamp:1,regenerationNotice:notice};
+            const html = buildMessageHTML(saved, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
+            assert.match(html,/The original answer/);
+            assert.doesNotMatch(html,/regeneration-status|previous answer was kept|Retry response/);
+        }
     } finally { restore(); }
 });

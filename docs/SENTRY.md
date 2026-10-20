@@ -222,3 +222,31 @@ server-side Sentry and Sentry project administration are not changed. Before
 promoting additional telemetry to production, an administrator must verify
 IP-storage prevention and `$user.geo.**` scrubbing in the hosted project. Local
 sanitizer tests do not establish those hosted settings.
+
+## Legibility follow-up — October 20, 2026 (proposal, not implemented)
+
+The current reports cannot tie OA-CHAT-4's two generic completion failures to
+the reported Gemini incidents. Category counts are bounded incident signals,
+not request totals; missing abort/429 reports are not evidence of no failures.
+
+Improve operator readability first by mapping the already-allowlisted phase and
+reason to fixed readable titles: "Completion · HTTP 429", "Completion · stream
+504", "Access key · HTTP 401". Keep existing grouping fingerprints so cosmetic
+title changes do not fragment incident history. This needs no additional
+request fields or new timing collection and cannot recover old missing detail.
+
+A separate classification change should distinguish a transport abort from the
+request owner's cancellation and the client's watchdog timeout. Only report
+confirmed failure origins; do not guess that an unexplained abort came from the
+relay. If action tags (send/regenerate/parallel/quick_ask) are approved, pass an
+explicit bounded action context from the initiating UI, never infer it from a
+model, URL, error string or shared mutable global. Keep Stop/supersession silent.
+Do not add successful-request events to infer recovery rates. Existing reports
+can describe a failed attempt even if the later retry succeeds.
+
+Model names, provider generation IDs, keys, prompts, raw response headers and
+account/session identifiers remain outside Sentry's current privacy boundary.
+Use user-provided, sanitized local System Panel evidence plus operator provider
+records when exact-request attribution is necessary. Before expanding outbound
+reporting, verify the hosted IP/geography scrubbing requirements above. This
+retry update changes no reporting payloads, limits, grouping or hosted settings.

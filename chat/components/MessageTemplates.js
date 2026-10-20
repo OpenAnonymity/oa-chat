@@ -19,6 +19,7 @@ import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTra
 import { buildStillWorkingLabel, stillWorkingSinceAttribute, startStillWorkingClock } from './stillWorkingClock.js';
 import { keptAccessStages } from '../domain/accessTrace.js';
 import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
+import { HTTP_STATUS_NAMES, describeInferenceFailure } from '../domain/inferenceFailure.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -1497,27 +1498,24 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
 
 // A failed lane states the error itself: the HTTP status by its standard
 // name, the code as the detail. No interpretation of what it might mean.
-const HTTP_STATUS_NAMES = Object.freeze({
-    400: 'Bad request.',
-    401: 'Unauthorized.',
-    402: 'Payment required.',
-    403: 'Forbidden.',
-    404: 'Not found.',
-    408: 'Request timeout.',
-    413: 'Request too large.',
-    429: 'Too many requests.',
-    500: 'Internal server error.',
-    502: 'Bad gateway.',
-    503: 'Service unavailable.',
-    504: 'Gateway timeout.'
-});
 
 export function describeCouncilLaneError(errorText) {
-    const raw = typeof errorText === 'string' ? errorText.trim() : '';
+    const full = typeof errorText === 'string' ? errorText.trim() : '';
+    // Older saved lanes can contain a requested-wait sentence. Drop it on
+    // render as well as on new failures, without rewriting chat history.
+    const waitMatch = full.match(/\s*(The provider asked to wait [^.]+\.)$/);
+    const raw = waitMatch ? full.slice(0, waitMatch.index).trim() : full;
+    return describeCouncilLaneStatus(raw);
+}
+
+function describeCouncilLaneStatus(raw) {
     const httpMatch = raw.match(/HTTP\s+(\d{3})/i);
     const code = httpMatch ? Number(httpMatch[1]) : null;
     const providerMatch = raw.match(/\((PROVIDER_(?:CODE_\d{3}|STREAM_ERROR))\)$/);
     const provider = providerMatch ? parseProviderErrorDiagnostic(providerMatch[1]) : null;
+    if (code === 429 || (!code && provider?.status === 429)) {
+        return { message: describeInferenceFailure({ status: 429 }), detail: '' };
+    }
     if (!code && provider) {
         return {
             message: (provider.status && HTTP_STATUS_NAMES[provider.status]) || 'The provider reported an error.',
@@ -1536,21 +1534,22 @@ export function describeCouncilLaneError(errorText) {
 
 function buildCouncilLaneErrorBody(entry, messageId, options = {}) {
     const { showRetry = false } = options;
-    const { message, detail } = describeCouncilLaneError(entry?.error);
+    const { message, detail, note } = describeCouncilLaneError(entry?.error);
     // Same line as a failed single reply; retry is the lane's regenerate action.
     return `
         <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry?.laneId || entry?.label || 'lane')}">
-            ${buildCouncilErrorNotice({ message, detail })}
+            ${buildCouncilErrorNotice({ message, detail, note })}
         </div>
         ${showRetry ? buildCouncilLaneActionRow(entry, messageId) : ''}
     `;
 }
 
-function buildCouncilErrorNotice({ message, detail = '' }) {
+function buildCouncilErrorNotice({ message, detail = '', note = '' }) {
     // Keep the error's origin in the compact line: a provider code inside
     // an HTTP 200 stream is not the HTTP response status.
     const source = detail.replace(/^Error /, 'HTTP ').replace(/^Provider /, 'provider ');
-    return buildResponseErrorHtml(source ? `${message.replace(/\.$/, '')} (${source}).` : message);
+    const line = source ? `${message.replace(/\.$/, '')} (${source}).` : message;
+    return buildResponseErrorHtml(note ? `${line} ${note}` : line);
 }
 
 function buildCouncilLaneWorkingIndicator(since) {
@@ -1582,7 +1581,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
         entry?.reasoning ||
         entry?.streamingReasoning
     );
-    if ((status === 'complete' || status === 'running' || status === 'cancelled') && hasRenderableOutput) {
+    if ((status === 'complete' || status === 'running' || status === 'cancelled' || status === 'error') && hasRenderableOutput) {
         const citations = Array.isArray(entry.citations) ? entry.citations : [];
         const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || 'lane');
         const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
@@ -1627,9 +1626,12 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
             && !entry.streamingReasoning;
         // Stopped mid-answer: everything it had shown stays, with one line
         // saying why it ends there. Retry lives in the lane actions.
+        // A lane that failed after showing output keeps it, with its reason
+        // below (as a single reply keeps a partial answer above its error).
+        const laneError = status === 'error' ? describeCouncilLaneError(entry.error) : null;
         const stoppedNote = status === 'cancelled'
             ? '<div class="council-response-stopped" role="status">Stopped here.</div>'
-            : '';
+            : laneError ? buildCouncilErrorNotice(laneError) : '';
         return `
             <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
                 ${reasoningHtml}
@@ -1638,8 +1640,8 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
                 ${isStillWorking ? buildCouncilLaneWorkingIndicator(entry.stillWorkingSince) : ''}
                 ${stoppedNote}
             </div>
-            ${showLaneActions || status === 'cancelled' ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
-            ${!showLaneActions && status !== 'cancelled' && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${showLaneActions || status === 'cancelled' || status === 'error' ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
+            ${!showLaneActions && status !== 'cancelled' && status !== 'error' && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
             ${citationsSection}
         `;
     }
@@ -1946,12 +1948,7 @@ export function buildResponseErrorHtml(text) {
     `;
 }
 
-function buildRegenerationStatus(message) {
-    return message.regenerationNotice ? `<div class="regeneration-status" role="status">
-        <div>${message.regenerationNotice === 'stopped' ? 'Stopped. Your previous answer was kept.' : 'The replacement did not finish. Your previous answer was kept.'}</div>
-        <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
-    </div>` : '';
-}
+
 
 function buildCouncilAssistantMessage({
     message,
@@ -2046,7 +2043,6 @@ function buildCouncilAssistantMessage({
                         ${stage1Panels}
                     </div>
                     ${synthesisSection}
-                    ${buildRegenerationStatus(message)}
                 </div>
             </div>
         </div>
@@ -2386,7 +2382,6 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${isAnsweringElsewhere ? `<div class="px-2 py-1 answering-elsewhere" role="status" aria-live="polite">
                     <div class="pending-response-line"><span class="pending-response-label pending-response-streaming">Answering in another tab</span></div>
                 </div>` : ''}
-                ${buildRegenerationStatus(message)}
                 ${memoryApprovalActions}
                 ${assistantActionsRow}
                 ${citationsBubble}
