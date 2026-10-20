@@ -5,6 +5,10 @@ import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.j
 import { reportDiagnostic } from './services/diagnostics.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
+import { runWithResend } from './services/inference/resend.js';
+import { transientFailureReply, describeInferenceFailure } from './domain/inferenceFailure.js';
+import { isFailureReply, failureReplyText } from './domain/replyFailure.js';
+import { accessFailureText } from './domain/abortOrigin.js';
 import { validateConversationInput } from './services/inference/inputLimits.js';
 import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
 import { createComposerImageUrls } from './services/composerImageUrls.js';
@@ -1376,10 +1380,18 @@ class ChatApp {
         let completed = false;
         let receivedOutput = false;
         let receivedProviderUsage = false;
+        // Output from the request in flight: a request that showed nothing
+        // can be resent (resend.js); one that showed anything cannot.
+        let attemptOutput = false;
         try {
-            const result = await this.inferenceService.streamCompletion(messages, modelId, session,
+            const result = await runWithResend(() => {
+                attemptOutput = false;
+                return this.inferenceService.streamCompletion(messages, modelId, session,
                 async (chunk, imageData) => {
-                    if (chunk || imageData?.images?.length) receivedOutput = true;
+                    if (chunk || imageData?.images?.length) {
+                        receivedOutput = true;
+                        attemptOutput = true;
+                    }
                     await onChunk?.(chunk, imageData);
                 }, async usage => {
                     if (usage?.modelOnly) {
@@ -1400,12 +1412,22 @@ class ChatApp {
                     await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
                         usage: latestUsage, kind, final: false });
                 }, files, searchEnabled, controller, onStreamOpen, async (chunk, meta) => {
-                    if (chunk) receivedOutput = true;
+                    if (chunk) {
+                        receivedOutput = true;
+                        attemptOutput = true;
+                    }
+                    // Hidden thinking is output too: the model was working (and
+                    // may bill for it), so a later failure is shown, not resent.
+                    if (meta?.withheld) attemptOutput = true;
                     await onReasoningChunk?.(chunk, meta);
                 },
                 reasoningEnabled, reasoningEffort,
                 progress => this.setSessionPendingProgress(session.id, progress),
                 health => this.setInferenceHealth(session.id, id, health), timing);
+            }, {
+                signal: controller?.signal || null,
+                outputSeen: () => attemptOutput
+            });
             completed = true;
             latestUsage = result ? withUsagePricing(result) : latestUsage;
             // The later message-accounting write must keep this same snapshot.
@@ -6191,10 +6213,12 @@ class ChatApp {
     }
 
     isCancelledError(error, signal = null) {
+        // With the operation's own signal, only that signal (or an error our
+        // code marked cancelled) is a Stop; a transport's AbortError is not.
+        if (signal) return signal.aborted === true || error?.isCancelled === true;
         return error?.isCancelled === true
             || error?.name === 'AbortError'
-            || error?.aborted === true
-            || signal?.aborted === true;
+            || error?.aborted === true;
     }
 
     async persistLocalAssistantStatus(message) {
@@ -7373,6 +7397,7 @@ class ChatApp {
         });
         this.initializeRequestTimings(job.controller.signal, this.state.sessionsById.get(sessionId));
         let draft = null;
+        let replacementError = null;
         try {
             if (options.replaceFromMessageId) {
                 draft = await chatDB.beginMessageReplacement(sessionId, options.replaceFromMessageId);
@@ -7389,16 +7414,52 @@ class ChatApp {
         } catch (error) {
             finishRequestTiming(job.controller.signal, 'error');
             if (!draft) throw error;
-            if (!this.isCancelledError(error, job.controller.signal)) this.showToast?.('The replacement could not be completed. Your previous answer was kept.', 'info');
+            replacementError = error;
         } finally {
             try {
                 if (draft) {
-                    try {
-                        await chatDB.finishMessageReplacement(draft, {
-                            notice: job.controller.signal.aborted ? 'stopped' : 'failed'
-                        });
-                    } catch {
-                        this.showToast?.('Your previous answer was kept, but the retry status could not be saved.', 'info');
+                    // A replacement that did not complete. Stop keeps the saved
+                    // reply as it was. A failure on the last reply, when that
+                    // reply was itself only an error, shows what the new attempt
+                    // produced (its error, or a partial answer with its reason).
+                    // Otherwise the saved reply and every later turn are kept and
+                    // the reason is said once, in plain words. No status box.
+                    const stopped = job.controller.signal.aborted
+                        || this.isCancelledError(replacementError, job.controller.signal);
+                    const original = draft.baseline.find(message => message.id === draft.messageId);
+                    // The draft holds only the turns before the regenerated reply:
+                    // committing it anywhere but the end would drop later turns.
+                    const isLastReply = draft.baseline.at(-1)?.id === draft.messageId;
+                    const produced = stopped ? [] : draft.messages()
+                        .filter(message => message.role === 'assistant' && draft.createdIds.has(message.id));
+                    const producedRow = produced.at(-1) || null;
+                    const failureRow = [...produced].reverse().find(message => isFailureReply(message)) || null;
+                    const reason = failureRow ? failureReplyText(failureRow)
+                        : producedRow?.inferenceError ? String(producedRow.inferenceError).trim()
+                            : (replacementError && !stopped ? describeInferenceFailure(replacementError) || getErrorMessage(replacementError) : '');
+                    // Only an attempt that ran and failed is reported; a regenerate
+                    // that returned before trying (tickets, account) said why itself.
+                    const attempted = Boolean(producedRow || replacementError);
+                    const kept = original && !isFailureReply(original) ? 'Your answer is unchanged.' : 'The earlier reply is unchanged.';
+                    const sayFailure = () => {
+                        if (stopped || !attempted) return;
+                        this.showToast?.(reason ? `Couldn't regenerate: ${reason.replace(/\.$/, '')}. ${kept}`
+                            : `Couldn't regenerate. ${kept}`, 'error');
+                    };
+                    if (producedRow && isLastReply && isFailureReply(original)) {
+                        try {
+                            await chatDB.finishMessageReplacement(draft, { commit: true });
+                        } catch {
+                            // A refused commit (another tab changed the chat) must
+                            // still release the draft, or later saves go nowhere.
+                            await chatDB.finishMessageReplacement(draft).catch(() => {});
+                            sayFailure();
+                        }
+                    } else {
+                        // Discarding a draft releases it even when storage
+                        // fails; the saved transcript was never touched.
+                        await chatDB.finishMessageReplacement(draft).catch(() => {});
+                        sayFailure();
                     }
                 }
                 if (options.replaceFromMessageId && !this.isSessionDeleted(sessionId)) {
@@ -7533,13 +7594,16 @@ class ChatApp {
                     }
                 } catch (error) {
                     if (typingId) this.removeTypingIndicator(typingId);
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
-                    }
                     if (lastUserMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
+                    // Stopped by the person (or the chat closed): nothing to report.
+                    if (this.isCancelledError(error, abortController.signal)) return;
+                    const accessFailure = accessFailureText(error);
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(accessFailure, 'error', 5000);
+                    }
+                    await this.addMessage('assistant', `**Error:** ${accessFailure}`, { isLocalOnly: true }, session);
                     return;
                 }
             }
@@ -7947,9 +8011,12 @@ class ChatApp {
                         }
                     }
                 } else {
+                    // A busy provider reads the same as on a first send.
+                    const hadPartial = Boolean(streamedContent?.trim() || streamedReasoning?.trim() || streamingMessage?.images?.length);
                     if (firstChunkReceived && streamingMessage) {
                         this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning,
-                            `**Response interrupted:** ${getErrorMessage(error, 'Please retry.')}`);
+                            transientFailureReply(error, { hadPartial })
+                                || `**Response interrupted:** ${getErrorMessage(error, 'Please retry.')}`);
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -7967,7 +8034,8 @@ class ChatApp {
                                 }
                             }
                         }
-                        await this.addMessage('assistant', `**Error:** ${getErrorMessage(error, 'The response failed. Please retry.')}`, { isLocalOnly: true }, session);
+                        await this.addMessage('assistant', transientFailureReply(error)
+                            || `**Error:** ${getErrorMessage(error, 'The response failed. Please retry.')}`, { isLocalOnly: true }, session);
                     }
                 }
             }
@@ -8467,10 +8535,13 @@ class ChatApp {
                         return;
                     }
                     await this.discardPendingTurn(pendingTurn);
+                    // Stopped by the person (or the chat closed): nothing to report.
+                    if (this.isCancelledError(error, abortController.signal)) return;
+                    const accessFailure = accessFailureText(error);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
+                        this.floatingPanel.showMessage(accessFailure, 'error', 5000);
                     }
-                    await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
+                    await this.addMessage('assistant', `**Error:** ${accessFailure}`, { isLocalOnly: true }, session);
                     return; // Return early if key acquisition fails
                 }
             }
@@ -8934,7 +9005,9 @@ class ChatApp {
                 }
 
                 // Check if we should retry (only if no content received yet)
-                if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
+                // A request that went out was already given its resends
+                // (resend.js); this loop only retries what failed before it.
+                if (!firstChunkReceived && retryCount < MAX_RETRIES && !error?.resendHandled && isRetryableError(error)) {
                     retryCount++;
                     console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, getErrorMessage(error));
                     // Small delay before retry (500ms * attempt number)
@@ -8952,6 +9025,11 @@ class ChatApp {
 
                 // Customize messages for specific error types
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
+                // A busy or unavailable provider, by HTTP status or by its code
+                // inside the stream: one "Error: …" line naming the status, the
+                // same words a Parallel lane uses. Resends already happened.
+                const hadPartial = Boolean(streamedContent?.trim() || streamedReasoning?.trim() || streamingMessage?.images?.length);
+                const transientLine = transientFailureReply(terminalError, { hadPartial });
 
                 // The following are inference backend HTTP status codes, not OA infra
                 if (terminalError?.status === 402 ||
@@ -8961,14 +9039,9 @@ class ChatApp {
                 } else if (terminalError?.status === 401) {
                     // Authentication errors
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (terminalError?.status === 503 || terminalError?.status === 502 || terminalError?.status === 504) {
-                    // Service unavailable / gateway errors (after retries exhausted)
-                    userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
-                } else if (terminalError?.providerReported && !terminalError?.status) {
-                    // The provider ended the stream with its own error event.
-                    // Say what happened in plain words; keep its text as detail.
-                    // Its own text stays in the Activity Timeline, not in the reply.
-                    userFriendlyMessage = 'The provider stopped the reply with an error.';
+                } else if (transientLine) {
+                    // The provider's own text stays in the Activity Timeline.
+                    userFriendlyMessage = transientLine;
                 } else if (terminalError?.name === 'AbortError' || /\boperation was aborted\b/i.test(errorMessage)) {
                     // Aborted without the person asking: the transport (relay
                     // session or browser connection) closed under the request.
@@ -8980,9 +9053,9 @@ class ChatApp {
                     // No API key errors
                     userFriendlyMessage = `API key error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else {
-                    // Generic fallback (after retries if applicable)
-                    const retryNote = retryCount > 0 ? ` (after ${retryCount} retries)` : '';
-                    userFriendlyMessage = `⚠️ **Error**${retryNote}: ${errorMessage}`;
+                    // Generic fallback: the reason in plain words, one label
+                    // (below a partial answer the row adds "Error:" itself).
+                    userFriendlyMessage = hadPartial ? errorMessage : `**Error:** ${errorMessage}`;
                 }
 
                 if (firstChunkReceived && streamingMessage) {

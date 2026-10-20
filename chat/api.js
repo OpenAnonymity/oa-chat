@@ -1,3 +1,5 @@
+import { isTransportAbort } from './domain/abortOrigin.js';
+import { rateLimitDetails } from './domain/inferenceFailure.js';
 import { getSystemPrompt } from './services/inference/systemPrompt.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isReportedModelId } from './domain/modelSelection.js';
@@ -1165,6 +1167,7 @@ export class OpenRouterAPI {
                     // it); the chat shows a readable summary, see app.js.
                     error.code = parsed.error.code || 'PROVIDER_STREAM_ERROR';
                     error.providerReported = true;
+                    Object.assign(error, rateLimitDetails(null, parsed.error));
                     error.isStreamError = true;
                     error.retryable = false;
                     error.hasReceivedTokens = hasReceivedFirstToken;
@@ -1540,6 +1543,9 @@ export class OpenRouterAPI {
                 error.message = getErrorMessage(errorData?.error, getErrorMessage(errorData, fallbackMessage));
                 error.status = response.status;
                 error.data = errorData;
+                // What the resend rule and the System Panel need: how long the
+                // provider asked us to wait, and which upstream provider failed.
+                Object.assign(error, rateLimitDetails(response.headers, errorData?.error));
                 if (response.status === 402 || isKeyLimitExceededResponse(response.status, errorData, error.creditRecoveryMessage)) {
                     error.code = getCreditErrorCode(errorData);
                 }
@@ -1578,9 +1584,15 @@ export class OpenRouterAPI {
                 }
             }
 
-            // Handle abort errors
-            if (streamError.name === 'AbortError' || abortController?.signal?.aborted) {
+            // Only this reply's own controller being aborted is a Stop (the
+            // person, or the chat being closed/deleted). An abort that came
+            // from below (the relay closing, a browser or desktop transport)
+            // is a failed connection: it is shown, and resent before any text.
+            if (abortController?.signal?.aborted) {
                 streamError.isCancelled = true;
+            } else if (isTransportAbort(streamError)) {
+                streamError.isTransportAbort = true;
+                if (!streamError.code) streamError.code = 'TRANSPORT_ABORTED';
             }
 
             console.error('Error streaming completion:', streamError);
@@ -1606,7 +1618,13 @@ export class OpenRouterAPI {
                         body: logBody
                     },
                     error: { status: streamError.status, code: streamError.code,
-                        ...(streamError.providerReported === true ? { providerReported: true } : {}) },
+                        ...(streamError.providerReported === true ? { providerReported: true } : {}),
+                        // Local, memory-only log: the upstream provider and its
+                        // requested wait are what explain a 429.
+                        ...(streamError.upstreamProvider ? { upstreamProvider: streamError.upstreamProvider } : {}),
+                        ...(Number.isFinite(streamError.retryAfterMs) ? { retryAfterMs: streamError.retryAfterMs } : {}),
+                        ...(streamError.rateLimit ? { rateLimit: streamError.rateLimit } : {}),
+                        ...(streamError.isTransportAbort === true ? { transportAbort: true } : {}) },
                     isAborted: streamError.isCancelled === true // Flag user-initiated cancellation
                 });
             }

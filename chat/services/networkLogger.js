@@ -294,6 +294,21 @@ class NetworkLogger {
         const details = [];
         if (Number.isFinite(status)) details.push(`HTTP ${status}`);
         if (code) details.push(code);
+        // What explains a rate limit or a dropped connection, kept in this
+        // tab's memory only: the upstream provider OpenRouter named and the
+        // wait it asked for.
+        const upstream = typeof error?.upstreamProvider === 'string'
+            ? error.upstreamProvider.replace(/[^A-Za-z0-9 ._()-]/g, '').trim().slice(0, 60) : '';
+        if (upstream) details.push(`upstream ${upstream}`);
+        const retryAfterMs = Number(error?.retryAfterMs);
+        if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) details.push(`asked to wait ${Math.ceil(retryAfterMs / 1000)} s`);
+        for (const name of ['limit', 'remaining', 'reset']) {
+            const value = error?.rateLimit?.[name];
+            if (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value) && value.length <= 20) {
+                details.push(`x-ratelimit-${name} ${value}`);
+            }
+        }
+        if (error?.transportAbort === true || error?.isTransportAbort === true) details.push('connection closed');
         return details.length > 0
             ? `Request failed (${details.join(', ')})`
             : 'Request failed';

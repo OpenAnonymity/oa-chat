@@ -2,6 +2,8 @@ import { requestTiming, timingTextVisible, startRequestTiming, finishRequestTimi
 import { trackFeatureUsage } from '../services/featureUsage.js';
 import { STILL_WORKING_DELAY_MS } from '../services/streamSegments.js';
 import { waitForSignal } from '../services/inference/reliability.js';
+import { runWithResend } from '../services/inference/resend.js';
+import { transientFailureReply, isNetworkFailure } from '../domain/inferenceFailure.js';
 import { chatDB as defaultChatDB } from '../db.js';
 import { parseReasoningContent, reasoningTextFromDetails } from '../services/reasoningParser.js';
 import {
@@ -30,6 +32,9 @@ const SYNTHESIS_LANE_ID = 'synthesis';
 const SYNTHESIS_CONTEXT_MAX_CHARS = 8000;
 
 function isAbortError(error) {
+    // A transport's abort (the relay closing, see api.js) is a lane failure,
+    // not the person's Stop: it is resent before text and shown after.
+    if (error?.isTransportAbort === true && error?.isCancelled !== true) return false;
     return error?.name === 'AbortError' || error?.isCancelled || error?.message === 'AbortError';
 }
 
@@ -98,8 +103,19 @@ function hasLanePartialOutput(entry) {
 // answer, so it is not this lane's response model.
 function markLaneFailed(stageEntry, error) {
     stageEntry.status = 'error';
-    stageEntry.error = buildSafeCouncilErrorMessage(error);
+    stageEntry.error = laneFailureText(error, hasLaneOutput(stageEntry));
     if (!hasLanePartialOutput(stageEntry)) delete stageEntry.responseModel;
+}
+
+// The lane's stored error: the status form the lane template names
+// ("Request failed. (HTTP 429)"), plus what a status cannot say — a dropped
+// connection or a stalled stream — in the same
+// words a single reply uses.
+function laneFailureText(error, hadPartial) {
+    const closed = transientFailureReply(error, { hadPartial });
+    if (error?.isTransportAbort === true || isNetworkFailure(error)) return closed.replace(/^\*\*Error:\*\*\s*/, '');
+    if (/^INFERENCE_[A-Z_]+$/.test(String(error?.code || '')) && error?.message) return String(error.message).slice(0, 200);
+    return buildSafeCouncilErrorMessage(error);
 }
 
 // The turn a lane sees in its own history when it was stopped or failed
@@ -1704,9 +1720,14 @@ export default class CouncilController {
             }
         };
 
+        // Whether the request in flight has shown anything (only one that
+        // has not may be resent).
+        let attemptOutput = false;
         let tokenData;
         try {
-            tokenData = await this.inferenceService.streamCompletion(
+            tokenData = await runWithResend(() => {
+                attemptOutput = false;
+                return this.inferenceService.streamCompletion(
                 messages,
                 entry.id,
                 laneSession,
@@ -1714,6 +1735,7 @@ export default class CouncilController {
                     markRunning();
                     const newImages = Array.isArray(imageData?.images) ? imageData.images : [];
                     if (!chunk && newImages.length === 0) return;
+                    attemptOutput = true;
                     if (chunk) {
                         content += chunk;
                         if (laneState) {
@@ -1773,6 +1795,9 @@ export default class CouncilController {
                 (reasoningChunk, meta) => {
                     markRunning();
                     if (meta?.withheld) {
+                        // Hidden thinking is output: this request is working,
+                        // so a later failure must not be resent.
+                        attemptOutput = true;
                         stopStillWorking();
                         reasoningStartTime ??= streamOpenedAt ?? Date.now();
                         reasoningEndTime = null;
@@ -1788,6 +1813,7 @@ export default class CouncilController {
                         return;
                     }
                     if (!reasoningChunk) return;
+                    attemptOutput = true;
                     if (!reasoningStartTime) {
                         reasoningStartTime = streamOpenedAt ?? Date.now();
                     }
@@ -1809,6 +1835,10 @@ export default class CouncilController {
                 health => this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, health, entry.name),
                 requestTiming(abortController?.signal, laneId, entry.id)
             );
+            }, {
+                signal: abortController?.signal || null,
+                outputSeen: () => attemptOutput
+            });
         } catch (error) {
             stopStillWorking();
             if (laneState) {

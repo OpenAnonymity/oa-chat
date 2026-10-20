@@ -1,4 +1,5 @@
 import { timingCallbacks } from '../stagingRequestTiming.js';
+import { isStopError } from './resend.js';
 import { createDiagnosticTrail } from '../diagnostics.js';
 import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
@@ -250,7 +251,7 @@ const inferenceService = {
             onStreamHealth,
             requestTiming
         ), abortController?.signal).then(result => { requestTiming?.outcome(abortController?.signal?.aborted ? 'cancelled' : 'complete'); return result; }, error => {
-            requestTiming?.outcome(abortController?.signal?.aborted || error?.name === 'AbortError' || error?.isCancelled ? 'cancelled' : 'error');
+            requestTiming?.outcome(isStopError(error, abortController?.signal) ? 'cancelled' : 'error');
             throw error;
         });
     },

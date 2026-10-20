@@ -1,0 +1,29 @@
+# Provider fault-injection suite: the real client UI against stand-ins for
+# oa-org and OpenRouter (HTTP 429 with Retry-After, in-stream 504, transport
+# abort, stall) through send, regenerate, Parallel and quick ask.
+# Make this check required on main/prod so a client revision cannot be pinned
+# without it. It needs no secrets and touches nothing real.
+name: fault-injection
+on:
+  push:
+    branches: [main, prod, 'release/**', 'fix/**']
+  pull_request:
+jobs:
+  faults:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Only the browser driver: the client runs unbundled from chat/, so the
+      # private SDK and submodules are not needed.
+      - run: npm ci --prefix test-faults --ignore-scripts
+      - run: npm exec --prefix test-faults -- playwright install --with-deps chromium
+      - run: npm run test:faults
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fault-injection-results
+          path: test-faults/results/

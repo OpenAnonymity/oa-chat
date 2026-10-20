@@ -1,3 +1,4 @@
+import { transientFailureReply } from '../domain/inferenceFailure.js';
 import { buildStillWorkingLabel, startStillWorkingClock } from './stillWorkingClock.js';
 import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
 import { restoredResponseForDisplay, wasReplyStreaming } from '../ui/restoredResponse.js';
@@ -708,6 +709,8 @@ export default class ChatArea {
 
     async startQuickAskRequest(requestId) {
         this.quickAsk.requestInFlight = true;
+        // The answer so far: kept above the error if the request fails.
+        let shown = '';
         try {
             await this.app.inlineQuickAsk(this.quickAsk.selectedText, {
                 abortController: this.quickAsk.abortController,
@@ -717,6 +720,7 @@ export default class ChatArea {
                 },
                 onChunk: (content) => {
                     if (requestId !== this.quickAsk.activeRequestId) return;
+                    shown = typeof content === 'string' ? content : shown;
                     this.updateQuickAskAnswer(content);
                 },
                 onReasoningChunk: (reasoning) => {
@@ -736,7 +740,10 @@ export default class ChatArea {
                 this.updateQuickAskStatus('stopped');
                 return;
             }
-            this.updateQuickAskError(error?.message || 'Quick ask failed.');
+            // Same words as a reply row: the status by name, or the connection.
+            const hadPartial = Boolean(shown.trim());
+            const plain = transientFailureReply(error, { hadPartial })?.replace(/^\*\*Error:\*\*\s*/, '');
+            this.updateQuickAskError(plain || error?.message || 'Quick ask failed.', { partial: shown });
         } finally {
             if (requestId === this.quickAsk.activeRequestId) {
                 this.quickAsk.requestInFlight = false;
@@ -852,14 +859,21 @@ export default class ChatArea {
         `;
     }
 
-    updateQuickAskError(message) {
+    updateQuickAskError(message, { partial = '' } = {}) {
         const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
         if (!answerEl) return;
         this.updateQuickAskStatus('');
-        this.updateQuickAskReasoning('');
         this.updateQuickAskCitations(null);
         answerEl.closest('.quick-ask-assistant-bubble')?.classList.remove('quick-ask-assistant-pending');
-        answerEl.innerHTML = `<p><strong>Error:</strong> ${this.escapeHtml(message)}</p>`;
+        const errorLine = `<p><strong>Error:</strong> ${this.escapeHtml(message)}</p>`;
+        if (String(partial || '').trim()) {
+            // A partial answer stays, with the reason below it (as in a reply row).
+            this.updateQuickAskAnswer(partial);
+            answerEl.insertAdjacentHTML('beforeend', errorLine);
+            return;
+        }
+        // Keep reasoning already shown even if no answer text arrived.
+        answerEl.innerHTML = errorLine;
     }
 
     closeQuickAskWindow(options = {}) {

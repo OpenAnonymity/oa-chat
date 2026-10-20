@@ -2571,10 +2571,11 @@ for (const failure of ['notice', 'metadata', 'none']) {
         const restore = installBrowser();
         try {
             const app = appHarness(); let renders = 0;
-            const draft = {sessionId:'one'};
+            const draft = {sessionId:'one', messageId:'original', createdIds:new Set(), retainedIds:new Set(),
+                baseline:[{id:'original',role:'assistant',content:'A real answer.'}], messages:()=>[]};
             t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
             t.mock.method(chatDB, 'finishMessageReplacement', async (_draft, options) => {
-                assert.equal(options.notice, 'stopped');
+                assert.equal(options, undefined, 'a stopped replacement keeps the saved reply as it was');
                 if (failure === 'notice') throw Error('Synthetic quota failure');
             });
             app.chatArea = {render: async()=>renders++};
@@ -2608,8 +2609,10 @@ for (const outcome of ['complete', 'failed', 'empty', 'stopped']) {
         const restore = installBrowser();
         try {
             const app = appHarness();
-            const draft = { sessionId: 'one' };
-            const finishes = [];
+            const draft = { sessionId: 'one', messageId: 'original', createdIds: new Set(), retainedIds: new Set(),
+                baseline: [{ id: 'original', role: 'assistant', content: 'A real answer.' }], messages: () => [] };
+            const finishes = [], toasts = [];
+            app.showToast = (text, kind) => toasts.push([text, kind]);
             let renders = 0, extractions = 0;
             t.mock.method(chatDB, 'beginMessageReplacement', async (sessionId, messageId) => {
                 assert.equal(sessionId, 'one');
@@ -2629,13 +2632,107 @@ for (const outcome of ['complete', 'failed', 'empty', 'stopped']) {
             app.refreshSessionConversationSearchText = async () => {};
             app.triggerPostTurnMemoryExtraction = () => { extractions++; };
             await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
-            assert.deepEqual(finishes, [outcome === 'complete' ? { commit: true } : { notice: outcome === 'stopped' ? 'stopped' : 'failed' }]);
+            // No status box: a kept answer carries no notice; a failure says why once.
+            assert.deepEqual(finishes, [outcome === 'complete' ? { commit: true } : undefined]);
+            // Nothing was produced and nothing thrown: the regenerate never ran
+            // (or said why itself), so no second message.
+            assert.deepEqual(toasts, []);
             assert.equal(extractions, outcome === 'complete' ? 1 : 0);
             assert.equal(renders, 2);
             assert.equal(app.regenerationJobs.size, 0);
         } finally { restore(); }
     });
 }
+
+test('a regenerate that fails over an earlier error row shows the new reason in that row', async t => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness();
+        const failure = { id: 'new-error', role: 'assistant', isLocalOnly: true, content: '**Error:** Too many requests (HTTP 429).' };
+        const draft = { sessionId: 'one', messageId: 'original', createdIds: new Set(['new-error']), retainedIds: new Set(),
+            baseline: [{ id: 'original', role: 'assistant', isLocalOnly: true, content: '⚠️ **Error** (after 2 retries): Provider returned error' }],
+            messages: () => [failure] };
+        const finishes = [], toasts = [];
+        app.showToast = (text, kind) => toasts.push([text, kind]);
+        t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
+        t.mock.method(chatDB, 'finishMessageReplacement', async (received, options) => { finishes.push(options); });
+        app.chatArea = { render: async () => {} };
+        app.regenerateCapturedResponse = async () => ({ completed: false });
+        app.recomputeSessionCouncilTranscriptHint = async () => {};
+        app.refreshSessionConversationSearchText = async () => {};
+        await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
+        assert.deepEqual(finishes, [{ commit: true }]);
+        assert.deepEqual(toasts, []);
+    } finally { restore(); }
+});
+
+test('a regenerate that fails over a real answer keeps it and names the reason once', async t => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness();
+        const failure = { id: 'new-error', role: 'assistant', isLocalOnly: true, content: '**Error:** Too many requests (HTTP 429).' };
+        const draft = { sessionId: 'one', messageId: 'original', createdIds: new Set(['new-error']), retainedIds: new Set(),
+            baseline: [{ id: 'original', role: 'assistant', content: 'A real answer.' }], messages: () => [failure] };
+        const finishes = [], toasts = [];
+        app.showToast = (text, kind) => toasts.push([text, kind]);
+        t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
+        t.mock.method(chatDB, 'finishMessageReplacement', async (received, options) => { finishes.push(options); });
+        app.chatArea = { render: async () => {} };
+        app.regenerateCapturedResponse = async () => ({ completed: false });
+        app.recomputeSessionCouncilTranscriptHint = async () => {};
+        app.refreshSessionConversationSearchText = async () => {};
+        await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
+        assert.deepEqual(finishes, [undefined]);
+        assert.deepEqual(toasts, [["Couldn't regenerate: Too many requests (HTTP 429). Your answer is unchanged.", 'error']]);
+    } finally { restore(); }
+});
+
+test('a failed regenerate of an older error reply keeps every later turn', async t => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness();
+        const failure = { id: 'new-error', role: 'assistant', isLocalOnly: true, content: '**Error:** Too many requests (HTTP 429).' };
+        const draft = { sessionId: 'one', messageId: 'original', createdIds: new Set(['new-error']), retainedIds: new Set(['u1']),
+            baseline: [{ id: 'u1', role: 'user' }, { id: 'original', role: 'assistant', isLocalOnly: true, content: '**Error:** Gateway timeout (provider 504).' },
+                { id: 'u2', role: 'user' }, { id: 'a2', role: 'assistant', content: 'A later real answer.' }],
+            messages: () => [{ id: 'u1', role: 'user' }, failure] };
+        const finishes = [], toasts = [];
+        app.showToast = (text, kind) => toasts.push([text, kind]);
+        t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
+        t.mock.method(chatDB, 'finishMessageReplacement', async (received, options) => { finishes.push(options); });
+        app.chatArea = { render: async () => {} };
+        app.regenerateCapturedResponse = async () => ({ completed: false });
+        app.recomputeSessionCouncilTranscriptHint = async () => {};
+        app.refreshSessionConversationSearchText = async () => {};
+        await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
+        assert.deepEqual(finishes, [undefined], 'never committed: the draft has no later turns');
+        assert.deepEqual(toasts, [["Couldn't regenerate: Too many requests (HTTP 429). The earlier reply is unchanged.", 'error']]);
+    } finally { restore(); }
+});
+
+test('a refused commit over an error row still releases the draft', async t => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness();
+        const failure = { id: 'new-error', role: 'assistant', isLocalOnly: true, content: '**Error:** Too many requests (HTTP 429).' };
+        const draft = { sessionId: 'one', messageId: 'original', createdIds: new Set(['new-error']), retainedIds: new Set(),
+            baseline: [{ id: 'original', role: 'assistant', isLocalOnly: true, content: '**Error:** x' }], messages: () => [failure] };
+        const finishes = [];
+        app.showToast = () => {};
+        t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
+        t.mock.method(chatDB, 'finishMessageReplacement', async (received, options) => {
+            finishes.push(options);
+            if (options?.commit) throw new Error('The chat changed during regeneration. The saved conversation was kept.');
+        });
+        app.chatArea = { render: async () => {} };
+        app.regenerateCapturedResponse = async () => ({ completed: false });
+        app.recomputeSessionCouncilTranscriptHint = async () => {};
+        app.refreshSessionConversationSearchText = async () => {};
+        await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
+        assert.deepEqual(finishes, [{ commit: true }, undefined]);
+        assert.equal(app.regenerationJobs.size, 0);
+    } finally { restore(); }
+});
 
 test('regenerate action never deletes the saved transcript before requesting its replacement', async () => {
     const area = Object.create(ChatArea.prototype);

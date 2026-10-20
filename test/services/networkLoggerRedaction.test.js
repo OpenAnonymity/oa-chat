@@ -194,3 +194,13 @@ test('log sink parses JSON strings before redaction and drops opaque bodies', ()
     assert.equal(opaqueEntry.request.body, '[REDACTED]');
     assert.equal(opaqueEntry.response, '[REDACTED]');
 });
+
+test('local failure log preserves numeric rate-limit evidence without arbitrary headers', () => {
+    const safe = networkLogger.sanitizeError({ status: 429, retryAfterMs: 2000,
+        rateLimit: { limit: '120', remaining: '0', reset: '1792525112000', secret: 'private-key' } });
+    assert.match(safe, /x-ratelimit-limit 120/);
+    assert.match(safe, /x-ratelimit-remaining 0/);
+    assert.match(safe, /x-ratelimit-reset 1792525112000/);
+    assert.doesNotMatch(safe, /private-key/);
+    assert.doesNotMatch(networkLogger.sanitizeError({ rateLimit: { limit: 'private-string' } }), /private-string/);
+});

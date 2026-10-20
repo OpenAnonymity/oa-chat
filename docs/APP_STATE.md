@@ -15,6 +15,52 @@ schedule. Historical staging families retain their adapters, SDK pins, wallet
 records and recovery routes; no intermediate migration is introduced. Mainnet
 continues to use its existing version 1 profile.
 
+## October 20, 2026 — additive staging port of provider recovery
+
+Based on the client already served by staging (`ecba5110`). Applies only the
+reviewed provider-recovery delta from production candidate `df24d23c`; does not
+merge the production branch or replace staging's newer payment/build sources.
+The staging timing argument remains wired into each inference attempt; timing
+recorder/uploader payload, privacy guards, wallet versioning, access issuance
+and web serving configuration are preserved. The completion timing hook uses
+the shared cancellation classifier: a transport abort keeps the existing
+record open for recovery instead of freezing it as a person's cancellation.
+Integration tests cover 429 recovery, transport recovery and Stop with the
+existing staging recorder. No new fields or collection destinations are added. The host keeps its timing-build test and
+adds the required 89-scenario browser fault suite. This revision contains the
+existing staging experiment and MUST NOT become a production pin. The separate
+production candidate remains `df24d23c`.
+
+## October 20, 2026 — finalized short provider retry policy
+
+Supersedes the earlier October 20 retry limits below. All four UI paths use
+one automatic retry (two provider attempts total), only before any text or
+reasoning, and never after a person stops the request. Default wait: 2 s for
+429, 1 s for other transient failures. Retry-After remains a minimum for every
+eligible status, with upward jitter capped inside a **6 s maximum scheduled
+wait**. A hint above 6 s ends immediately with the ordinary error; it is never
+truncated to retry early. The existing slow-failure protection now uses a 15 s
+deadline for starting the retry, including the first attempt and wait. This is
+not a timeout for the retried answer. Background-tab wakeups past that deadline
+cannot resend. The independent access-credit refresh remains separate.
+
+A terminal 429 says "The model is temporarily busy. Please try again." in the
+reply, regenerate toast, Parallel lane and quick ask. No provider-wait sentence
+or countdown is shown there. Exact status and available headers remain in the
+local System Panel. Parallel keeps its structured stored status but maps 429 to
+the same shared message; legacy saved wait sentences are discarded on render. Non-user transport aborts can retry before output; the
+client watchdog stays terminal and partial output stays visible.
+
+The real-UI fault suite adds the 6 s boundary, 7 s and 30 s rejection, repeated
+429, missing Retry-After, HTTP 502/503/504, 503 with short/long hints, and 429
+after text, across all paths. Four cancellation-during-wait cases now use a
+5 s hint so they actually enter the shorter wait. Total: 89 scenarios. Exact
+boundary and delayed-tab cases also have deterministic clock tests.
+
+Sentry reporting is unchanged. See the legibility follow-up in `SENTRY.md`:
+fixed readable titles first, then a separate reviewed classification change.
+No model/request identifiers, success events or timing experiment were added.
+
 ## October 19, 2026 — local review of database-close recovery
 
 `831654b` is distinct from the withdrawn history-hardening candidate: healthy

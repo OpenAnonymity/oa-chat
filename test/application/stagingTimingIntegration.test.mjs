@@ -66,4 +66,44 @@ test('new Parallel composer waits for real session and early preparation failure
     assert.ok(rows.every(row=>row.first_answer_ms===null));
 });
 
+// The new resend wrapper keeps the existing staging record open across a
+// failed attempt. A transport AbortError must not freeze it as cancelled.
+for (const fault of ['429', 'transport-abort', 'stop']) {
+    test(`staging timing survives provider recovery: ${fault}`, async () => {
+        rows.length = 0;
+        const controller = new AbortController();
+        timing.startRequestTiming(controller.signal);
+        const options = api.options, transport = api.networkTransport;
+        let dispatched = 0;
+        api.options = { acquireRequestAccess: async () => ({ apiKey: 'synthetic', baseUrl: 'https://fake.invalid', release: async () => {} }) };
+        api.networkTransport = { fetchWithRetry: async () => {
+            if (++dispatched === 1) {
+                if (fault === 'stop') controller.abort();
+                if (fault !== '429') throw new DOMException('The operation was aborted.', 'AbortError');
+                return new Response(JSON.stringify({ error: { code: 429 } }), { status: 429, headers: { 'retry-after': '1' } });
+            }
+            return new Response('data: ' + JSON.stringify({ choices: [{ delta: { content: 'answer' }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+        } };
+        const app = Object.assign(Object.create(ChatApp.prototype), {
+            runtime: { recordUsage: async () => {}, discardUsagePreview: async () => {} },
+            state: { models: [] },
+            inferenceService: createInferenceService({ backends: [{ ...backend, getAccessToken: () => null }] }),
+            usesTicketAccess: () => false,
+            getModelsForSession: () => [],
+            setSessionPendingProgress() {}, setInferenceHealth() {}
+        });
+        try {
+            const pending = app.streamCompletionWithRuntime([], 'test/model', { id: 'session' }, () => {}, null,
+                [], false, controller, null, null, false, 'medium', 'synthetic-request');
+            if (fault === 'stop') await assert.rejects(pending);
+            else await pending;
+            timing.finishRequestTiming(controller.signal);
+            assert.equal(dispatched, fault === 'stop' ? 1 : 2);
+            assert.equal(rows.length, 1, 'one record for the logical reply');
+            assert.equal(rows[0].outcome, fault === 'stop' ? 'cancelled' : 'complete');
+            if (fault !== 'stop') assert.equal(typeof rows[0].first_answer_ms, 'number');
+        } finally { api.options = options; api.networkTransport = transport; }
+    });
+}
+
 test.after(()=>{restore();delete globalThis.__OA_STAGING_TIMING__;});
