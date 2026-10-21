@@ -8,12 +8,12 @@ function fixture() {
         setAttribute(key, value) { this.attributes[key] = value; },
         removeAttribute(key) { delete this.attributes[key]; },
         focus() { this.focused = true; } });
-    const nodes = Object.fromEntries(['input', '[type="submit"]', '[role="alert"]', '[data-cancel]', 'form'].map(key => [key, element()]));
+    const nodes = Object.fromEntries(['#zkapi-testnet-password', '[data-remember]', '[type="submit"]', '[role="alert"]', '[data-cancel]', 'form'].map(key => [key, element()]));
     const dialog = { ...element(), querySelector: key => nodes[key],
         showModal() { this.open = true; }, close() { this.open = false; }, remove() { this.removed = true; } };
     const doc = { createElement: tag => { assert.equal(tag, 'dialog'); return dialog; },
         body: { append() {} }, activeElement: { isConnected: true, focus() {} } };
-    return { doc, dialog, input: nodes.input, error: nodes['[role="alert"]'], submit: nodes['[type="submit"]'],
+    return { doc, dialog, input: nodes['#zkapi-testnet-password'], remember: nodes['[data-remember]'], error: nodes['[role="alert"]'], submit: nodes['[type="submit"]'],
         send: () => nodes.form.events.submit({ preventDefault() {} }), cancel: () => nodes['[data-cancel]'].events.click() };
 }
 
@@ -58,6 +58,29 @@ test('cancel aborts an in-flight validation and discards the field immediately',
     finish();
     await checking;
     assert.equal(f.error.textContent, '');
+});
+
+test('the Remember choice is shown only when storage is usable and is passed to authenticate', async () => {
+    const tabOnly = fixture();
+    const options = [];
+    const first = requestTestnetPassword({ authenticate: async (_value, opts) => { options.push(opts); } }, tabOnly.doc);
+    assert.doesNotMatch(tabOnly.dialog.innerHTML, /data-remember/);
+    assert.match(tabOnly.dialog.innerHTML, /Kept only in this tab/);
+    tabOnly.input.value = 'tab-only-password';
+    await tabOnly.send();
+    await first;
+    assert.equal('remember' in options[0], false);
+
+    const offered = fixture();
+    const second = requestTestnetPassword({ remember: true, authenticate: async (_value, opts) => { options.push(opts); } }, offered.doc);
+    assert.match(offered.dialog.innerHTML, /<input type="checkbox" data-remember checked \/> Remember in this browser/);
+    assert.doesNotMatch(offered.dialog.innerHTML, /Kept only in this tab/);
+    offered.remember.checked = false;
+    offered.input.value = 'not-remembered-password';
+    await offered.send();
+    await second;
+    assert.equal(options[1].remember, false);
+    assert.equal(offered.input.value, '');
 });
 
 test('stopping the caller closes the password prompt without submitting anything', async () => {

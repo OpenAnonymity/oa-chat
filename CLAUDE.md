@@ -86,7 +86,7 @@ npm run fonts:sync
 - PascalCase for classes, camelCase for functions/methods
 - Use relative paths for assets (resolved via `<base href="/">`) — never hardcode absolute paths
 - Tailwind utilities from `tailwind.generated.css`; custom tweaks in `styles.css` with rationale
-- All persisted data flows through `chatDB`; keep transactions minimal. The zkAPI version keys listed under Key Patterns > Data Storage are the documented exception
+- All persisted data flows through `chatDB`; keep transactions minimal. The zkAPI version keys and the remembered Sepolia service password (`oa-zkapi-sepolia-access-v1`) listed under Key Patterns > Data Storage are the documented exceptions
 
 ## Key Patterns
 
@@ -101,6 +101,7 @@ npm run fonts:sync
   - localStorage `oa-zkapi-upgrade-reminder-v1`: last reminder tier shown per `network:versionId` (a per-viewer convenience)
   - sessionStorage `oa-zkapi-running-modal` and `oa-zkapi-welcome-modal` (existing): gain a `{network, versionId}` stamp only on a multi-version build; a mismatching stamp is ignored, an unstamped entry stays valid
 - zkAPI wallet database `zkapi-browser-wallet-<lineage>-<network>-v1` is the SDK's, shared by every protocol version; this app's own code only reads it (version-less open that never creates or upgrades; the other versions' payment history is read the same way and kept in memory), plus two guarded writes under the SDK's wallet lock: the automatic discard of an unused deposit draft, and the user-confirmed give-up of a zero or dust balance (through the SDK's own archive transaction; no in-app undo)
+- localStorage `oa-zkapi-sepolia-access-v1`: the shared Sepolia service password, `{v, service, password}`, saved only when the person keeps "Remember in this browser" checked and read only for the same Sepolia protocol server (never on Mainnet, never synced); see `docs/SEPOLIA_AUTH.md`
 - zkAPI exit kits, held refusals, the "kit not saved" flag and foreign history rows are memory only: no new storage key; the kit passphrase and text are never stored or logged
 
 **Access Keys:**

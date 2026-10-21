@@ -5,7 +5,7 @@ import { createZkapiBackend } from './inference/backends/zkapiBackend.js';
 import { ZkapiAPI } from '../api.js';
 import { createPaymentModeRuntimeCore, PAYMENT_MODE_PREFERENCE } from './paymentModeRuntimeCore.mjs';
 
-export function createPaymentModeRuntime() {
+export function createPaymentModeRuntime({ initializeClient } = {}) {
     let storage = null;
     let initialMode = 'tickets';
     try {
@@ -25,6 +25,7 @@ export function createPaymentModeRuntime() {
             ? 'zkapi' : 'openrouter',
         resolveDefaultModelConfig: () => modelConfiguration.getDefaultModelConfig()
     });
-    return createPaymentModeRuntimeCore({ zkRuntime: createZkapiChatRuntime({ backend: zkapiBackend, modelConfiguration }), inferenceService,
+    const zkRuntime = createZkapiChatRuntime({ backend: zkapiBackend, modelConfiguration, ...(initializeClient ? { initializeClient } : {}) });
+    return createPaymentModeRuntimeCore({ zkRuntime, inferenceService,
         acquireVerifiedAccess, modelConfiguration, preferenceStorage: storage, initialMode });
 }

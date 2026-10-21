@@ -127,7 +127,7 @@ npm run fonts:sync       # sync Google Fonts into chat/fonts (optional URL arg)
 - Reuse Tailwind utility patterns established in `index.html`; put tweaks in `styles.css` with concise rationale.
 - Update `tailwind.generated.css` via `npm run tailwind:build` after changes to Tailwind config or classes.
 - Manage Google Fonts via `npm run fonts:sync` instead of manual edits in `chat/fonts`.
-- Persisted data goes through `chatDB` in `db.js`; follow existing object store patterns and keep transactions minimal and readable. The only exception is the small set of zkAPI version keys in `sessionStorage`/`localStorage` (see Notes & Shortcuts): boot reads them before `chatDB` opens, and none is synced.
+- Persisted data goes through `chatDB` in `db.js`; follow existing object store patterns and keep transactions minimal and readable. The only exceptions are the small set of zkAPI version keys in `sessionStorage`/`localStorage` (see Notes & Shortcuts), which boot reads before `chatDB` opens, and the remembered Sepolia service password in `localStorage` `oa-zkapi-sepolia-access-v1` (see Notes & Shortcuts and [docs/SEPOLIA_AUTH.md](docs/SEPOLIA_AUTH.md)); none is synced.
 - Keep code small and modular; avoid duplicating functionality already encapsulated in components/services.
 
 ## Testing Guidelines
@@ -171,6 +171,7 @@ same change so the next agent inherits the latest behavior, constraints, and les
   - ⌘⇧C copy latest assistant markdown (temporarily disabled), ⌘⇧⌫ clear chat (temporarily disabled).
 - Right panel visibility is persisted in `localStorage` (`oa-right-panel-visible`); theme preference in `localStorage` (`oa-theme-preference`); wide mode in `localStorage` (`oa-wide-mode`); proxy settings in `localStorage` (`oa-network-proxy-settings`).
 - Network logs are memory-only (tab-scoped) in this release to keep storage small and predictable.
+- The shared Sepolia service password may be remembered in `localStorage` `oa-zkapi-sepolia-access-v1` (opt-out checkbox in its dialog), bound to the Sepolia protocol server URL, never read on Mainnet and never synced. See [docs/SEPOLIA_AUTH.md](docs/SEPOLIA_AUTH.md).
 - zkAPI version keys (read before `chatDB` opens; never synced; ids, enums and a stage only, always inside try/catch): `sessionStorage` `oa-zkapi-version-switch` (one-shot hint for the next boot) and `oa-zkapi-version-switch-log` (loop guard: switch and discard timestamps), `localStorage` `oa-zkapi-upgrade-v1` (guided-upgrade intent, expires after 45 days) and `oa-zkapi-upgrade-reminder-v1` (last reminder tier per version). The existing `oa-zkapi-running-modal` and `oa-zkapi-welcome-modal` entries gain a `{network, versionId}` stamp on multi-version builds. The version-2 behaviors added no key; the SDK's own `zkapi-exit-rpc-url` is never read or written by this app. Details and lifetimes: [docs/ZKAPI_VERSIONING.md](docs/ZKAPI_VERSIONING.md) section 8.
 
 ## Temporary staging experiment restriction

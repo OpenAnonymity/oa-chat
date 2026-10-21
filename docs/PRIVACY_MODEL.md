@@ -614,8 +614,13 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 
 Sepolia deployments can require one shared testnet password before granting
 service access. This is a cohort access credential, not a user account or a
-wallet ownership proof. The browser keeps it in memory; the CLI can retain it
-in an owner-only local file outside account synchronization. Clients send it
+wallet ownership proof. By default the browser remembers it in `localStorage`,
+bound to the Sepolia protocol service that accepted it and never read for
+Mainnet or another service; unchecking **Remember in this browser** keeps it
+in memory for the tab only. The saved value is outside account synchronization
+and activity logs, but same-origin scripts and anyone with access to the
+browser profile can read it. The CLI can retain it in an owner-only local file
+outside account synchronization. Clients send it
 only to the configured Sepolia zkAPI protocol service, never to Ethereum RPC,
 the OA org, the verifier, or the inference provider. Password headers are
 redacted from client activity logs. TLS intermediaries terminating the
