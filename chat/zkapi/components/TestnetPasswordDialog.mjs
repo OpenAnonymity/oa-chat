@@ -1,7 +1,11 @@
-/** The SDK owns validation and memory-only retention. This form never puts a
- * password into a URL, HTML string, storage record, account or log. */
-export function requestTestnetPassword({ authenticate, signal }, doc = document) {
+/** The SDK owns validation and in-memory retention. This form never puts a
+ * password into a URL, HTML string, account or log. When `remember` is a
+ * boolean, browser storage is usable: the form shows the "Remember" choice
+ * and passes it to `authenticate`, whose caller (testnetPasswordMemory)
+ * saves or forgets the accepted value. */
+export function requestTestnetPassword({ authenticate, signal, remember }, doc = document) {
     signal?.throwIfAborted();
+    const offerRemember = typeof remember === 'boolean';
     const dialog = doc.createElement('dialog');
     dialog.className = 'zkapi-testnet-password-dialog';
     dialog.setAttribute('aria-labelledby', 'zkapi-testnet-password-title');
@@ -10,14 +14,18 @@ export function requestTestnetPassword({ authenticate, signal }, doc = document)
         <p>Enter the shared password to use this testnet service.</p>
         <label for="zkapi-testnet-password">Password</label>
         <input id="zkapi-testnet-password" type="password" autocomplete="off" maxlength="1024" required aria-describedby="zkapi-testnet-password-note zkapi-testnet-password-error" />
-        <p id="zkapi-testnet-password-note">Kept only in this tab until you reload or close it.</p>
+        ${offerRemember ? `<label class="zkapi-testnet-password-remember"><input type="checkbox" data-remember ${remember ? 'checked' : ''} /> Remember in this browser</label>` : ''}
+        <p id="zkapi-testnet-password-note">${offerRemember
+            ? 'Saved on this device for Sepolia only, so a reload does not ask again. Uncheck to keep it only in this tab.'
+            : 'Kept only in this tab until you reload or close it.'}</p>
         <p id="zkapi-testnet-password-error" role="alert"></p>
         <div class="zkapi-testnet-password-actions">
             <button type="button" data-cancel class="zkapi-secondary-button">Cancel</button>
             <button type="submit" class="zkapi-primary-button">Unlock Sepolia</button>
         </div>
     </form>`;
-    const input = dialog.querySelector('input');
+    const input = dialog.querySelector('#zkapi-testnet-password');
+    const rememberBox = offerRemember ? dialog.querySelector('[data-remember]') : null;
     const submit = dialog.querySelector('[type="submit"]');
     const message = dialog.querySelector('[role="alert"]');
     const previousFocus = doc.activeElement;
@@ -54,7 +62,9 @@ export function requestTestnetPassword({ authenticate, signal }, doc = document)
             message.textContent = '';
             input.removeAttribute('aria-invalid');
             try {
-                await authenticate(input.value, { signal: controller.signal });
+                await authenticate(input.value, rememberBox
+                    ? { signal: controller.signal, remember: rememberBox.checked === true }
+                    : { signal: controller.signal });
                 if (!finished) finish();
             } catch (error) {
                 if (finished) return;

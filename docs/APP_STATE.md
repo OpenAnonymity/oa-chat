@@ -97,6 +97,36 @@
   (`flow.error`) in a literal slot without the normalizer (a vm-evaluated
   source with a pinned import list); no such error is known to name MetaMask.
 
+## October 21, 2026 — Sepolia password remembered across reloads
+
+Staging (Sepolia) asked for the shared service password on every reload. The
+host now remembers an accepted password in `localStorage`
+`oa-zkapi-sepolia-access-v1`, bound to the Sepolia protocol server URL, and
+offers it once after the first successful wallet client start
+(`chat/zkapi/services/testnetPasswordMemory.mjs`, wired in `chat/zkapi/index.js`
+through `createPaymentModeRuntime({ initializeClient })`). Details and edge
+cases: [SEPOLIA_AUTH.md](SEPOLIA_AUTH.md).
+
+- The SDK still owns validation and the in-memory credential; the module only
+  wraps the `requestTestnetPassword` callback. The vm-evaluated
+  `walletMethod.mjs` and `WalletMethodControls.js` are unchanged.
+- Restoration never opens a dialog. **Change Sepolia password** always does;
+  its **Remember in this browser** checkbox replaces the entry (checked) or
+  deletes it (unchecked). A 401 for the saved value deletes it; network errors
+  keep it. The checkbox is hidden when storage refuses a write.
+- The key is shared by every tab: automatic removal (401, failed save)
+  compares the stored string with the snapshot that tab read and deletes only
+  on an exact match, so a delayed 401 cannot erase a newer password another tab
+  saved, or another service's entry. The explicit opt-out clears only this
+  service's entry.
+- Mainnet never reads or writes the key. Not in chatDB, account sync or
+  `SYNCABLE_PREF_KEYS`.
+- The "Enter/Change Sepolia password" label follows `zkapiClient.testnetAuthenticated`, which
+  is set before the runtime's first publish because restoration runs inside its
+  `initializeClient`.
+- Manual check still needed: reload staging after unlocking, with Remember
+  checked and unchecked, in a normal and a private window.
+
 ## October 20, 2026 — PR31 leaf-bound Sepolia integration
 
 The `leaf-bound-v2` host adapter distinguishes PR31's revision-4 ABI from the
