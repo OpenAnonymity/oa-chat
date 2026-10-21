@@ -1,3 +1,99 @@
+## October 21, 2026 — current balance shown as zkAPI v0.2, with a working `?`
+
+- Product decision: the current PR31 balance (registry row `v4`, protocol
+  `0.4`, adapter `leaf-bound-v2`) is SHOWN as "zkAPI v0.2". It is a UI
+  display override, one entry in `DISPLAY_PROTOCOL_VERSIONS` /
+  `displayProtocolVersion` (chat/zkapi/versioning/copy.mjs), keyed by the id
+  AND the registry protocol version so an edited row stops matching. The
+  registry, `protocolVersion`, routes, records, build and protocol checks are
+  unchanged; there is no registry field for it. Older rows keep their names
+  (v1 "zkAPI v0.1", v2 "zkAPI v0.2", v3 "zkAPI v0.3").
+- The pill's `?` is the shared help button again (not a tooltip), opening a
+  short panel beside the expiry help in balance details: click, tap, Enter or
+  Space toggle it; Escape closes it before the dialog and returns focus; an
+  outside click closes it; `privateBalanceHelpOpen.version` keeps it open
+  across renders (AccountModal.renderVersionBadge, attachPrivateBalanceHelp).
+  The System Panel and Welcome still show no pill.
+- The help names versions as the pill does ("Your balance is on zkAPI v0.2,
+  the latest version."; an older balance: on zkAPI v0.1, new deposits go to
+  zkAPI v0.2, withdraw and deposit again). Version 2 beside version 4 share a
+  name, so that help says "an earlier build" instead of repeating it. Without
+  a protocol version both fall back to the registry name ("version 1").
+- `.zkapi-version-pill` sets `text-transform: none`: `.zkapi-pill`'s
+  `capitalize` printed "ZkAPI V0.2". The other pills are unchanged.
+- Not changed: the banners and closed-deposit texts still say "version N" from
+  the registry label (a v3 balance reads "Deposits moved to version 4").
+  `displayProtocolVersion` is the helper to use if those words should follow.
+- This supersedes the tooltip-only `?` of the October 15 and 17 entries below.
+- A missing `}` had left `@media (prefers-reduced-motion: reduce)` open from
+  the dialog accordion rule (zkapi.css ~2546) to the end of the file, so the
+  version, banner, sheet and balance-extras rules applied only to
+  reduced-motion users and `text-transform: none` never took effect for
+  others. The brace is restored; `test/zkapi/zkapi-css-structure.test.mjs`
+  parses zkapi.css with postcss (from the pinned tailwindcss devDependency)
+  and checks that the version rules are top level and the pill resolves to
+  `none` with and without reduced motion. A separate orphan `to {…} }` after
+  `@keyframes settingsTipIn` in chat/styles.css (~9287) makes browsers drop
+  the next Settings rule; it predates this work and is left for its owner.
+
+## October 21, 2026 — Send to address withdrawals pay from the withdrawal
+
+- In Withdraw, Send to address on a balance whose version pins a reviewed
+  sponsorship (`sponsoredApi()` supported; today version 4 on Sepolia) has no
+  fee choice: "Paid by your wallet" is gone and the fee is paid from the
+  withdrawal (ERC-4337, the existing sponsored flow). The person types the
+  destination; Continue checks the fee for exactly that destination
+  (making the browser-held signing key on first use; it needs no ETH and no
+  wallet is connected), opens the review, and only the review's explicit
+  confirmation starts anything. One rule decides it everywhere:
+  `AccountModal.addressPayoutOnly()` (method `address`, view `withdraw`,
+  sponsorship supported); `needsWithdrawalFees`, the destination-only "To"
+  field and the fee section read the same rule.
+- Legacy exception: a version without a reviewed sponsorship (mainnet
+  version 1, the earlier Sepolia versions, a page without the facade) keeps
+  the Send to address route it always had, unchanged: the funding-address
+  signer, the ordinary fee line, no fee section and no "unavailable" notice.
+  The upgrade view's embedded withdrawal and every saved plan also continue
+  the way they were prepared.
+- A refused quote on a sponsored version shows the reason and "Check again";
+  a new withdrawal also gets "Use Ethereum wallet" (a method switch) only for
+  a refusal a wallet can cure (`walletCanCureRefusal`, the inverse of the
+  no-wallet-hint set). A saved payout plan (`locked`) never offers the switch:
+  it is bound to the key that prepared it, and its line says so.
+- `refreshSponsoredQuote` reads the destination once and re-checks method,
+  mode, note, balance and destination after each await (key creation, quote);
+  stale work is dropped and its "Checking…" cleared, so a quote for A is never
+  filed under B. Tests: `test/zkapi/withdrawal-send-to-address.test.mjs`
+  (including a deferred `ensureAddress` A→B edit), and the original
+  `withdrawal-fees.test.mjs`, which pins the unchanged legacy route.
+- Consequences to know: on a sponsored version a Send to address withdrawal
+  always reaches the operator's relay (docs/PRIVACY_MODEL.md), so such an
+  escape is not independent of the operator; the Ethereum wallet method keeps
+  that independence. A relay refusal (balance below the fee, uneconomic,
+  paused paymaster) leaves Send to address no way through but Ethereum wallet.
+
+## October 21, 2026 — "Ethereum wallet" everywhere
+
+- Every app string that said MetaMask now says "Ethereum wallet" ("Your
+  Ethereum wallet account", "Connect your Ethereum wallet", "Continue in your
+  Ethereum wallet", "I closed the Ethereum wallet prompt"), including the
+  confirm() dialogs, the setup guide (its links still go to MetaMask's
+  install and buying guides) and the commercial Terms ("third-party Ethereum
+  wallets").
+- The pinned SDKs and the recovery patch still emit "MetaMask"; they are not
+  edited. `walletMethodText` (services/walletMethod.mjs) now applies a
+  case-sensitive, idempotent normalizer for both methods before Send to
+  address's own wording, whose keys were re-keyed to the new words. Lowercase
+  identifiers (`metamask` method value, `data-wallet-method`, classes,
+  metamask.io links) are untouched. The panel's raw SDK error and the welcome
+  panel's "Payment service" line now pass through it too; the journey
+  classifier (domain/walletJourney.js) accepts both the SDK's and the app's
+  wording. `test/zkapi/ethereum-wallet-wording.test.mjs` scans every app
+  string literal with acorn so no MetaMask wording creeps back.
+- Residual: `WalletMethodControls.js` renders a deposit amount error
+  (`flow.error`) in a literal slot without the normalizer (a vm-evaluated
+  source with a pinned import list); no such error is known to name MetaMask.
+
 ## October 20, 2026 — PR31 leaf-bound Sepolia integration
 
 The `leaf-bound-v2` host adapter distinguishes PR31's revision-4 ABI from the

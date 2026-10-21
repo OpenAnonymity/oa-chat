@@ -95,13 +95,13 @@ test('setup stays one disclosure and uses ETH on Mainnet and Sepolia', () => {
     const mainnet = fundingSetupGuide({ mainnet: true });
     assert.equal((mainnet.match(/data-funding-disclosure=/g) || []).length, 1);
     assert.equal((mainnet.match(/<li>/g) || []).length, 3);
-    assert.match(mainnet, /Add ETH to MetaMask/);
+    assert.match(mainnet, /Add ETH to your Ethereum wallet/);
     assert.doesNotMatch(mainnet, /USDC|Approve/);
     assert.doesNotMatch(mainnet, /Buying options|identity checks|show you the network fee/);
     const sepolia = fundingSetupGuide({ mainnet: false, scope: 'welcome' });
     assert.match(sepolia, /Get Sepolia ETH/);
     assert.match(sepolia, /zkapi-welcome-setup/);
-    assert.doesNotMatch(sepolia, /How to buy in MetaMask|demo|test token|billing token/i);
+    assert.doesNotMatch(sepolia, /How to buy in (?:MetaMask|your Ethereum wallet)|demo|test token|billing token/i);
     assert.match(fundingDisclosure({ key: 'history', label: 'Payment history', body: 'History' }), /aria-expanded="false"/);
 });
 

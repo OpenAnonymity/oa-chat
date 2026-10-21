@@ -34,7 +34,7 @@ export function initWalletMethod() {
 // during every async operation, including harmless price and fee reads.
 // Wallet actions and scoped address quotes activate their provider separately.
 export function setWalletMethod(next) {
-    if (!['metamask', 'address'].includes(next)) throw new Error('Choose MetaMask or Send Ethereum.');
+    if (!['metamask', 'address'].includes(next)) throw new Error('Choose Ethereum wallet or Send to address.');
     if (next === method) return;
     if (walletAction) throw new Error('Finish the current transaction before changing payment methods.');
     if (addressFundingWallet.hasPendingTransaction) throw new Error('Check the saved funding transaction before changing methods.');
@@ -99,7 +99,7 @@ export async function prepareWalletMethod() {
         try { await addressFundingWallet.reload(); }
         catch (error) { if (method === 'address') throw error; }
         if (addressFundingWallet.hasPendingTransaction && method !== 'address') {
-            throw new Error('Check the saved funding transaction before using MetaMask.');
+            throw new Error('Check the saved funding transaction before using your Ethereum wallet.');
         }
         await waitForSelectedProvider();
         if (method === 'address') await addressFundingWallet.ensureAddress();
@@ -110,28 +110,58 @@ export async function prepareWalletMethod() {
     }
 }
 
+// The wallet is named "Ethereum wallet" on screen, whichever extension it is.
+// The SDK and its patches still say "MetaMask"; this rewrites that wording for
+// display only. Case-sensitive, so ids, classes, method values ("metamask")
+// and URLs are never touched; idempotent, so text that passes twice is safe.
+function ethereumWalletText(value) {
+    return String(value ?? '')
+        .replace(/\bMetaMask was not detected\. Install or enable it\b/g, 'No Ethereum wallet was detected. Install or enable one')
+        .replace(/\bI closed MetaMask\b/g, 'I closed the Ethereum wallet prompt')
+        .replace(/\bChoose MetaMask or Send Ethereum\./g, 'Choose Ethereum wallet or Send to address.')
+        .replace(/\bPaused before MetaMask\./g, 'Paused before the Ethereum wallet prompt.')
+        .replace(/\bwhile MetaMask confirmations\b/g, 'while Ethereum wallet confirmations')
+        .replace(/\bMetaMask wallet\b/g, 'Ethereum wallet')
+        .replace(/\b([Ii]nstall) MetaMask\b/g, '$1 an Ethereum wallet')
+        .replace(/\b([Ww]ith) MetaMask\b/g, '$1 Ethereum wallet')
+        .replace(/\bA MetaMask\b/g, 'An Ethereum wallet')
+        .replace(/\ba MetaMask\b/g, 'an Ethereum wallet')
+        .replace(/\b(the|The|your|Your|its|Its|this|This|that|another|Another|any|Any)((?: (?:old|new|earlier|previous|selected|outstanding|hashless|same|other|connected))?) MetaMask\b/g,
+            (match, determiner, adjective) => `${determiner}${adjective} Ethereum wallet`)
+        .replace(/(^|[.!?…]\s+|>\s*|[“"(]\s*)MetaMask\b/g, '$1Your Ethereum wallet')
+        .replace(/\bMetaMask\b/g, 'your Ethereum wallet');
+}
+
 // Adapt presentation only; the SDK journal and verification phases are shared.
+// Every method reads "Ethereum wallet"; Send to address then reads its own
+// words for the wallet steps it does not have.
 export function walletMethodText(value) {
-    const text = String(value ?? '');
+    const text = ethereumWalletText(value);
     if (method !== 'address') return text;
     return text
-        .replaceAll('Connecting to MetaMask…', 'Preparing your funding address…')
-        .replaceAll('Connect MetaMask', 'Prepare funding address')
-        .replaceAll('Waiting for MetaMask…', 'Preparing transaction…')
-        .replaceAll('Waiting for MetaMask', 'Preparing transaction')
-        .replaceAll('Use MetaMask once', 'Fund your address once')
-        .replaceAll('Install MetaMask to get started', 'Send ETH to your funding address')
-        .replaceAll('MetaMask may still be open in this or another tab.', 'Check your saved funding transaction before retrying.')
-        .replaceAll('Continue with MetaMask', 'Deposit')
-        .replaceAll('Try again with MetaMask', 'Retry deposit')
-        .replaceAll('Resume with MetaMask', 'Resume deposit')
-        .replaceAll('Continue in MetaMask', 'Continue withdrawal')
-        .replaceAll('Finalize in MetaMask', 'Finalize withdrawal')
-        .replaceAll('Returned to MetaMask', 'Returned to your withdrawal address')
-        .replaceAll('returned to MetaMask', 'sent to your withdrawal address')
-        .replaceAll('Return the remaining balance to MetaMask', 'Send the remaining balance to your withdrawal address')
-        .replaceAll('MetaMask prompt was closed', 'Recover interrupted request')
-        .replaceAll('Try again in MetaMask', 'Retry saved deposit')
-        .replaceAll('Open MetaMask from your browser toolbar to check the request. If its window closed, use “Recover withdrawal” below.', 'Check the saved withdrawal below. If you started it in a wallet extension, check its pending request before recovering.')
-        .replaceAll('MetaMask', 'your funding account');
+        .replaceAll('Connecting to your Ethereum wallet…', 'Preparing your funding address…')
+        .replaceAll('Connect your Ethereum wallet', 'Prepare funding address')
+        .replaceAll('Waiting for your Ethereum wallet…', 'Preparing transaction…')
+        .replaceAll('Waiting for your Ethereum wallet', 'Preparing transaction')
+        .replaceAll('Use your Ethereum wallet once', 'Fund your address once')
+        .replaceAll('Install an Ethereum wallet to get started', 'Send ETH to your funding address')
+        .replaceAll('Your Ethereum wallet may still be open in this or another tab.', 'Check your saved funding transaction before retrying.')
+        .replaceAll('Continue with Ethereum wallet', 'Deposit')
+        .replaceAll('Try again with Ethereum wallet', 'Retry deposit')
+        .replaceAll('Resume with Ethereum wallet', 'Resume deposit')
+        .replaceAll('Continue in your Ethereum wallet', 'Continue withdrawal')
+        .replaceAll('Finalize in your Ethereum wallet', 'Finalize withdrawal')
+        .replaceAll('Returned to your Ethereum wallet', 'Returned to your withdrawal address')
+        .replaceAll('returned to your Ethereum wallet', 'sent to your withdrawal address')
+        .replaceAll('Return the remaining balance to your Ethereum wallet', 'Send the remaining balance to your withdrawal address')
+        .replaceAll('Your Ethereum wallet prompt was closed', 'Recover interrupted request')
+        .replaceAll('Try again in your Ethereum wallet', 'Retry saved deposit')
+        .replaceAll('Open your Ethereum wallet from your browser toolbar to check the request. If its window closed, use “Recover withdrawal” below.', 'Check the saved withdrawal below. If you started it in a wallet extension, check its pending request before recovering.')
+        .replaceAll('the Ethereum wallet account', 'your funding account')
+        .replaceAll('your Ethereum wallet account', 'your funding account')
+        .replaceAll('Your Ethereum wallet account', 'Your funding account')
+        .replaceAll('an Ethereum wallet', 'your funding account')
+        .replaceAll('the Ethereum wallet', 'your funding account')
+        .replaceAll('Your Ethereum wallet', 'Your funding account')
+        .replaceAll('your Ethereum wallet', 'your funding account');
 }

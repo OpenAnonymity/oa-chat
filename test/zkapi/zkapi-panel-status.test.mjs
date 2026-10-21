@@ -155,7 +155,7 @@ test('persisted MetaMask prompts use visible neutral progress, including after r
     ]) {
         const html = renderPanel({ config, wallet: config.pending_deposit ? { note: null } : snapshot().wallet });
         assert.match(html, /class="zkapi-wallet-status" role="status"/);
-        assert.match(html, />Waiting for MetaMask<\/span>/);
+        assert.match(html, />Waiting for your Ethereum wallet<\/span>/);
         assert.doesNotMatch(html, /bg-amber-100/);
     }
 });

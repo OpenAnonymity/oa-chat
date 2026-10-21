@@ -76,7 +76,11 @@ export const SPONSORED_REASON_COPY = Object.freeze({
     unknown: 'Paying the network fee from this withdrawal isn’t available right now.'
 });
 
-const KEEP_WALLET = ' You can pay the network fee from your wallet instead.';
+// The hint a refusal ends with. Send to address has no wallet to fall back on
+// (its fee is paid from the withdrawal only), so its fee line drops this hint
+// and points at the Ethereum wallet method instead (components/SponsoredFee.js).
+export const SPONSORED_WALLET_HINT = ' You can pay the network fee from your wallet instead.';
+const KEEP_WALLET = SPONSORED_WALLET_HINT;
 // Refusals that are about a withdrawal already started, or that a wallet
 // cannot cure: the hint would be wrong.
 const NO_WALLET_HINT = new Set(['gasless_plan_mismatch', 'gasless_record_not_pinned', 'wrong_owner_account',
@@ -85,6 +89,13 @@ const NO_WALLET_HINT = new Set(['gasless_plan_mismatch', 'gasless_record_not_pin
     'withdrawal_wallet_pending', 'escape_not_due', 'gasless_fee_bump_exhausted', 'gasless_op_reverted', 'signature_rejected',
     'bundler_hash_mismatch', 'paymaster_time_window', 'transit_funds_waiting', 'transit_sweep_needed',
     'transit_not_stranded', 'transit_balance_empty']);
+
+/** Whether paying with a wallet could get past this refusal (it is not about
+ *  a withdrawal already started or a cause a wallet cannot cure). */
+export function walletCanCureRefusal(reason) {
+    const key = typeof reason === 'string' && Object.hasOwn(SPONSORED_REASON_COPY, reason) ? reason : 'unknown';
+    return !NO_WALLET_HINT.has(key);
+}
 
 /** The line for a refusal reason of the SDK (always one; unknown codes read as unavailable). */
 export function sponsoredReasonText(reason) {

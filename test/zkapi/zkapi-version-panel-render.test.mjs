@@ -213,10 +213,13 @@ test('balance details always name the version held, with quiet badges elsewhere'
     const html = renderVersionBadge(state, { surface: 'panel' });
     // The pill names the zkAPI protocol version, not the registry label.
     assert.match(html, /data-zkapi-version-badge[^>]*data-zkapi-version-tone="muted"[^>]*>zkAPI v0\.1<\/span>/);
-    // The `?` is a tooltip: no help toggle, nothing that opens.
-    assert.match(html, /aria-label="The zkAPI protocol version this balance uses"/);
-    assert.doesNotMatch(html, /data-zkapi-help=|aria-expanded|aria-controls/);
-    assert.match(renderVersionBadge(state, { surface: 'dialog', helpOpen: true }), />zkAPI v0\.1<\/span>/);
+    // The `?` is the shared help button: a disclosure toggle, not a tooltip.
+    assert.match(html, /<button id="zkapi-panel-version-help-toggle" data-zkapi-help="version" type="button"/);
+    assert.match(html, /aria-expanded="false" aria-controls="zkapi-panel-version-help">\?<\/button>/);
+    assert.doesNotMatch(html, /role="img"|The zkAPI protocol version this balance uses/);
+    const dialogBadge = renderVersionBadge(state, { surface: 'dialog', helpOpen: true });
+    assert.match(dialogBadge, />zkAPI v0\.1<\/span>/);
+    assert.match(dialogBadge, /id="zkapi-modal-version-help-toggle"[^>]*aria-expanded="true" aria-controls="zkapi-modal-version-help"/);
     // A row without a protocol version falls back to its label.
     const unlabelled = { ...state, current: { ...state.current, protocolVersion: null } };
     assert.match(renderVersionBadge(unlabelled, { surface: 'panel' }), />Version 1<\/span>/);
@@ -243,19 +246,22 @@ test('the pill is always muted: it names a protocol, it does not prompt', () => 
 });
 
 test('the version help says which version the balance is on, and what an upgrade is', () => {
+    // Versions are named the way the pill names them (zkAPI v0.1, v0.2).
     const previous = versionHelp('version', holderWith(30 * DAY), { table: TABLE });
     assert.equal(previous.title, 'About versions');
-    assert.match(previous.body, /Your balance is on version 1\./);
-    assert.match(previous.body, /new deposits go to version 2/);
-    assert.match(previous.body, /withdraw your balance and deposit again/);
+    assert.match(previous.body, /Your balance is on zkAPI v0\.1\./);
+    assert.match(previous.body, /new deposits go to zkAPI v0\.2, the latest version/);
+    assert.match(previous.body, /withdraw it and deposit again/);
     const current = versionHelp('version', derive({ active: V2, selection: selectionFor(V2) }), { table: TABLE });
-    assert.match(current.body, /Your balance is on version 2, the latest version\./);
+    assert.match(current.body, /Your balance is on zkAPI v0\.2, the latest version\./);
+    // Without the table the target has no protocol version: its registry name.
+    assert.match(versionHelp('version', holderWith(30 * DAY)).body, /new deposits go to version 2, the latest version/);
     assert.equal(versionHelp('billing', holderWith(DAY)), null);
     assert.match(versionHelp('version').body, /can’t move between versions/);
     // The disclosure is the shared help content, with the state's words.
     const content = privateBalanceHelpContent('panel', 'version', true, previous);
     assert.match(content, /id="zkapi-panel-version-help" data-zkapi-help-content="version" >/);
-    assert.match(content, /Your balance is on version 1\./);
+    assert.match(content, /Your balance is on zkAPI v0\.1\./);
 });
 
 // ---------------------------------------------------------------------------
@@ -679,7 +685,7 @@ test('versionUi keeps its member names and fills facts the caller does not pass'
     assert.match(withFlags.ui.banner(state, { surface: 'dialog', now: NOW_MS }), /Cleared an unused deposit quote/);
     // help without a state reads the facade's.
     const helped = fakeFacade({ state: holderWith(8 * DAY) });
-    assert.match(helped.ui.help('version').body, /Your balance is on version 1\./);
+    assert.match(helped.ui.help('version').body, /Your balance is on zkAPI v0\.1\./);
     assert.match(fakeFacade({ state: null }).ui.help('version').body, /can’t move between versions/);
     // Host markup reaches the banner through protocolNotices.
     const extended = createVersionUi({ facade, protocolNotices: () => '<p data-extra>kit</p>' });

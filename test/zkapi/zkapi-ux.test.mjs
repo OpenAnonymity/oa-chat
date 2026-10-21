@@ -202,7 +202,7 @@ test('withdrawal and escape-hatch states stay visible outside their modal', () =
     assert.equal(prepared.primary.phase, 'withdrawal');
     assert.equal(prepared.primary.blocksSend, true);
     assert.deepEqual(prepared.journey.map(step => step.label), [
-        'Withdrawal prepared', 'Finish in MetaMask', 'Update balance'
+        'Withdrawal prepared', 'Finish in your Ethereum wallet', 'Update balance'
     ]);
     assert.equal(prepared.journey[1].state, 'active');
 
@@ -490,7 +490,7 @@ test('guided progress for a frozen balance names the three things that are true 
         ['resume', 'Chats resume', 'upcoming']
     ]);
     // Never the steps of a prepared withdrawal, which would say something to finish in MetaMask.
-    assert.doesNotMatch(state.journey.map(step => step.label).join(' '), /MetaMask|prepared|proof/i);
+    assert.doesNotMatch(state.journey.map(step => step.label).join(' '), /MetaMask|Ethereum wallet|prepared|proof/i);
 });
 
 test('every proposal says the same thing about a frozen balance and keeps its own name', () => {
@@ -607,7 +607,7 @@ test('guided progress for a balance used on another device promises no resume an
         ['used', DEVICE_LABEL, 'complete'],
         ['newest', 'Use the newest copy', 'active']
     ]);
-    assert.doesNotMatch(state.journey.map(step => step.label).join(' '), /resume|MetaMask|prepared|proof|frozen/i);
+    assert.doesNotMatch(state.journey.map(step => step.label).join(' '), /resume|MetaMask|Ethereum wallet|prepared|proof|frozen/i);
     // The same balance that no other device has used keeps its three steps.
     const frozen = shapesVersion('mutual_lock_with_ownership_proof');
     const kept = deriveZkapiUxState({

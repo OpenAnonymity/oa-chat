@@ -611,6 +611,15 @@ export function renderMetaMaskTransfer(owner) {
     </div>`;
 }
 
+// The withdraw form's "To": one field, like a wallet's send screen. A saved
+// withdrawal keeps the destination it was prepared with.
+function withdrawalDestinationField(owner, { escape, network, disabled }) {
+    const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
+    return `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span>
+        <div class="zkapi-return-field"><input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="Your wallet address (0x…)" aria-label="Your wallet address on ${escape(network)}" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} />${savedDestination ? '' : `<button data-funding-withdrawal-paste class="zkapi-paste-button" type="button" ${disabled}>Paste</button>`}</div>
+        ${savedDestination ? '<p class="zkapi-helper">This withdrawal keeps its saved destination.</p>' : `<p class="zkapi-withdraw-to-hint">An address on ${escape(network)}. Withdrawals can’t be reversed.</p>`}</div>`;
+}
+
 export function renderFundingAccount(owner, { destination = true, rows = true, pending = true, receipt: receiptOnly = false } = {}) {
     const native = true;
     // The funding asset's symbol, read only by the branches of a token flow.
@@ -630,6 +639,13 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         <button data-funding-migrate class="zkapi-primary-button w-full" type="button" ${disabled}>Use this address</button>
     </section>`;
     if (!wallet.address && zkapiClient.note && owner.view !== 'withdraw') return '';
+    // Send to address paying from the withdrawal (owner.addressPayoutOnly):
+    // the key this browser holds only signs it and needs no ETH, and Continue
+    // makes one where none exists yet, so the destination is asked for first.
+    // A version without a sponsorship keeps the funding-address form below.
+    if (!wallet.address && owner.view === 'withdraw' && destination && owner.addressPayoutOnly?.() === true) {
+        return `<section class="zkapi-funding-account" aria-label="Withdrawal destination">${withdrawalDestinationField(owner, { escape, network, disabled })}</section>`;
+    }
     if (!wallet.address) return `<section class="zkapi-funding-account"><p class="zkapi-helper" role="status">${escape(flow?.error || (native ? 'Preparing your address…' : 'ETH funding is not available on this deployment yet.'))}</p></section>`;
     const intent = flow?.intent;
     // receiptOnly: a deposit is under way, so the address shows as a receipt
@@ -690,7 +706,6 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const sendsAmount = !ready && !displayedRequiredCovered && recommendedRemaining != null && recommendedRemaining > 0n;
     const sendHeading = ready ? 'Ready to deposit' : displayedRequiredCovered ? 'Funds received' : recommendedRemaining == null ? 'Checking your funding address…' : recommendedRemaining === 0n ? 'Funds available'
         : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(sendEthText(remaining))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
-    const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
     // The whole address stays visible: it wraps on a narrow screen rather
     // than hiding its tail. Copy answers on the button itself (copy → check);
     // nothing else on the page moves. Only a blocked clipboard adds a line.
@@ -782,10 +797,8 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         `${renderFundingReceipt(owner)}${owner.view === 'upgrade' && ['review', 'withdrawing'].includes(owner.upgradeStage)
             ? '<p class="zkapi-note">If more ETH is needed for the withdrawal fee, send it to this address from your own wallet first.</p>' : ''}${addressHidden ? '' : address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
         /^\d+$/.test(String(addressBalance)) ? `${escape(sendEthText(addressBalance))} ETH` : '');
-    // The withdraw form's "To": one field, like a wallet's send screen.
-    const withdrawalDestination = owner.view === 'withdraw' && destination ? `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span>
-        <div class="zkapi-return-field"><input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="Your wallet address (0x…)" aria-label="Your wallet address on ${escape(network)}" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} />${savedDestination ? '' : `<button data-funding-withdrawal-paste class="zkapi-paste-button" type="button" ${disabled}>Paste</button>`}</div>
-        ${savedDestination ? '<p class="zkapi-helper">This withdrawal keeps its saved destination.</p>' : `<p class="zkapi-withdraw-to-hint">An address on ${escape(network)}. Withdrawals can’t be reversed.</p>`}</div>` : '';
+    // The withdraw form's "To".
+    const withdrawalDestination = owner.view === 'withdraw' && destination ? withdrawalDestinationField(owner, { escape, network, disabled }) : '';
     return `<section class="zkapi-funding-account${funding ? ' is-funding' : ''}" aria-label="This browser’s receiving address">
         ${fundingView}
         ${withdrawalDestination}

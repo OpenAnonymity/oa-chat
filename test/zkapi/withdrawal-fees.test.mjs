@@ -377,13 +377,16 @@ test('payout-paid withdrawal reaches review with zero signer ETH and shows the n
     assert.equal(submit.mock.callCount(), 1);
 });
 
-test('sponsored review is invalidated by changed balance, destination, signer or fee choice', async t => {
+// Send to address on a sponsored version has no fee choice to change (it pays
+// from the withdrawal only); switching the method invalidates the review.
+test('sponsored review is invalidated by changed balance, destination, signer or method', async t => {
     const { owner } = fixture(t);
     const submit = t.mock.method(owner, 'submitWithdrawal', async () => assert.fail('stale review must not submit'));
     for (const mutate of [() => { zkapiClient.wallet.note.current_balance++; },
         () => { owner.fundingDestination = `0x${'4'.repeat(40)}`; },
         () => { addressFundingWallet.state.address = `0x${'5'.repeat(40)}`; },
-        () => { owner.sponsoredChoice = 'wallet'; }]) {
+        () => { setWalletMethod('metamask'); }]) {
+        setWalletMethod('address');
         useSponsored(t, owner);
         owner.requestWithdrawal();
         assert.ok(owner.withdrawalConfirmation);

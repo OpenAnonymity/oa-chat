@@ -5,6 +5,7 @@ import {
     OPERATOR_TEXT_LIMIT,
     boundedOperatorText,
     copyTokens,
+    displayProtocolVersion,
     escapeHtml,
     formatLocalDateTime,
     gateCopyKey,
@@ -88,7 +89,7 @@ test('the canonical text of the copy table', () => {
         'help.title': 'About versions',
         'help.current': 'Your balance is on version 1, the latest version.',
         'help.previous': 'Your balance is on version 1. It keeps working, but new deposits go to version 2, '
-            + 'and a balance can\u2019t move between versions. To upgrade, withdraw your balance and deposit again.',
+            + 'the latest version. To move your balance, withdraw it and deposit again.',
         'banner.available': 'Version 2 is available. Your balance is on version 1 and keeps working until '
             + `${t.expiry}. You can upgrade any time before ${t.closeBy}: withdraw your balance, then deposit again.`,
         'banner.soon': `Upgrade to version 2 by ${t.closeBy}. Your balance is on version 1. It keeps working `
@@ -1209,9 +1210,10 @@ test('a version-2 tab with a version-1 withdrawal open names version 1, never it
     // The button for a credit names the same version.
     assert.equal(textFor('previous.credit', state).includes('version 2'), false);
     assert.match(textFor('previous.credit', state), /Open version 1 to claim it\./);
-    // And the loaded version is still version 2 for the keys that are about it.
+    // And the loaded version is still version 2 for the keys that are about it
+    // (the help names it by its protocol version, as the pill does).
     assert.equal(textFor('pill', state), 'Version 2');
-    assert.match(textFor('help.current', state), /on version 2, the latest version\./);
+    assert.match(textFor('help.current', state), /on zkAPI v0\.2, the latest version\./);
 });
 
 test('while this page holds the balance, the previous version is named but cannot be opened', () => {
@@ -1389,5 +1391,71 @@ test('a reload is offered for exactly the gates whose remedy is to load again', 
     // finished by opening it; reload_required is that notice itself.
     for (const code of ['deposits_closed', 'previous_withdrawal_open', 'reload_required', 'something_new', '', null, undefined]) {
         assert.equal(gateOffersReload(code), false, String(code));
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Display names: the pill's protocol version and its help
+// ---------------------------------------------------------------------------
+
+test('the displayed protocol version: v4 (protocol 0.4) reads 0.2, every other row its own', () => {
+    assert.equal(displayProtocolVersion({ id: 'v4', protocolVersion: '0.4' }), '0.2');
+    assert.equal(displayProtocolVersion({ id: 'v1', protocolVersion: '0.1' }), '0.1');
+    assert.equal(displayProtocolVersion({ id: 'v2', protocolVersion: '0.2' }), '0.2');
+    assert.equal(displayProtocolVersion({ id: 'v3', protocolVersion: '0.3' }), '0.3');
+    // The override needs both the id and the registry protocol version: an
+    // edited row, or another row at 0.4, is shown as it is.
+    assert.equal(displayProtocolVersion({ id: 'v4', protocolVersion: '0.5' }), '0.5');
+    assert.equal(displayProtocolVersion({ id: 'v5', protocolVersion: '0.4' }), '0.4');
+    assert.equal(displayProtocolVersion({ id: 'v4', protocolVersion: ' 0.4 ' }), '0.2');
+    // Nothing to show without a protocol version.
+    for (const bad of [null, undefined, 'v4', 4, {}, { id: 'v4' }, { id: 'v4', protocolVersion: null }, { id: 'v4', protocolVersion: '' }]) {
+        assert.equal(displayProtocolVersion(bad), '', JSON.stringify(bad));
+    }
+});
+
+test('copyTokens names F and N as the pill does, and flags two versions shown under one name', () => {
+    const table = [
+        { id: 'v1', label: 'Version 1', protocolVersion: '0.1' }, { id: 'v2', label: 'Version 2', protocolVersion: '0.2' },
+        { id: 'v3', label: 'Version 3', protocolVersion: '0.3' }, { id: 'v4', label: 'Version 4', protocolVersion: '0.4' }
+    ];
+    const state = (id, protocolVersion) => ({ current: { id, label: `Version ${id.slice(1)}`, protocolVersion }, target: { id: 'v4', label: 'Version 4' } });
+    // The target ref has no protocol version: the table supplies it.
+    assert.deepEqual(copyTokens(state('v1', '0.1'), { table }), { N: '4', F: '1', FP: '0.1', NP: '0.2' });
+    assert.deepEqual(copyTokens(state('v2', '0.2'), { table }), { N: '4', F: '2', FP: '0.2', NP: '0.2', sameName: 1 });
+    // One version is never "two versions with the same name".
+    assert.deepEqual(copyTokens(state('v4', '0.4'), { table }), { N: '4', F: '4', FP: '0.2', NP: '0.2' });
+    // Without the table there is no N protocol; F is read from the state only.
+    assert.deepEqual(copyTokens(state('v1', '0.1')), { N: '4', F: '1', FP: '0.1' });
+    assert.deepEqual(copyTokens(state('v1', null), { table }), { N: '4', F: '1', NP: '0.2' });
+});
+
+test('the help names versions as the pill does and never says one name for two versions', () => {
+    const current = versionCopyText('help.current', { F: 4, FP: '0.2' });
+    assert.equal(current, 'Your balance is on zkAPI v0.2, the latest version.');
+    assert.doesNotMatch(current, /version 4/);
+    assert.equal(versionCopyText('help.previous', { F: 1, FP: '0.1', N: 4, NP: '0.2' }),
+        'Your balance is on zkAPI v0.1. It keeps working, but new deposits go to zkAPI v0.2, the latest version. '
+        + 'To move your balance, withdraw it and deposit again.');
+    assert.equal(versionCopyText('help.previous', { F: 2, FP: '0.2', N: 4, NP: '0.2', sameName: 1 }),
+        'Your balance is on an earlier build. It keeps working, but new deposits go to the latest build of zkAPI v0.2. '
+        + 'To move your balance, withdraw it and deposit again.');
+    // Every combination of the names and the flag reads as whole sentences.
+    const parts = [['F', 1], ['N', 4], ['FP', '0.1'], ['NP', '0.2'], ['sameName', 1]];
+    const hanging = /\b(?:to|into|from|on|in|by|until|before|of)\s*(?:[.,;:?]|$)/i;
+    for (let mask = 0; mask < 1 << parts.length; mask += 1) {
+        const tokens = Object.fromEntries(parts.filter((part, index) => mask & (1 << index)));
+        for (const key of ['help.current', 'help.previous']) {
+            const text = versionCopyText(key, tokens);
+            const where = `${key} ${JSON.stringify(tokens)}: "${text}"`;
+            assert.equal(/[{}]|\s{2,}|\s[.,;:?]/.test(text), false, where);
+            assert.equal(hanging.test(text), false, where);
+            for (const sentence of text.split(/(?<=\.)\s+/)) assert.match(sentence, /^[A-Z]/, where);
+            // A name is printed once at most.
+            for (const name of ['zkAPI v0.1', 'zkAPI v0.2', 'version 1', 'version 4']) {
+                assert.ok((text.split(name).length - 1) <= 1, `${where}: ${name} twice`);
+            }
+            if (key === 'help.previous' && tokens.sameName) assert.doesNotMatch(text, /zkAPI v0\.1|version 1/, where);
+        }
     }
 });

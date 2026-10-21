@@ -293,9 +293,22 @@ test('the pill sits beside the readiness pill, never between the expiry label an
     assert.ok(top < pill && pill < foot, 'in the card header');
     assert.ok(Math.abs(pill - readiness) < 700, 'next to the readiness pill');
     assert.match(html, /data-zkapi-balance-expiry>[^<]*<\/span><button id="zkapi-modal-expiry-help-toggle"/);
-    // No help panel: the pill is the whole explanation.
-    assert.doesNotMatch(html, /id="zkapi-modal-version-help"|Your balance is on version 1\./);
+    // The pill's `?` opens the helpers' explanation, a closed panel placed
+    // after the expiry help (the footer keeps only the expiry toggle).
+    const panel = html.indexOf('id="zkapi-modal-version-help"');
+    assert.ok(panel > html.indexOf('id="zkapi-modal-expiry-help"'), 'beside the expiry help');
+    assert.match(html, /id="zkapi-modal-version-help" data-zkapi-help-content="version" hidden>[\s\S]*?Your balance is on version 1\./);
+    assert.ok(html.indexOf('id="zkapi-modal-version-help-toggle"') < foot, 'its toggle is in the card header');
     assert.match(html, /data-surface="dialog"/);
+    // Opened, it stays open across a render: the dialog owns the state.
+    f.modal.privateBalanceHelpOpen.version = true;
+    const open = f.modal.renderBalance();
+    assert.match(open, /id="zkapi-modal-version-help" data-zkapi-help-content="version" >/);
+    assert.match(open, /id="zkapi-modal-version-help-toggle" data-zkapi-help="version" aria-expanded="true"/);
+    // A badge without the help button (an older helper) gets no orphan panel.
+    const quiet = facadeFor(state, { ui: helpers({ badge: () => '<span data-zkapi-version-badge>Version 1</span>' }).ui });
+    zkapiClient.oaVersioning = quiet;
+    assert.doesNotMatch(f.modal.renderBalance(), /zkapi-modal-version-help/);
 });
 
 test('the banner follows the balance card and precedes the expired notice, as static text', t => {
@@ -1144,9 +1157,12 @@ test('the real notice helpers mount where the dialog puts them, and their patch 
     const f = fixture(t, { note: aNote(5), facade });
     const html = f.modal.renderBalance();
     assert.match(html, /data-zkapi-version-badge-group data-zkapi-version-surface="dialog"/);
-    // The `?` is a tooltip: no toggle, and no help panel beneath it.
-    assert.match(html, /aria-label="The zkAPI protocol version this balance uses"/);
-    assert.doesNotMatch(html, /zkapi-modal-version-help/);
+    // The `?` is the shared help toggle, and its panel is in the card.
+    assert.match(html, /<button id="zkapi-modal-version-help-toggle" data-zkapi-help="version" type="button"/);
+    assert.match(html, /aria-controls="zkapi-modal-version-help">\?<\/button>/);
+    assert.match(html, /id="zkapi-modal-version-help" data-zkapi-help-content="version" hidden>/);
+    assert.match(html, /Your balance is on zkAPI v0\.1\. It keeps working, but new deposits go to zkAPI v0\.2/);
+    assert.doesNotMatch(html, /role="img"|The zkAPI protocol version this balance uses/);
     assert.doesNotMatch(html, /data-zkapi-version-banner="dialog"/);
     assert.match(html, /A new version is available\./);
     assert.match(html, /data-zkapi-balance-expiry>[^<]*<\/span><button id="zkapi-modal-expiry-help-toggle"/);

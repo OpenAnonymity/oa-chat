@@ -31,7 +31,7 @@ import {
 const MODAL_CLASSES = 'zkapi-dialog';
 // Closing the MetaMask prompt is the person's own decision, said once, in
 // a short notice identifies the operation without asserting a fund outcome.
-const CANCELED_LINE = 'Canceled in MetaMask.';
+const CANCELED_LINE = 'Canceled in your Ethereum wallet.';
 // A submitted transaction needs nothing from the person: the SDK checks
 // the chain every 15 s and on focus, and the dialog re-renders on change.
 // The check button stays as a quiet fallback for a slow indexer.
@@ -194,6 +194,10 @@ const NO_RECORD_EXTRAS = Object.freeze({
 });
 // The most of an SDK sentence that is shown in the dialog's own status line.
 const SDK_SENTENCE_LIMIT = 500;
+// Said when Send to address pays from the withdrawal and a quote of this
+// withdrawal answered but cannot be planned.
+const ADDRESS_WITHDRAWAL_UNPLANNED_LINE = 'Paying the network fee from this withdrawal isn’t available right now. '
+    + 'Use Ethereum wallet to withdraw this balance instead.';
 // Said when the page was drawn for another kind of withdrawal, or before the
 // most a settling chat could cost grew: nothing starts on a figure the person
 // was not shown.
@@ -731,7 +735,7 @@ export default class AccountModal {
             this.depositAmount = null;
             stopFundingFlow(this);
             this.recordDepositConfirmation(result);
-        }, { kind: 'deposit', title: 'Adding funds', phase: 'wallet', message: 'Connecting to MetaMask…', blocksSend: true });
+        }, { kind: 'deposit', title: 'Adding funds', phase: 'wallet', message: 'Connecting to your Ethereum wallet…', blocksSend: true });
     }
 
     setStatus(message, isError = false) {
@@ -819,7 +823,7 @@ export default class AccountModal {
 
     /** What the disabled primary says while the steps run. */
     busyLabel(journey) {
-        return journey?.steps?.some(step => step.state === 'waiting') ? 'Waiting for MetaMask…'
+        return journey?.steps?.some(step => step.state === 'waiting') ? 'Waiting for your Ethereum wallet…'
             : journey?.kind === 'deposit' ? 'Depositing…' : 'Working…';
     }
 
@@ -908,7 +912,7 @@ export default class AccountModal {
             );
             const finalizeButton = this.overlay.querySelector('#zkapi-finalize-btn');
             if (finalizeButton) {
-                setText(finalizeButton, ready ? walletMethodText('Finalize in MetaMask') : `Finalize in ${remaining}`);
+                setText(finalizeButton, ready ? walletMethodText('Finalize in your Ethereum wallet') : `Finalize in ${remaining}`);
                 finalizeButton.disabled = !ready || this.busy;
             }
         }
@@ -1071,8 +1075,17 @@ export default class AccountModal {
     renderVersionBadge(version) {
         if (!version?.ui || typeof version.ui.badge !== 'function') return { badge: '', help: '' };
         try {
-            // A pill with a short tooltip: no help disclosure.
-            return { badge: String(version.ui.badge(version.state, { surface: 'dialog' }) || ''), help: '' };
+            // The `?` is the shared help button (`data-zkapi-help="version"`):
+            // attachPrivateBalanceHelp opens and closes the panel below like
+            // the expiry help (click, Enter/Space, outside click, Escape back
+            // to the button), and the open state is this dialog's, so a
+            // re-render keeps it.
+            const open = Boolean(this.privateBalanceHelpOpen?.version);
+            const badge = String(version.ui.badge(version.state, { surface: 'dialog', helpOpen: open }) || '');
+            if (!badge.includes('data-zkapi-help="version"')) return { badge, help: '' };
+            let detail = null;
+            try { detail = version.ui.help?.('version', version.state) ?? null; } catch { detail = null; }
+            return { badge, help: privateBalanceHelpContent('modal', 'version', open, detail) };
         } catch { return { badge: '', help: '' }; }
     }
 
@@ -1531,7 +1544,7 @@ export default class AccountModal {
         let depositOperation = activityDetails?.kind === 'deposit' ? depositOperationId() : null;
         this.busy = true;
         this.rememberRunningModal(true);
-        this.status = activityDetails?.message || 'Waiting for MetaMask…';
+        this.status = activityDetails?.message || 'Waiting for your Ethereum wallet…';
         this.statusError = false;
         // Deposits and withdrawals show their steps; other work shows a line.
         this.journeyKind = ['deposit', 'withdraw', 'escape'].includes(activityDetails?.kind) ? activityDetails.kind : null;
@@ -1713,7 +1726,7 @@ export default class AccountModal {
 
     backgroundProgressLabel(recordId) {
         if (!this.busy || this.backgroundProgress?.recordId !== recordId) return null;
-        return this.backgroundProgress.phase === 'wallet' ? 'Waiting for MetaMask'
+        return this.backgroundProgress.phase === 'wallet' ? 'Waiting for your Ethereum wallet'
             : this.backgroundProgress.phase === 'confirming' ? 'Confirming transaction'
                 : this.backgroundProgress.kind === 'payout-claim' ? 'Claiming payout' : 'Preparing withdrawal';
     }
@@ -1769,18 +1782,18 @@ export default class AccountModal {
             return 'Escape challenged';
         }
         if (record.startSubmissionId) return record.startSubmissionOutcome === 'ambiguous'
-            ? 'Status unknown' : 'Waiting for MetaMask';
+            ? 'Status unknown' : 'Waiting for your Ethereum wallet';
         if (record.phase === 'submitted_unconfirmed') return 'Transaction · checking';
         if (record.phase === 'recovery_unconfirmed') return 'Checking balance';
         if (record.phase === 'challenged_unconfirmed') return record.mode === 'escape'
             ? 'Challenge · confirming' : 'Checking balance';
         if (record.finalizeTransactionHash) return 'Transaction submitted';
         if (record.finalizeSubmissionId && record.phase === 'ambiguous') return 'Status unknown';
-        if (record.finalizeSubmissionId) return 'Waiting for MetaMask';
+        if (record.finalizeSubmissionId) return 'Waiting for your Ethereum wallet';
         if (record.phase === 'restored') return 'Balance restored';
         if (record.phase === 'parked') return 'Ready to withdraw';
         if (record.phase === 'finalizing') return 'Transaction submitted';
-        if (record.phase === 'awaiting_wallet') return 'Waiting for MetaMask';
+        if (record.phase === 'awaiting_wallet') return 'Waiting for your Ethereum wallet';
         if (record.phase === 'ambiguous') return 'Status unknown';
         const deadline = Number(record.challengeDeadline || 0);
         if (!deadline) return 'Checking status';
@@ -1866,7 +1879,7 @@ export default class AccountModal {
     renderDepositRecord(record) {
         const confirmed = record.status === 'confirmed';
         const status = confirmed ? 'Added' : record.status === 'failed' ? 'Failed'
-            : record.pendingPhase === 'awaiting_wallet' ? 'Waiting for MetaMask'
+            : record.pendingPhase === 'awaiting_wallet' ? 'Waiting for your Ethereum wallet'
             : record.pendingPhase === 'ambiguous' ? 'Status unknown'
             : record.pendingPhase === 'dropped_or_pending' ? 'Check transaction' : 'Pending';
         const transactionUrl = this.paymentTransactionUrl(record.transactionHash);
@@ -2046,7 +2059,7 @@ export default class AccountModal {
                                 </div>
                                 ${returned && record.phase === 'closed_unconfirmed' ? '<p class="zkapi-record-line">Funds are in your wallet. Network confirmation continues automatically; no action is needed.</p>' : ''}
                                 ${closed && transactionUrl ? `<a class="zkapi-record-link" href="${this.escapeHtml(transactionUrl)}" target="_blank" rel="noopener noreferrer">View transaction</a>` : ''}
-                                ${record.phase === 'submitted_unconfirmed' ? '<p class="zkapi-record-line">This withdrawal is being checked in the background. Your current balance is unchanged.</p>' : ['challenged_unconfirmed', 'recovery_unconfirmed'].includes(record.phase) ? `<p class="zkapi-record-line">${record.mode === 'escape' ? 'The challenge is being confirmed in the background.' : 'Checking the previous withdrawal’s on-chain status.'} Your current balance is unchanged.</p>` : challengedFinalization ? '<p class="zkapi-record-line">The escape was challenged. Do not retry finalization. Check any submitted transaction, or close the old MetaMask prompt before restoring this balance.</p>' : record.error && !extras.hideError ? `<p class="zkapi-record-line" data-tone="error">${this.escapeHtml(record.error)}</p>` : ''}${extras.noteHtml}
+                                ${record.phase === 'submitted_unconfirmed' ? '<p class="zkapi-record-line">This withdrawal is being checked in the background. Your current balance is unchanged.</p>' : ['challenged_unconfirmed', 'recovery_unconfirmed'].includes(record.phase) ? `<p class="zkapi-record-line">${record.mode === 'escape' ? 'The challenge is being confirmed in the background.' : 'Checking the previous withdrawal’s on-chain status.'} Your current balance is unchanged.</p>` : challengedFinalization ? '<p class="zkapi-record-line">The escape was challenged. Do not retry finalization. Check any submitted transaction, or close the old Ethereum wallet prompt before restoring this balance.</p>' : record.error && !extras.hideError ? `<p class="zkapi-record-line" data-tone="error">${this.escapeHtml(record.error)}</p>` : ''}${extras.noteHtml}
                                 ${open && !extras.hideActions ? `<div class="zkapi-record-actions">
                                     ${record.mode === 'escape' && record.phase === 'pending' ? `<button data-finalize-withdrawal="${this.escapeHtml(record.recordId)}" class="zkapi-primary-button" type="button" ${!ready || this.busy ? 'disabled' : ''}>${ready ? 'Finalize' : `Ready in ${zkapiClient.formatExpiry(deadline)}`}</button>` : ''}
                                     ${parkedNeedsCheck || (record.mode === 'escape' && (unresolvedFinalization || ['finalizing', 'awaiting_wallet', 'ambiguous'].includes(record.phase))) || ['submitted_unconfirmed', 'challenged_unconfirmed', 'recovery_unconfirmed', 'closed_unconfirmed'].includes(record.phase) ? `<button data-sync-withdrawal="${this.escapeHtml(record.recordId)}" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>Check status</button>` : ''}
@@ -2055,7 +2068,7 @@ export default class AccountModal {
                                     ${record.mode === 'escape' && finalizationReplacement && !challengedFinalization ? `<button data-retry-dropped-finalization="${this.escapeHtml(record.recordId)}" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Replace transaction</button>` : ''}
                                     ${backgroundStartReplacement ? `<button data-retry-dropped-background-withdrawal="${this.escapeHtml(record.recordId)}" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Replace transaction</button>` : ''}
                                     ${record.backgroundPreparationCancelable ? `<button data-cancel-background-preparation="${this.escapeHtml(record.recordId)}" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Cancel preparation</button>` : ''}
-                                    ${record.mode === 'escape' && challengedFinalization && record.finalizeSubmissionId && !record.finalizeTransactionHash ? `<button data-resolve-challenged-finalization="${this.escapeHtml(record.recordId)}" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>I closed MetaMask</button>` : ''}
+                                    ${record.mode === 'escape' && challengedFinalization && record.finalizeSubmissionId && !record.finalizeTransactionHash ? `<button data-resolve-challenged-finalization="${this.escapeHtml(record.recordId)}" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>I closed the Ethereum wallet prompt</button>` : ''}
                                     ${backgroundReady ? `<button data-withdraw-background="${this.escapeHtml(record.recordId)}" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>Withdraw ${zkapiClient.formatMoney(record.finalBalance)}</button>` : record.mode !== 'mutual' && ['restored', 'parked'].includes(record.phase) && !unresolvedFinalization ? `<button data-restore-withdrawal="${this.escapeHtml(record.recordId)}" data-withdrawal-only="${withdrawalOnly}" class="zkapi-primary-button" type="button" ${hasSelectedNote || hasPendingDeposit || this.busy ? 'disabled' : ''}>${withdrawalOnly ? 'Finish withdrawal' : 'Use this balance'}</button>` : ''}${extras.actionsHtml}
                                 </div>` : extras.actionsHtml ? `<div class="zkapi-record-actions">${extras.actionsHtml}</div>` : ''}
                             </section>`;
@@ -2091,8 +2104,8 @@ export default class AccountModal {
             if (heldView) return heldView;
             if (pendingDeposit && ['submitted', 'dropped_or_pending', 'awaiting_wallet', 'ambiguous'].includes(pendingDeposit.phase)) {
                 const pendingDetail = pendingDeposit.phase === 'submitted' ? CONFIRMING_LINE
-                    : pendingDeposit.phase === 'dropped_or_pending' ? 'No receipt yet. It may still be pending, or MetaMask may have dropped it.'
-                    : pendingDeposit.phase === 'awaiting_wallet' ? 'MetaMask may still be open in this or another tab.'
+                    : pendingDeposit.phase === 'dropped_or_pending' ? 'No receipt yet. It may still be pending, or your Ethereum wallet may have dropped it.'
+                    : pendingDeposit.phase === 'awaiting_wallet' ? 'Your Ethereum wallet may still be open in this or another tab.'
                     : 'We couldn’t confirm whether your deposit went through. Check its status before trying again.';
                 const pendingJourney = this.busy && this.journeyKind === 'deposit'
                     ? this.currentJourney('deposit', { message: this.status })
@@ -2105,7 +2118,7 @@ export default class AccountModal {
                 const secondary = this.busy ? '' : [
                     pendingDeposit.phase === 'dropped_or_pending' && pendingDeposit.replacement_available ? '<button id="zkapi-retry-dropped-deposit-btn" class="zkapi-secondary-button" type="button">Replace transaction</button>' : '',
                     pendingDeposit.phase === 'awaiting_wallet' ? '<button id="zkapi-recover-deposit-btn" class="zkapi-secondary-button" type="button">Recover request</button>' : '',
-                    pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-secondary-button" type="button">${address ? 'Review fees for saved retry' : 'Try again in MetaMask'}</button>` : ''
+                    pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-secondary-button" type="button">${address ? 'Review fees for saved retry' : 'Try again in your Ethereum wallet'}</button>` : ''
                 ].join('');
                 return `
                     <div class="zkapi-stack">${this.renderVersionBanner(version)}
@@ -2160,17 +2173,17 @@ export default class AccountModal {
                 <div class="zkapi-stack">${this.renderVersionBanner(version)}
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
                         ${resumingDeposit ? `<div class="zkapi-figure-row"><p class="zkapi-balance-amount">${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="zkapi-balance-caption">Saved deposit</p></div>` : ''}
-                        ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Before resuming, check MetaMask for a pending transaction.</p>' : ''}
+                        ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Before resuming, check your Ethereum wallet for a pending transaction.</p>' : ''}
                         ${!resumingDeposit && !this.busy ? this.literal(renderMetaMaskTransfer(this)) : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
                             ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))
                             : `<div class="zkapi-actions">
                             ${this.busy
-                                ? this.renderProgress(this.status || 'Waiting for MetaMask…')
+                                ? this.renderProgress(this.status || 'Waiting for your Ethereum wallet…')
                                 : this.startingAfterInit
                                     ? '<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span>Getting ready…</button>'
-                                    : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${resumingDeposit ? 'Resume with MetaMask' : 'Continue with Ethereum wallet'}</button>`}
+                                    : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${resumingDeposit ? 'Resume with Ethereum wallet' : 'Continue with Ethereum wallet'}</button>`}
                         </div>`}
                     </section>
                     <div class="zkapi-guides">
@@ -2191,8 +2204,8 @@ export default class AccountModal {
         // Describe saved work beside its recovery action, not as a readiness badge.
         const withdrawingLine = ['submitted', 'late_submitted'].includes(withdrawalPhase) ? 'A withdrawal was submitted. Check its status before using this balance.'
             : withdrawalPhase === 'dropped_or_pending' ? 'The withdrawal has no receipt yet. Open it to check or resubmit.'
-            : withdrawalPhase === 'awaiting_wallet' ? 'MetaMask may still be open. Open the withdrawal to check it.'
-            : withdrawalPhase === 'ambiguous' ? 'MetaMask did not return a transaction. Open the withdrawal to check it.'
+            : withdrawalPhase === 'awaiting_wallet' ? 'Your Ethereum wallet may still be open. Open the withdrawal to check it.'
+            : withdrawalPhase === 'ambiguous' ? 'Your Ethereum wallet did not return a transaction. Open the withdrawal to check it.'
             : 'Withdrawal paused. This balance is reserved and cannot be used for chat. Open the withdrawal to review the network fee and next step.';
         // Right after a deposit: one confirmation and Start chatting. It is
         // shown once (closing the dialog clears the outcome); View balance or
@@ -2510,6 +2523,25 @@ export default class AccountModal {
         } catch { return null; }
     }
 
+    // Send to address pays a new withdrawal's network fee from the withdrawal
+    // (an operation the browser-held key signs and the service's relay sends,
+    // so that key needs no ETH and nothing is connected), with no wallet
+    // choice: in the withdraw form, for a balance whose version pins a
+    // reviewed sponsorship. Everywhere else Send to address keeps its funding
+    // address route exactly as before: a version without one (mainnet
+    // version 1, the earlier Sepolia versions), the upgrade's own withdrawal,
+    // and every saved plan, which continues the way it was prepared.
+    addressPayoutOnly() {
+        return getWalletMethod() === 'address' && this.view === 'withdraw' && Boolean(this.sponsoredApi());
+    }
+
+    // Who pays the network fee of a new withdrawal: the withdrawal itself
+    // where addressPayoutOnly(), otherwise the person's own choice (the
+    // wallet first).
+    sponsoredChoiceNow() {
+        return this.addressPayoutOnly() || this.sponsoredChoice === 'payout' ? 'payout' : 'wallet';
+    }
+
     // What a quote is for: the balance, how it leaves and who is paid. A quote
     // of anything else is not this form's.
     sponsoredKeyFor(mode) {
@@ -2528,12 +2560,15 @@ export default class AccountModal {
         const key = this.sponsoredKeyFor(mode);
         const held = this.sponsoredQuote;
         const current = held && held.key === key ? held : null;
-        return { choice: this.sponsoredChoice, status: current?.status || 'idle', quote: current?.quote || null, key };
+        return { choice: this.sponsoredChoiceNow(), status: current?.status || 'idle', quote: current?.quote || null, key };
     }
 
     // The fee choice for the form in front of the person: '' where there is
     // nothing to choose (no such payment here, a plan that is already
     // bound to how its fee is paid, the work already running, an upgrade).
+    // Send to address has no choice to make there, only its fee to show
+    // (addressPayoutOnly); a balance whose version pins no sponsorship keeps
+    // its old form, which never had this section.
     renderSponsoredFee({ prepared = null, submissionActive = false, showJourney = false, upgrade = false } = {}) {
         if (upgrade || submissionActive || (showJourney && !prepared) || (prepared && prepared.fee_payer !== 'payout')) return '';
         if (!this.sponsoredApi()) return '';
@@ -2544,41 +2579,109 @@ export default class AccountModal {
             return String(ui.sponsoredFee({
                 choice: prepared ? 'payout' : view.choice, status: view.status, quote: view.quote, busy: this.busy === true,
                 locked: Boolean(prepared),
-                method: getWalletMethod() === 'address' ? 'address' : 'metamask', mode: this.withdrawMode,
+                // Send to address draws only "Paid from this withdrawal": a new
+                // payout-only form, or a saved payout plan of that method.
+                method: this.addressPayoutOnly() || (prepared && getWalletMethod() === 'address') ? 'address' : 'metamask',
+                mode: this.withdrawMode,
                 format: units => this.formatWithdrawalAmount(units)
             }) || '');
         } catch { return ''; }
     }
 
+    // Send to address asks for its fee on Continue: the form itself sends
+    // nothing, and the quote is for the destination that was typed. True when
+    // Continue would ask now (a valid destination, nothing asked yet for
+    // exactly this withdrawal); the review follows only a quote that answered.
+    addressQuoteOnContinue() {
+        if (!this.addressPayoutOnly() || zkapiClient.config?.prepared_withdrawal) return false;
+        if (this.walletMethodReady === false || this.startingAfterInit || this.busy || this.withdrawalPreflightBusy
+            || (this.withdrawMode === 'escape' && escapeNeedsSettlement())) return false;
+        try { withdrawalDestination(this); } catch { return false; }
+        return this.sponsoredViewState(this.withdrawMode).status === 'idle';
+    }
+
+    // Whether the form's Continue does something: opens the review, or (Send
+    // to address) checks the fee first.
+    withdrawalContinueReady() {
+        return this.withdrawalInputReady() || this.addressQuoteOnContinue();
+    }
+
+    // Continue on Send to address: ask for the fee of this withdrawal, then
+    // open its review once the answer is in for the same form. The person
+    // still confirms there; nothing is sent on the quote.
+    async reviewAfterAddressQuote() {
+        const mode = this.withdrawMode;
+        await this.refreshSponsoredQuote(mode);
+        // A quote is held for one balance, signer and destination: one typed
+        // or changed meanwhile reads as not asked yet, and stays on the form.
+        if (!this.isOpen || this.view !== 'withdraw' || this.withdrawMode !== mode || !this.addressPayoutOnly()) return;
+        if (this.sponsoredViewState(mode).status !== 'ready') return;
+        this.requestWithdrawal();
+    }
+
     // One explicit gesture: choosing to pay from the withdrawal asks the relay
-    // what it would cost. A later answer for another form (another mode,
-    // another balance) is dropped.
+    // what it would cost (on Send to address, Continue is that gesture). A
+    // later answer for another form (another mode, another balance) is dropped.
     async refreshSponsoredQuote(mode = this.withdrawMode) {
         const api = this.sponsoredApi();
         if (!api || this.busy) return;
+        if (getWalletMethod() === 'address') {
+            // A destination that is not valid is refused here, before the
+            // relay is asked anything or a key is made for it.
+            try { withdrawalDestination(this); } catch (error) {
+                this.sponsoredQuote = null;
+                this.outcome = { tone: 'error', message: error?.message || 'Enter a valid Ethereum withdrawal address.', view: this.view };
+                if (this.isOpen) this.render();
+                return;
+            }
+        }
         let key = this.sponsoredKeyFor(mode);
         const method = getWalletMethod();
         const noteId = zkapiClient.note?.note_id;
         const balance = zkapiClient.note?.current_balance;
+        // The destination the quote asks about, read once: the cache key below
+        // is rebased only onto this same destination.
+        let typed = null;
+        if (method === 'address') { try { typed = withdrawalDestination(this); } catch { typed = null; } }
         const sequence = this.sponsoredSeq = (Number(this.sponsoredSeq) || 0) + 1;
         this.sponsoredQuote = { key, status: 'loading', quote: null };
         this.render();
+        // Work for a form that changed while this waited (another signer,
+        // balance or destination) is dropped, not filed under the new form.
+        const stale = () => {
+            if (sequence !== this.sponsoredSeq || method !== getWalletMethod() || mode !== this.withdrawMode
+                || noteId !== zkapiClient.note?.note_id || balance !== zkapiClient.note?.current_balance) return true;
+            if (method !== 'address') return false;
+            let now = null;
+            try { now = withdrawalDestination(this); } catch { now = null; }
+            return !now || now.toLowerCase() !== String(typed || '').toLowerCase();
+        };
+        const drop = () => {
+            // Only this request's own "Checking…" is cleared; a newer one stays.
+            if (sequence === this.sponsoredSeq) {
+                this.sponsoredQuote = null;
+                if (this.isOpen) this.render();
+            }
+        };
         let quote;
         try {
             let owner = null;
             let destination = null;
-            if (getWalletMethod() === 'address') {
-                owner = addressFundingWallet.address || null;
-                destination = withdrawalDestination(this);
+            if (method === 'address') {
+                destination = typed;
+                // The key this browser holds signs the operation and owns
+                // its holding address; it needs no ETH. A person who never
+                // used this method has none yet: this gesture makes it.
+                owner = addressFundingWallet.address || await addressFundingWallet.ensureAddress() || null;
             } else {
                 // The account that signs it owns the holding address, so it
                 // must be the connected one; this is the choice's own prompt.
                 owner = await zkapiClient.connectWallet();
                 destination = zkapiClient.config?.prepared_withdrawal?.payout || null;
             }
-            if (sequence !== this.sponsoredSeq || method !== getWalletMethod()
-                || noteId !== zkapiClient.note?.note_id || balance !== zkapiClient.note?.current_balance) return;
-            // Connecting MetaMask can populate its owner for the first time.
+            if (stale()) return drop();
+            // Making the key (or connecting MetaMask) can populate its owner
+            // for the first time; nothing else in the key moved.
             key = this.sponsoredKeyFor(mode);
             quote = await api.quote({ mode, destination, owner,
                 ...(getWalletMethod() === 'address' ? { provider: addressFundingWallet } : {}) });
@@ -2586,7 +2689,7 @@ export default class AccountModal {
             quote = { available: false, reason: 'unknown',
                 text: walletErrorMessage(error) || 'Paying the network fee from this withdrawal isn’t available right now.' };
         }
-        if (sequence !== this.sponsoredSeq || key !== this.sponsoredKeyFor(mode)) return;
+        if (stale() || key !== this.sponsoredKeyFor(mode)) return drop();
         this.sponsoredQuote = { key, status: quote?.available === true ? 'ready' : 'unavailable', quote };
         if (this.isOpen) this.render();
     }
@@ -2608,13 +2711,19 @@ export default class AccountModal {
             if (!plan) return { refused: 'Paying the network fee from this withdrawal isn’t available right now.' };
             return { options: plan.options, bounds: plan.sponsored };
         }
-        if (prepared || this.sponsoredChoice !== 'payout' || !api) return null;
+        // A saved wallet-paid plan (of either method) continues as it started.
+        if (prepared) return null;
+        // Send to address pays from the withdrawal where addressPayoutOnly()
+        // and never falls back to its funding address there; a balance whose
+        // version pins no sponsorship keeps that route (null) as before.
+        const address = this.addressPayoutOnly();
+        if (!address && (this.sponsoredChoice !== 'payout' || !api)) return null;
         const view = this.sponsoredViewState(mode);
         if (view.status !== 'ready' || !view.quote) {
             return { refused: 'The network fee has to be checked for this withdrawal first. Review it below, then continue.' };
         }
         const plan = api.plan(view.quote);
-        if (!plan) return { refused: 'Paying the network fee from this withdrawal isn’t available right now. You can pay it from your wallet instead.' };
+        if (!plan) return { refused: address ? ADDRESS_WITHDRAWAL_UNPLANNED_LINE : 'Paying the network fee from this withdrawal isn’t available right now. You can pay it from your wallet instead.' };
         return { options: plan.options, bounds: plan.sponsored };
     }
 
@@ -2662,7 +2771,13 @@ export default class AccountModal {
     }
 
     requestWithdrawal() {
-        if (!this.isOpen || this.view !== 'withdraw' || this.canOpen?.() === false || !this.withdrawalInputReady()) return;
+        if (!this.isOpen || this.view !== 'withdraw' || this.canOpen?.() === false) return;
+        // Send to address: the fee of this withdrawal first, then its review.
+        if (this.addressQuoteOnContinue()) {
+            void this.reviewAfterAddressQuote();
+            return;
+        }
+        if (!this.withdrawalInputReady()) return;
         // A saved withdrawal has already crossed this point. Continuing it
         // must not suggest that its server reservation can still be cancelled.
         if (zkapiClient.config?.prepared_withdrawal && !this.withdrawalEscapeIntent) return this.submitWithdrawal();
@@ -2740,9 +2855,10 @@ export default class AccountModal {
         const sponsored = this.sponsoredPlanFor(mode);
         if (sponsored?.refused) {
             this.outcome = { tone: 'error', message: sponsored.refused, view: this.view };
-            if (this.sponsoredChoice === 'payout') this.sponsoredQuote = null;
+            const payout = this.sponsoredChoiceNow() === 'payout';
+            if (payout) this.sponsoredQuote = null;
             this.render();
-            if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(mode);
+            if (payout) void this.refreshSponsoredQuote(mode);
             return undefined;
         }
         // A choice is spent by the attempt it started: whatever is drawn next
@@ -2979,7 +3095,7 @@ export default class AccountModal {
                         <p class="zkapi-balance-caption">${needsAttention ? 'Withdrawal needs attention' : 'Checking submitted withdrawal'}</p>
                         <p class="${needsAttention ? 'zkapi-outcome' : 'zkapi-helper'}" ${needsAttention ? 'data-tone="error"' : ''}>${this.escapeHtml(needsAttention
                             ? lateWithdrawal.error || 'The saved receipt did not match this withdrawal. Recheck the vault state.'
-                            : 'A MetaMask window returned after this tab changed. The transaction is saved, and only this balance is paused until Ethereum confirms it.')}</p>
+                            : 'An Ethereum wallet window returned after this tab changed. The transaction is saved, and only this balance is paused until Ethereum confirms it.')}</p>
                     </section>
                     <div class="zkapi-actions">
                         <button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>${needsAttention ? 'Recheck vault state' : 'Check transaction'}</button>
@@ -2999,7 +3115,7 @@ export default class AccountModal {
                         <p class="zkapi-meta">To ${this.escapeHtml(zkapiClient.compact(recordPayee(withdrawal) || withdrawal.destination, 9))}${deadline ? ` · ready ${this.escapeHtml(new Date(deadline * 1000).toLocaleString())}` : ''}</p>
                     </section>
                     <div class="zkapi-actions">
-                        <button id="zkapi-finalize-btn" class="zkapi-primary-button" type="button" ${!ready || this.busy ? 'disabled' : ''}>${ready ? 'Finalize in MetaMask' : `Finalize in ${zkapiClient.formatExpiry(deadline)}`}</button>
+                        <button id="zkapi-finalize-btn" class="zkapi-primary-button" type="button" ${!ready || this.busy ? 'disabled' : ''}>${ready ? 'Finalize in your Ethereum wallet' : `Finalize in ${zkapiClient.formatExpiry(deadline)}`}</button>
                         <button id="zkapi-sync-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Check on-chain status</button>
                     </div>
                 </div>`;
@@ -3045,9 +3161,9 @@ export default class AccountModal {
             const escapeReview = this.withdrawMode === 'escape';
             const to = getWalletMethod() === 'address'
                 ? `<span class="zkapi-transfer-address">${this.escapeHtml(zkapiClient.compact(withdrawalDestination(this), 9))}</span>`
-                : 'Your MetaMask account';
+                : 'Your Ethereum wallet account';
             const feeQuote = this.withdrawalFees?.quote;
-            const payoutQuote = this.sponsoredChoice === 'payout' && this.sponsoredApi()
+            const payoutQuote = this.sponsoredChoiceNow() === 'payout' && this.sponsoredApi()
                 ? this.sponsoredViewState(this.withdrawMode).quote : null;
             const feeWei = payoutQuote?.available ? String(BigInt(payoutQuote.maxCostWei) + BigInt(payoutQuote.flatFeeWei) + BigInt(payoutQuote.creditSurchargeWei || '0'))
                 : feeQuote ? withdrawalFeeReceiptAmounts(feeQuote).needed : null;
@@ -3084,18 +3200,18 @@ export default class AccountModal {
                 ? this.currentJourney(this.journeyKind, { message: this.status })
                 : this.currentJourney(escapeRun ? 'escape' : 'withdraw', { persistedPhase: selectedEscape ? 'reserving' : prepared?.phase, failed: this.statusError });
             const notice = restoring ? 'Checking Ethereum for the latest saved status. This can take a little while. Nothing new will be sent until you choose Continue.' : !prepared ? ''
-                : droppedOrPending ? 'No receipt yet. It may still be pending, or MetaMask may have dropped it. Check again, or resubmit it with its original nonce.'
+                : droppedOrPending ? 'No receipt yet. It may still be pending, or your Ethereum wallet may have dropped it. Check again, or resubmit it with its original nonce.'
                 : submitted ? 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.'
-                : awaitingWallet ? 'MetaMask may still be open. Check it, or recover the request if its window closed.'
+                : awaitingWallet ? 'Your Ethereum wallet may still be open. Check it, or recover the request if its window closed.'
                 : ambiguous ? 'We couldn’t confirm whether your withdrawal went through. Check its status before trying again.'
                 : selectedEscape ? `Continue to prepare the escape proof. After it confirms, wait ${zkapiClient.escapePeriodPhrase()}, then return here to finalize.`
-                : prepared.phase === 'reserving' ? 'Paused before MetaMask. Continue when you’re ready.'
+                : prepared.phase === 'reserving' ? 'Paused before the Ethereum wallet prompt. Continue when you’re ready.'
                 : clearanceReserved ? 'Nothing has been sent yet.'
                 : 'The proof is ready. Nothing has been sent yet.';
             const recipient = prepared?.fee_payer === 'payout' ? prepared.payout : prepared?.destination;
             const destination = recipient
                 ? zkapiClient.compact(recipient, 9)
-                : getWalletMethod() === 'metamask' ? 'your MetaMask account' : 'your wallet address';
+                : getWalletMethod() === 'metamask' ? 'your Ethereum wallet account' : 'your wallet address';
             const methodName = escapeRun ? `Escape hatch · ${zkapiClient.escapePeriodPhrase()} wait` : 'Mutual close';
             if (restoring) {
                 const current = journey.steps.find(step => ['active', 'waiting', 'paused', 'error'].includes(step.state));
@@ -3115,11 +3231,11 @@ export default class AccountModal {
                     ? `<button id="zkapi-sync-withdrawal-btn" class="${submitted ? 'zkapi-quiet-button' : 'zkapi-primary-button'}" type="button">${submitted ? 'Check now' : 'Check transaction'}</button>`
                     : prepared && !clearanceReserved && !selectedEscape && !cancelable
                         ? '<button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button" type="button">Check transaction</button>'
-                        : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${this.withdrawalInputReady() ? '' : 'disabled'}>${selectedEscape ? `Start ${zkapiClient.escapePeriodLabel()} escape` : 'Continue in MetaMask'}</button>`;
+                        : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${this.withdrawalInputReady() ? '' : 'disabled'}>${selectedEscape ? `Start ${zkapiClient.escapePeriodLabel()} escape` : 'Continue in your Ethereum wallet'}</button>`;
             const secondary = this.busy || restoring ? '' : [
                 droppedOrPending && prepared?.replacement_available ? `<button id="zkapi-retry-dropped-withdrawal-btn" class="zkapi-secondary-button" type="button">Resubmit</button>` : '',
                 awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button" type="button">Recover withdrawal</button>` : '',
-                ambiguous ? `<button id="zkapi-retry-withdrawal-btn" class="zkapi-secondary-button" type="button">Try again in MetaMask</button>` : ''
+                ambiguous ? `<button id="zkapi-retry-withdrawal-btn" class="zkapi-secondary-button" type="button">Try again in your Ethereum wallet</button>` : ''
             ].join('');
             // Recovery choices that change what happens to the balance stay
             // one step away, not stacked under the one action that matters.
@@ -3152,8 +3268,8 @@ export default class AccountModal {
             <div class="zkapi-stack zkapi-withdraw-form">
                 ${this.literal(renderWalletMethod(this))}
                 ${figure('You withdraw')}
-                ${address ? this.literal(renderFundingAccount(this, { rows: false })) : `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span><p class="zkapi-withdraw-account">Your MetaMask account${account}</p></div>`}
-                ${this.sponsoredChoice === 'payout' && this.sponsoredApi() ? '' : this.literal(renderWithdrawalFeeLine(this))}
+                ${address ? this.literal(renderFundingAccount(this, { rows: false })) : `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span><p class="zkapi-withdraw-account">Your Ethereum wallet account${account}</p></div>`}
+                ${this.sponsoredChoiceNow() === 'payout' && this.sponsoredApi() ? '' : this.literal(renderWithdrawalFeeLine(this))}
                 ${upgrade ? '<p class="zkapi-note">Withdrawing closes this private balance; you deposit again to finish upgrading.</p>' : ''}
                 ${exitChoice}${sponsoredFee}
                 ${escapeForm ? `<p class="zkapi-note zkapi-withdraw-escape-note">Escape hatch: withdraw without the server’s approval. It takes ${zkapiClient.escapePeriodPhrase()} and two network fees: one to start, one to finish.</p>` : ''}
@@ -3164,7 +3280,7 @@ export default class AccountModal {
                 <div class="zkapi-actions zkapi-withdraw-actions">
                     ${restoring
                         ? '<button id="zkapi-withdraw-btn" class="zkapi-primary-button w-full" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span>Checking wallet…</button>'
-                        : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button w-full" type="button" ${this.withdrawalInputReady() ? '' : 'disabled'}>Continue</button>`}
+                        : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button w-full" type="button" ${this.withdrawalContinueReady() ? '' : 'disabled'}>Continue</button>`}
                     <button id="zkapi-withdraw-dismiss-btn" class="zkapi-quiet-button" type="button">Cancel</button>
                 </div>
                 ${showMethod || escapeForm ? `<p class="zkapi-withdraw-escape"><button id="zkapi-withdraw-mode-toggle" class="zkapi-text-link" type="button" ${this.busy ? 'disabled' : ''}>${escapeForm ? 'Use the normal withdrawal instead' : 'Server not responding? Use the escape hatch'}</button></p>` : ''}
@@ -3379,14 +3495,14 @@ export default class AccountModal {
         this.overlay.querySelector('#zkapi-check-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             const result = await zkapiClient.recoverBrowserDeposit(report);
             if (result?.status === 'confirmed') this.recordDepositConfirmation(result);
-            else this.setStatus('Your deposit is not confirmed yet. If MetaMask shows a pending transaction, wait for it to finish.');
+            else this.setStatus('Your deposit is not confirmed yet. If your Ethereum wallet shows a pending transaction, wait for it to finish.');
         }, { kind: 'deposit', title: 'Checking deposit', phase: 'syncing', blocksSend: true }));
         this.overlay.querySelector('#zkapi-recover-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             await zkapiClient.recoverUnknownDeposit(report);
         }, { kind: 'deposit', title: 'Recovering wallet request', phase: 'syncing', blocksSend: true }));
         this.overlay.querySelector('#zkapi-retry-deposit-btn')?.addEventListener('click', () => {
             if (getWalletMethod() === 'address') return this.prepareAddressDepositRetry();
-            if (!globalThis.confirm('Only try again if MetaMask is closed and Check payment status still finds no deposit. This asks MetaMask to submit the same saved deposit again.')) return;
+            if (!globalThis.confirm('Only try again if your Ethereum wallet is closed and Check payment status still finds no deposit. This asks your Ethereum wallet to submit the same saved deposit again.')) return;
             return this.run(async (report) => {
                 const result = await zkapiClient.retryUnknownDeposit(report);
                 this.depositAmount = null;
@@ -3394,7 +3510,7 @@ export default class AccountModal {
             }, { kind: 'deposit', title: 'Retrying deposit', phase: 'wallet', blocksSend: true });
         });
         this.overlay.querySelector('#zkapi-retry-dropped-deposit-btn')?.addEventListener('click', () => {
-            if (!globalThis.confirm('Resubmit the exact same deposit with its original account nonce? MetaMask may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
+            if (!globalThis.confirm('Resubmit the exact same deposit with its original account nonce? Your Ethereum wallet may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
             return this.run(async (report) => {
                 const result = await zkapiClient.retryDroppedDeposit(report);
                 this.depositAmount = null;
@@ -3458,14 +3574,16 @@ export default class AccountModal {
             this.withdrawMode = this.withdrawMode === 'escape' ? 'mutual' : 'escape';
             this.clearTransientOutcome();
             this.render();
-            if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(this.withdrawMode);
+            // Send to address asks again on its own Continue, not here.
+            if (!this.addressPayoutOnly() && this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(this.withdrawMode);
         });
         this.overlay.querySelectorAll('input[name="zkapi-withdraw-mode"]').forEach(input => {
             input.addEventListener('change', () => {
                 this.withdrawMode = input.value;
                 this.render();
-                // A quote is for one way of leaving: ask again for this one.
-                if (this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(this.withdrawMode);
+                // A quote is for one way of leaving: ask again for this one
+                // (Send to address asks on its own Continue).
+                if (!this.addressPayoutOnly() && this.sponsoredChoice === 'payout') void this.refreshSponsoredQuote(this.withdrawMode);
             });
         });
         this.overlay.querySelectorAll('input[name="zkapi-sponsored-fee"]').forEach(input => {
@@ -3493,7 +3611,7 @@ export default class AccountModal {
         });
         const withdrawButton = this.overlay.querySelector('#zkapi-withdraw-btn');
         this.overlay.querySelector('[data-funding-withdrawal-destination]')?.addEventListener('input', () => {
-            if (withdrawButton) withdrawButton.disabled = !this.withdrawalInputReady();
+            if (withdrawButton) withdrawButton.disabled = !this.withdrawalContinueReady();
         });
         withdrawButton?.addEventListener('click', () => this.requestWithdrawal());
         this.overlay.querySelector('#zkapi-withdraw-review-confirm')?.addEventListener('click', () => this.confirmWithdrawal());
@@ -3523,14 +3641,14 @@ export default class AccountModal {
             await zkapiClient.recoverUnknownWithdrawal(report);
         }, { kind: 'withdraw-sync', title: 'Recovering wallet request', phase: 'syncing', blocksSend: true }));
         this.overlay.querySelector('#zkapi-retry-withdrawal-btn')?.addEventListener('click', () => {
-            if (!globalThis.confirm('Only retry if MetaMask is closed and Check transaction still shows this balance as active. A previously broadcast transaction could otherwise use gas twice.')) return;
+            if (!globalThis.confirm('Only retry if your Ethereum wallet is closed and Check transaction still shows this balance as active. A previously broadcast transaction could otherwise use gas twice.')) return;
             return this.run(async (report) => {
                 const result = await zkapiClient.retryUnknownWithdrawal(report);
                 this.recordWithdrawalOutcome(result);
             }, { kind: 'withdraw', title: 'Retrying withdrawal', phase: 'wallet', blocksSend: true });
         });
         this.overlay.querySelector('#zkapi-retry-dropped-withdrawal-btn')?.addEventListener('click', () => {
-            if (!globalThis.confirm('Resubmit the exact same withdrawal with its original account nonce? MetaMask may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
+            if (!globalThis.confirm('Resubmit the exact same withdrawal with its original account nonce? Your Ethereum wallet may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
             return this.run(async (report) => {
                 const result = await zkapiClient.retryDroppedWithdrawal(report);
                 this.recordWithdrawalOutcome(result);
@@ -3644,7 +3762,7 @@ export default class AccountModal {
         });
         this.overlay.querySelectorAll('[data-resolve-challenged-finalization]').forEach(button => {
             button.addEventListener('click', () => {
-                if (!globalThis.confirm('Confirm that the old MetaMask prompt is closed. This only releases the local prompt marker; no transaction will be sent.')) return;
+                if (!globalThis.confirm('Confirm that the old Ethereum wallet prompt is closed. This only releases the local prompt marker; no transaction will be sent.')) return;
                 return this.run(async (report) => {
                     await zkapiClient.resolveChallengedFinalization(
                         button.dataset.resolveChallengedFinalization,
@@ -3656,7 +3774,7 @@ export default class AccountModal {
         });
         this.overlay.querySelectorAll('[data-retry-finalization]').forEach(button => {
             button.addEventListener('click', () => {
-                if (!globalThis.confirm('Only retry if MetaMask is closed and Check transaction still shows this escape as pending. A previously broadcast transaction could otherwise use gas twice.')) return;
+                if (!globalThis.confirm('Only retry if your Ethereum wallet is closed and Check transaction still shows this escape as pending. A previously broadcast transaction could otherwise use gas twice.')) return;
                 return this.run(async (report) => {
                     const result = await zkapiClient.retryUnknownFinalization(
                         button.dataset.retryFinalization,
@@ -3669,7 +3787,7 @@ export default class AccountModal {
         });
         this.overlay.querySelectorAll('[data-retry-dropped-finalization]').forEach(button => {
             button.addEventListener('click', () => {
-                if (!globalThis.confirm('Resubmit the exact same finalization with its original account nonce? MetaMask may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
+                if (!globalThis.confirm('Resubmit the exact same finalization with its original account nonce? Your Ethereum wallet may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
                 return this.run(async (report) => {
                     const result = await zkapiClient.retryDroppedFinalization(
                         button.dataset.retryDroppedFinalization,
@@ -3682,7 +3800,7 @@ export default class AccountModal {
         });
         this.overlay.querySelectorAll('[data-retry-dropped-background-withdrawal]').forEach(button => {
             button.addEventListener('click', () => {
-                if (!globalThis.confirm('Resubmit this saved background withdrawal with its original account nonce? MetaMask may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
+                if (!globalThis.confirm('Resubmit this saved background withdrawal with its original account nonce? Your Ethereum wallet may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
                 return this.run(async (report) => {
                     const result = await zkapiClient.retryDroppedBackgroundWithdrawal(
                         button.dataset.retryDroppedBackgroundWithdrawal,

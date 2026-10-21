@@ -37,11 +37,11 @@ test('withdrawal amount does not claim funds were already returned before submis
     const modal = fixture(t);
     const html = modal.renderWithdrawal();
     assert.match(html, /You withdraw/);
-    assert.match(html, /<span class="zkapi-balance-caption">To<\/span><p class="zkapi-withdraw-account">Your MetaMask account/);
-    assert.match(html, /Paid from your MetaMask account when you confirm\./, 'who pays the fee, said once under the fee');
+    assert.match(html, /<span class="zkapi-balance-caption">To<\/span><p class="zkapi-withdraw-account">Your Ethereum wallet account/);
+    assert.match(html, /Paid from your Ethereum wallet account when you confirm\./, 'who pays the fee, said once under the fee');
     assert.match(html, /id="zkapi-withdraw-mode-toggle"[^>]*>Server not responding\? Use the escape hatch</, 'the escape hatch is a quiet link, not a radio');
     assert.doesNotMatch(html, /name="zkapi-withdraw-mode"|Withdrawal method/);
-    assert.doesNotMatch(html, /Returned to MetaMask/);
+    assert.doesNotMatch(html, /Returned to (?:MetaMask|your Ethereum wallet)/);
 });
 
 test('reload checking explains the delay, hides X and cannot queue a withdrawal', async t => {
@@ -52,7 +52,7 @@ test('reload checking explains the delay, hides X and cannot queue a withdrawal'
     const html = modal.dialogMarkup();
     assert.match(html, /Checking saved withdrawal/);
     assert.match(html, /Nothing new will be sent until you choose Continue/);
-    assert.doesNotMatch(html, /Getting ready|Paused before MetaMask/);
+    assert.doesNotMatch(html, /Getting ready|Paused before (?:MetaMask|the Ethereum wallet prompt)/);
     assert.match(html, /id="zkapi-payment-close"[^>]*hidden/);
     assert.match(html, /id="zkapi-withdraw-btn"[^>]*disabled/);
     assert.match(html, /id="zkapi-withdraw-dismiss-btn"/);
@@ -60,7 +60,7 @@ test('reload checking explains the delay, hides X and cannot queue a withdrawal'
     await modal.submitWithdrawal();
     assert.equal(run.mock.callCount(), 0);
     modal.walletMethodReady = true;
-    assert.match(modal.renderWithdrawal(), />Continue in MetaMask/);
+    assert.match(modal.renderWithdrawal(), />Continue in your Ethereum wallet/);
     assert.equal(run.mock.callCount(), 0, 'finishing startup still needs a fresh click');
 });
 
@@ -89,7 +89,7 @@ test('saved withdrawal names its unchanged destination without pretending it is 
     assert.match(html, /zkapi-meta">To 0xaaaaaaa…aaaaaaaaa · Mutual close/, 'the saved destination is named once, beside the method');
     assert.match(html, /data-step="wallet" data-state="paused" aria-current="step"/);
     assert.match(html, /Nothing has been sent yet/);
-    assert.doesNotMatch(html, /Returning your balance|Returned to MetaMask/);
+    assert.doesNotMatch(html, /Returning your balance|Returned to (?:MetaMask|your Ethereum wallet)/);
 });
 
 test('only the SDK matched withdrawal event produces a completion banner and history navigation', t => {
@@ -134,7 +134,7 @@ function interruptedMutual(t) {
 test('interrupted mutual-close UI offers an explicit escape choice and shows its safety window before submission', t => {
     const modal = interruptedMutual(t);
     let html = modal.renderWithdrawal();
-    assert.match(html, /Paused before MetaMask/);
+    assert.match(html, /Paused before the Ethereum wallet prompt/);
     assert.match(html, /data-step="proof" data-state="paused"/);
     assert.match(html, /id="zkapi-use-escape-btn"[^>]*>Use escape hatch/);
     assert.match(html, /safety window/);

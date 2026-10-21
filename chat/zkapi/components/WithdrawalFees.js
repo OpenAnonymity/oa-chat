@@ -29,7 +29,12 @@ export function needsWithdrawalFees(owner) {
     const prepared = zkapiClient.config?.prepared_withdrawal;
     // The fee is deducted from the payout. Requiring an ETH balance here
     // would make the sponsored path impossible for precisely its users.
-    if (prepared?.fee_payer === 'payout' || (!prepared && owner.sponsoredChoice === 'payout' && owner.sponsoredApi?.())) return false;
+    // Send to address on a balance whose version pins a sponsorship pays a
+    // new withdrawal from the withdrawal (owner.addressPayoutOnly), so its
+    // funding address's ETH is not read for it; a version without one, and a
+    // saved wallet-paid plan, keep the funding-address fee as before.
+    if (prepared?.fee_payer === 'payout') return false;
+    if (!prepared && (owner.addressPayoutOnly?.() || (owner.sponsoredChoice === 'payout' && owner.sponsoredApi?.()))) return false;
     return owner.isOpen && ['balance', 'withdraw'].includes(owner.view)
         && zkapiClient.note && !zkapiClient.activeLateWithdrawal
         && zkapiClient.withdrawal?.phase !== 'pending'
@@ -60,7 +65,7 @@ export async function refreshWithdrawalFees(owner, { force = false } = {}) {
         if (owner.outcome?.withdrawalFeeIssue === 'address_fee_data') owner.clearTransientOutcome();
     } catch (error) {
         state.disconnected = error.code === 'withdrawal_wallet_disconnected' || (getWalletMethod() === 'metamask' && !globalThis.ethereum);
-        state.error = state.disconnected ? 'Connect MetaMask to check the network fee.' : 'Couldn’t check fees. Try again.';
+        state.error = state.disconnected ? 'Connect your Ethereum wallet to check the network fee.' : 'Couldn’t check fees. Try again.';
     } finally {
         state.loading = false;
         if (owner.withdrawalFees === state && scope === withdrawalFeeScope(owner) && needsWithdrawalFees(owner)) {
@@ -136,7 +141,7 @@ export function renderWithdrawalFees(owner) {
             <div class="zkapi-fee-total"><dt>${short ? 'You need to add' : 'Still needed'}</dt><dd>${receipt ? amount(receipt.shortfall) : placeholder}</dd></div>
         </dl>
         <div class="zkapi-fee-result" ${expanded ? 'hidden' : ''}><p role="status" ${ready ? 'class="zkapi-fee-covered"' : ''}>${status}</p>
-            <div class="zkapi-fee-action" ${expanded ? 'hidden' : ''}>${expanded ? '' : state?.disconnected ? '<button data-withdrawal-wallet-connect class="zkapi-secondary-button w-full" type="button">Connect MetaMask</button>' : state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button w-full" type="button">Try again</button>'
+            <div class="zkapi-fee-action" ${expanded ? 'hidden' : ''}>${expanded ? '' : state?.disconnected ? '<button data-withdrawal-wallet-connect class="zkapi-secondary-button w-full" type="button">Connect your Ethereum wallet</button>' : state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button w-full" type="button">Try again</button>'
                 : short ? `<button data-withdrawal-fee-topup class="zkapi-primary-button w-full" type="button" aria-expanded="${expanded}" ${checking ? 'disabled' : ''}>Add ${topUpAmount}</button>`
                 : '<button class="zkapi-secondary-button w-full" type="button" disabled style="visibility:hidden" aria-hidden="true" tabindex="-1">Add ETH</button>'}</div>
         </div>
@@ -155,7 +160,7 @@ export function attachWithdrawalFees(owner) {
             await zkapiClient.connectWallet();
             stopWithdrawalFees(owner);
         } catch {
-            if (owner.withdrawalFees) owner.withdrawalFees.error = 'MetaMask was not connected. Try again when you’re ready.';
+            if (owner.withdrawalFees) owner.withdrawalFees.error = 'Your Ethereum wallet was not connected. Try again when you’re ready.';
         } finally {
             release?.();
             if (owner.isOpen) { void refreshWithdrawalFees(owner, { force: true }); owner.render(); }
@@ -206,13 +211,13 @@ export function renderWithdrawalFeeLine(owner) {
     const usd = receipt ? fundingUsdText(receipt.needed) : null;
     const value = receipt ? `up to ${escape(usd || renderFundingWei(owner, receipt.needed))}`
         : '<span class="zkapi-skel" style="width:4.5rem" aria-hidden="true"></span><span class="zkapi-visually-hidden">Checking…</span>';
-    const where = metamask ? 'your MetaMask account' : 'your deposit address';
+    const where = metamask ? 'your Ethereum wallet account' : 'your deposit address';
     const shortEth = receipt ? renderFundingWei(owner, receipt.shortfall).split(' <span>')[0] : '';
     const status = state?.error ? `<p class="zkapi-withdraw-fee-status is-warn" role="status">${escape(state.error)} ${state.disconnected
-            ? '<button data-withdrawal-wallet-connect class="zkapi-text-link" type="button">Connect MetaMask</button>'
+            ? '<button data-withdrawal-wallet-connect class="zkapi-text-link" type="button">Connect your Ethereum wallet</button>'
             : '<button data-withdrawal-fee-refresh class="zkapi-text-link" type="button">Try again</button>'}</p>`
         : short ? `<p class="zkapi-withdraw-fee-status is-warn" role="status">Add <b>${shortEth}</b> to ${where} to pay the fee.</p>`
-        : ready ? `<p class="zkapi-withdraw-fee-status is-ok" role="status">${CHECK_ICON}<span>${metamask ? 'Paid from your MetaMask account when you confirm.' : 'Paid from the ETH at your deposit address.'}</span></p>`
+        : ready ? `<p class="zkapi-withdraw-fee-status is-ok" role="status">${CHECK_ICON}<span>${metamask ? 'Paid from your Ethereum wallet account when you confirm.' : 'Paid from the ETH at your deposit address.'}</span></p>`
         : `<p class="zkapi-withdraw-fee-status" role="status">${checking && !quote ? 'Checking the network fee…' : 'Updating the fee estimate…'}</p>`;
     const expanded = short && !metamask && owner.withdrawalFeeTopUp === state.scope;
     const reveal = short && !metamask && !expanded

@@ -275,7 +275,7 @@ export default class WelcomePanel {
         }
         this.busy = true;
         this.step = 'redeeming';
-        this.status = 'Connecting to MetaMask…';
+        this.status = 'Connecting to your Ethereum wallet…';
         this.error = '';
         this.notice = '';
         this.render();
@@ -430,7 +430,7 @@ export default class WelcomePanel {
                 ${renderFundingAccount(this)}
                 ${getWalletMethod() === 'address' ? '' : `<div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, open: fundingSetup?.open, scope: 'welcome' })}</div>`}
                 ${pendingDeposit ? `<p class="mt-4 text-sm text-foreground">Saved deposit: ${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="mt-1 text-xs text-muted-foreground">Your original amount and progress are saved. Continue to check or resume this deposit.</p>` : ''}`}
-                ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
+                ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(walletMethodText(daemonError))}</p>` : ''}
                 ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(walletMethodText(this.error))}</p>` : ''}
                 ${this.notice ? `<p class="mt-3 text-xs text-muted-foreground" role="status">${this.escapeHtml(walletMethodText(this.notice))}</p>` : ''}
                 ${versionClosed ? '' : pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with Ethereum wallet')}</button>`}
@@ -447,7 +447,7 @@ export default class WelcomePanel {
                 <p data-welcome-status class="mt-2 text-center text-xs leading-relaxed text-muted-foreground">${this.escapeHtml(walletMethodText(this.status))}</p>
                 ${renderFundingAccount(this)}
                 <div class="mt-5 h-1 overflow-hidden rounded-full bg-muted"><div class="zkapi-progress-indeterminate h-full rounded-full bg-blue-600"></div></div>
-                <p class="mt-4 text-center text-[10px] text-muted-foreground/70">${getWalletMethod() === 'address' ? 'Your funding transactions are saved in this browser.' : 'Keep this tab open while MetaMask confirmations are pending.'}</p>
+                <p class="mt-4 text-center text-[10px] text-muted-foreground/70">${getWalletMethod() === 'address' ? 'Your funding transactions are saved in this browser.' : 'Keep this tab open while Ethereum wallet confirmations are pending.'}</p>
             </div>`;
     }
 

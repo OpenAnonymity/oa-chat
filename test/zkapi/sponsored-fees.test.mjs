@@ -369,7 +369,8 @@ test('the fee choice says its words plainly, for every state, with and without p
             assert.match(html, /<fieldset[^>]*data-zkapi-sponsored-fieldset/);
             assert.doesNotMatch(text(html), FORBIDDEN_WORDS, text(html));
             assert.doesNotMatch(text(html), /\bundefined\b|\bnull\b|NaN|\[object/, text(html));
-            assert.equal((html.match(/name="zkapi-sponsored-fee"/g) || []).length, 2);
+            // Send to address has no wallet choice: the fee is paid from the withdrawal.
+            assert.equal((html.match(/name="zkapi-sponsored-fee"/g) || []).length, state.method === 'address' ? 1 : 2);
         }
     }
     // The figures are estimates for both withdrawal modes, with the relay disclosure.
@@ -391,6 +392,54 @@ test('the fee choice says its words plainly, for every state, with and without p
     // Nothing from a quote reaches the markup unescaped.
     const hostile = { available: false, reason: 'unknown', text: '<img src=x onerror=alert(1)>' };
     assert.doesNotMatch(renderSponsoredFee({ choice: 'payout', status: 'unavailable', quote: hostile }), /<img/);
+});
+
+test('Send to address offers only paying from the withdrawal, says when it asks, and points at the Ethereum wallet when it cannot', () => {
+    const ready = normalizeQuote({ available: true, mode: 'mutual', maxCost: '32750000000000000', flatFeeWei: '0',
+        minimumReceivedWei: '1467250000000000', payoutWei: '1500000000000000' });
+    const refused = normalizeQuote({ available: false, reason: 'paymaster_underfunded' });
+    const escapes = normalizeQuote({ available: false, reason: 'escapes_disabled' }, { mode: 'escape' });
+    for (const state of [{ status: 'idle' }, { status: 'loading' }, { status: 'ready', quote: ready },
+        { status: 'unavailable', quote: refused }, { status: 'idle', locked: true }]) {
+        // Whatever choice the dialog holds (the Ethereum wallet's), this one has none.
+        for (const choice of ['wallet', 'payout', undefined]) {
+            const html = renderSponsoredFee({ ...state, choice, method: 'address' });
+            const radios = html.match(/<input[^>]*name="zkapi-sponsored-fee"[^>]*>/g) || [];
+            assert.equal(radios.length, 1, `${state.status}: one way to pay`);
+            assert.match(radios[0], /value="payout"/);
+            assert.match(radios[0], /\bchecked\b/);
+            assert.doesNotMatch(html, /value="wallet"/);
+            assert.doesNotMatch(text(html), /Paid by your wallet|address this app holds|pays the network fee, in ETH/);
+            assert.match(text(html), /Paid from this withdrawal/);
+            assert.doesNotMatch(text(html), FORBIDDEN_WORDS);
+        }
+    }
+    // Before Continue nothing was asked: the line says when it will be, and
+    // names the relay before it sees anything.
+    const idle = text(renderSponsoredFee({ status: 'idle', method: 'address' }));
+    assert.match(idle, /Continue checks the network fee first\. Nothing is sent until you confirm\./);
+    assert.match(idle, /goes through this app to the service’s relay/);
+    assert.doesNotMatch(idle, /Checking the network fee/);
+    // A refused quote has no wallet to fall back on: no wallet hint, and the
+    // Ethereum wallet method one click away, with the check offered again.
+    for (const quote of [refused, escapes]) {
+        const html = renderSponsoredFee({ status: 'unavailable', quote, method: 'address' });
+        assert.doesNotMatch(text(html), /from your wallet instead/);
+        assert.match(text(html), /Send to address pays the network fee from the withdrawal only, so it can’t withdraw this balance right now\. Use Ethereum wallet instead\./);
+        assert.match(html, /<button[^>]*data-wallet-method="metamask"[^>]*>Use Ethereum wallet<\/button>/);
+        assert.match(html, /data-zkapi-sponsored-retry/);
+        assert.match(html, /value="payout"\s+checked\s+disabled/);
+    }
+    assert.match(text(renderSponsoredFee({ status: 'unavailable', quote: escapes, method: 'address' })), /doesn’t pay the network fee of an emergency exit/);
+    // Busy: everything is disabled, the way out included.
+    assert.match(renderSponsoredFee({ status: 'unavailable', quote: refused, method: 'address', busy: true }),
+        /data-wallet-method="metamask" disabled/);
+    // The Ethereum wallet's own choice is unchanged: both, the wallet first.
+    const wallet = renderSponsoredFee({ choice: 'wallet', status: 'idle', method: 'metamask' });
+    assert.deepEqual([...wallet.matchAll(/name="zkapi-sponsored-fee" value="(\w+)"/g)].map(match => match[1]), ['wallet', 'payout']);
+    assert.match(wallet, /value="wallet" checked/);
+    assert.match(text(wallet), /Paid by your wallet/);
+    assert.doesNotMatch(wallet, /data-wallet-method/);
 });
 
 test('payout fee estimates and saved-plan text make no exact-quote promise', () => {

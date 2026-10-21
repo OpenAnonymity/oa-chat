@@ -54,12 +54,12 @@ function describeActivity(activity) {
     const fallback = {
         access: ['Starting private chat', 'Preparing private access for this conversation.'],
         settlement: ['Finishing previous chat', 'Closing its temporary key and updating your private balance.'],
-        deposit: ['Adding funds', 'Follow the current step in MetaMask.'],
+        deposit: ['Adding funds', 'Follow the current step in your Ethereum wallet.'],
         withdraw: ['Returning your balance', 'Preparing the withdrawal and its private proof.'],
         escape: ['Starting account recovery', 'Preparing the escape-hatch transaction.'],
-        'escape-finalize': ['Finishing account recovery', 'Returning the balance to MetaMask.'],
+        'escape-finalize': ['Finishing account recovery', 'Returning the balance to your Ethereum wallet.'],
         'withdraw-sync': ['Checking withdrawal', 'Reading the latest on-chain status.'],
-        token: ['Updating MetaMask', 'Follow the current step in MetaMask.'],
+        token: ['Updating your Ethereum wallet', 'Follow the current step in your Ethereum wallet.'],
         refresh: ['Refreshing balance', 'Reading the latest private balance.']
     }[activity?.kind] || ['Working securely', 'Finishing a private payment step.'];
 
@@ -282,7 +282,7 @@ function buildJourney(primary, transition, activity) {
     } else if (primary.phase === 'withdrawal') {
         steps = [
             { id: 'prepare', label: 'Withdrawal prepared' },
-            { id: 'confirm', label: 'Finish in MetaMask' },
+            { id: 'confirm', label: 'Finish in your Ethereum wallet' },
             { id: 'sync', label: 'Update balance' }
         ];
         activeIndex = 1;
@@ -366,7 +366,7 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
                 title: 'Withdrawal receipt not found',
                 detail: preparedWithdrawal?.replacement_available
                     ? 'Check again, or safely resubmit the exact withdrawal with its original nonce.'
-                    : 'Check or cancel the pending transaction in MetaMask, then check again.',
+                    : 'Check or cancel the pending transaction in your Ethereum wallet, then check again.',
                 compact: 'Check withdrawal'
             }
         : withdrawalPhase === 'late_submitted'
@@ -383,9 +383,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
             }
         : withdrawalPhase === 'awaiting_wallet'
             ? {
-                title: 'Waiting for MetaMask',
+                title: 'Waiting for your Ethereum wallet',
                 detail: 'Confirm the wallet prompt, or recover it from Withdraw if it was closed.',
-                compact: 'Waiting for MetaMask'
+                compact: 'Waiting for your Ethereum wallet'
             }
             : withdrawalPhase === 'ambiguous'
                 ? {
@@ -409,9 +409,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
         }
         : pendingDeposit?.phase === 'awaiting_wallet'
             ? {
-                title: 'Waiting for MetaMask',
+                title: 'Waiting for your Ethereum wallet',
                 detail: 'Confirm the deposit, or recover the prompt from Private balance if it was closed.',
-                compact: 'Waiting for MetaMask'
+                compact: 'Waiting for your Ethereum wallet'
             }
             : pendingDeposit?.phase === 'ambiguous'
                 ? {
@@ -491,7 +491,7 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
             title: snapshot.loading ? 'Loading private balance' : 'Add funds to start chatting',
             detail: snapshot.loading
                 ? 'Restoring the private note stored in this browser.'
-                : 'Use MetaMask once, then OA Chat handles private access automatically.',
+                : 'Use your Ethereum wallet once, then OA Chat handles private access automatically.',
             compact: snapshot.loading ? 'Loading balance' : 'Add funds',
             busy: Boolean(snapshot.loading),
             blocksSend: !snapshot.loading

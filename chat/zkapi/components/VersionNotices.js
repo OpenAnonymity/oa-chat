@@ -10,7 +10,8 @@
 //
 // What is shown, and why it is shown that way:
 //   - one muted protocol-version pill in balance details, with a quiet
-//     availability line for an older balance
+//     availability line for an older balance and a `?` help button that
+//     opens a short explanation naming the version as the pill does
 //   - banners from the phase and the deposit gate, never from `state.show`:
 //     a lone exit-only version has no pill but a closed gate that must be
 //     explained
@@ -65,11 +66,11 @@
 // token escaped); text content uses versionCopyText. The few labels below
 // that copy.mjs has no key for are static and carry no operator text.
 import {
-    boundedOperatorText, copyTokens, escapeHtml, gateCopyKey, gateOffersReload, safeOperatorText, upgradeBannerKey,
-    versionCopy, versionCopyText
+    boundedOperatorText, copyTokens, displayProtocolVersion, escapeHtml, gateCopyKey, gateOffersReload,
+    safeOperatorText, upgradeBannerKey, versionCopy, versionCopyText
 } from '../versioning/copy.mjs';
 import { ABANDON_WORDS, openAbandonDialog } from './AbandonDialog.js';
-import { versionHelpDetail } from './PrivateBalanceHelp.js';
+import { privateBalanceHelpButton, versionHelpDetail } from './PrivateBalanceHelp.js';
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -171,9 +172,12 @@ function newerVersionAvailable(state) {
 
 function badgeModel(state) {
     if (!isRecord(state) || !isRecord(state.current)) return null;
-    // The pill names the zkAPI protocol version ("zkAPI v0.2"). A registry
-    // row without one falls back to its version label.
-    const protocol = typeof state.current.protocolVersion === 'string' ? state.current.protocolVersion.trim() : '';
+    // The pill names the zkAPI protocol version people are shown ("zkAPI
+    // v0.2"; copy.mjs displayProtocolVersion holds the one display override:
+    // registry row v4, protocol 0.4, reads "zkAPI v0.2"). Its help names the
+    // version the same way. A registry row without a protocol version falls
+    // back to its version label.
+    const protocol = displayProtocolVersion(state.current);
     if (protocol) {
         const text = `zkAPI v${protocol}`;
         return { label: escapeHtml(text), text, amber: false };
@@ -205,9 +209,10 @@ export function renderVersionBadge(state, options = {}) {
     // The dialog's pills (readiness, expiry) have their own frame; the panel's
     // are utility-styled at 9px.
     const classes = [surface === 'dialog' ? 'zkapi-version-pill zkapi-pill' : PILL_BASE, ...PILL_TONES[tone]].join(' ');
-    // The `?` is a tooltip, not a disclosure: nothing opens beneath it.
-    const toggle = '<span class="inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border border-border text-[9px] text-muted-foreground" '
-        + 'role="img" tabindex="0" aria-label="The zkAPI protocol version this balance uses" title="The zkAPI protocol version this balance uses">?</span>';
+    // The `?` is the shared help button: a real <button> (click, tap, Enter
+    // and Space) whose aria-expanded and aria-controls name the disclosure
+    // the owner renders (the balance dialog: AccountModal.renderVersionBadge).
+    const toggle = privateBalanceHelpButton(surface === 'dialog' ? 'modal' : 'panel', 'version', options.helpOpen === true);
     return `<span class="zkapi-version-badge-group" data-zkapi-version-badge-group data-zkapi-version-surface="${surface}">`
         + `<span class="${classes}" data-zkapi-version-badge data-zkapi-version-tone="${tone}">${badge.label}</span>`
         + `${toggle}${newerVersionAvailable(state) ? '<span class="zkapi-helper" data-zkapi-version-available>A new version is available.</span>' : ''}</span>`;

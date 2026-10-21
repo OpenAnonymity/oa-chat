@@ -20,8 +20,8 @@ function stepsFor(kind, { hasLease = false, escapePeriod = '', addressFunding = 
     }
     if (kind === 'deposit') {
         return [
-            { id: 'connect', label: 'Connect MetaMask', detail: 'Opens MetaMask to use your account.' },
-            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Moves the funds from your wallet into your private balance.' },
+            { id: 'connect', label: 'Connect your Ethereum wallet', detail: 'Opens your Ethereum wallet to use your account.' },
+            { id: 'deposit', label: 'Confirm the deposit in your Ethereum wallet', detail: 'Moves the funds from your wallet into your private balance.' },
             { id: 'chain', label: 'Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
     }
@@ -34,8 +34,8 @@ function stepsFor(kind, { hasLease = false, escapePeriod = '', addressFunding = 
         addressFunding
             ? { id: 'wallet', label: escape ? 'Send the escape start' : 'Send your withdrawal', detail: 'This browser signs it and pays the network fee from your funding address.' }
             : escape
-                ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
-                : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Approve the transaction in MetaMask.' },
+                ? { id: 'wallet', label: 'Confirm the escape start in your Ethereum wallet', detail: 'One transaction. Nothing moves before you confirm.' }
+                : { id: 'wallet', label: 'Confirm your withdrawal in your Ethereum wallet', detail: 'Approve the transaction in your Ethereum wallet.' },
         escape
             ? { id: 'chain', label: 'Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
             : { id: 'chain', label: 'Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
@@ -48,17 +48,19 @@ function stepsFor(kind, { hasLease = false, escapePeriod = '', addressFunding = 
 export function classifyWalletStatus(kind, message = '') {
     const text = String(message || '');
     if (!text) return null;
-    if (/Withdrawal confirmed\.|returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
+    // The SDK still says "MetaMask"; the app's own lines say "your Ethereum
+    // wallet" (services/walletMethod.mjs). Both mean the same step.
+    if (/Withdrawal confirmed\.|returned to (?:MetaMask|your Ethereum wallet)|Escape started|is available in (?:MetaMask|your Ethereum wallet)|now visible in (?:MetaMask|your Ethereum wallet)/i.test(text)) return { step: 'done', state: 'complete' };
     if (/^(?:(?:Deposit|Withdrawal|Replacement|Background replacement|Finalization)(?: replacement)? submitted\b|Checking submitted\b)|waiting for confirmation|checking confirmation/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
-        if (/Connecting to MetaMask|Connecting to the MetaMask account/i.test(text)) return { step: 'connect', state: 'active' };
-        if (/Confirm .*in MetaMask/i.test(text)) return { step: 'deposit', state: 'waiting' };
+        if (/Connecting to (?:MetaMask|your Ethereum wallet)|Connecting to the (?:MetaMask|Ethereum wallet) account/i.test(text)) return { step: 'connect', state: 'active' };
+        if (/Confirm .*in (?:MetaMask|your Ethereum wallet)/i.test(text)) return { step: 'deposit', state: 'waiting' };
         return null;
     }
     if (/Finishing the active chat/i.test(text)) return { step: 'settle', state: 'active' };
-    if (/Confirm the (mutual close|escape-hatch start)|Confirm .*in MetaMask|Opening .*MetaMask/i.test(text)) return { step: 'wallet', state: 'waiting' };
-    if (/server clearance|withdrawal proof|Connecting to MetaMask|Retry authorized/i.test(text)) return { step: 'proof', state: 'active' };
+    if (/Confirm the (mutual close|escape-hatch start)|Confirm .*in (?:MetaMask|your Ethereum wallet)|Opening .*(?:MetaMask|Ethereum wallet)/i.test(text)) return { step: 'wallet', state: 'waiting' };
+    if (/server clearance|withdrawal proof|Connecting to (?:MetaMask|your Ethereum wallet)|Retry authorized/i.test(text)) return { step: 'proof', state: 'active' };
     return null;
 }
 

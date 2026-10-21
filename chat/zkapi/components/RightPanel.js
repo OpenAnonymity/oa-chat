@@ -402,7 +402,7 @@ export default class RightPanel extends SharedRightPanel {
         // Balance readiness needs no badge. Progress and problems use plain text.
         const badgeBusy = !claimed && !hasError && experience.primary.busy && experience.primary.tone !== 'error';
         const walletWaiting = !claimed && !hasError && experience.primary.tone !== 'error'
-            && statusBadge === walletMethodText('Waiting for MetaMask');
+            && statusBadge === walletMethodText('Waiting for your Ethereum wallet');
         const depositStatus = !claimed && !hasError && experience.primary.tone !== 'error'
             && experience.primary.phase === 'deposit-recovery';
         // A withdrawal or recovery waiting on the person is a state, not a
@@ -442,7 +442,7 @@ export default class RightPanel extends SharedRightPanel {
                     <button id="zkapi-panel-fund" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">${note || held ? 'Balance details' : pendingDeposit ? 'Deposit status' : 'Add funds'}</button>
                     ${note && !claimed ? '<button id="zkapi-panel-withdraw" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">Withdraw</button>' : ''}
                 </div>
-                ${hasError && !held ? `<p class="zkapi-balance-error" role="status">${statusIcon()}<span>${this.escapeHtml(versionRefusalMessage(zkapiClient.lastError) ?? zkapiClient.lastError.message)}</span></p>` : ''}
+                ${hasError && !held ? `<p class="zkapi-balance-error" role="status">${statusIcon()}<span>${this.escapeHtml(versionRefusalMessage(zkapiClient.lastError) ?? walletMethodText(zkapiClient.lastError.message))}</span></p>` : ''}
             </div>
         `;
     }

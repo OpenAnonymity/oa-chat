@@ -838,7 +838,7 @@ test('account clock patches preserve the modal and enable escape finalization at
 
         modal.handleZkapiClock(deadline * 1000);
         assert.equal(finalizeButton.disabled, false);
-        assert.equal(finalizeButton.textContent, 'Finalize in MetaMask');
+        assert.equal(finalizeButton.textContent, 'Finalize in your Ethereum wallet');
         assert.equal(countdown.textContent, 'The safety window is complete.');
         assert.equal(globalThis.document.activeElement, finalizeButton);
         assert.equal(withdrawalCheckbox.checked, true);
@@ -916,7 +916,7 @@ test('wallet work narrates inside the dialog: the action row becomes a status ro
         assert.doesNotMatch(html, /id="zkapi-deposit-btn"/, 'the button gives way to the status row');
 
         modal.setStatus('Waiting for MetaMask…');
-        assert.equal(progressText, 'Waiting for MetaMask…|t-text-swap', 'new words settle into the same row');
+        assert.equal(progressText, 'Waiting for your Ethereum wallet…|t-text-swap', 'new words settle into the same row');
         assert.deepEqual(toasts, [], 'the open dialog narrates; no toast');
 
         modal.close();
@@ -957,9 +957,9 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
         // The caption says "Saved deposit"; one short note says why. No lede.
         assert.doesNotMatch(html, /zkapi-lede/);
         assert.match(html, /Saved deposit/);
-        assert.match(html, /Before resuming, check MetaMask for a pending transaction\./);
+        assert.match(html, /Before resuming, check your Ethereum wallet for a pending transaction\./);
         assert.doesNotMatch(html, /value="99"/);
-        assert.match(html, /Resume with MetaMask/);
+        assert.match(html, /Resume with Ethereum wallet/);
     } finally {
         zkapiClient.wallet = originalWallet;
         zkapiClient.config = originalConfig;
@@ -980,7 +980,7 @@ test('balance views keep funding and payment history while omitting redundant wa
             zkapiClient.wallet = { has_note: Boolean(note), note };
             const html = modal.renderBalance();
             assert.match(html, /Payment history/);
-            assert.doesNotMatch(html, /zkapi-watch-token-btn|Add USDC to MetaMask|<dt>Network|<dt>Request mode|<dt>Vault/);
+            assert.doesNotMatch(html, /zkapi-watch-token-btn|Add USDC to (?:MetaMask|your Ethereum wallet)|<dt>Network|<dt>Request mode|<dt>Vault/);
             assert.match(html, note ? /Withdraw/ : /Continue with Ethereum wallet/);
         }
         assert.match(modal.renderWithdrawalRecords(), /Your deposits and withdrawals will appear here/);
@@ -1250,7 +1250,7 @@ test('an idle Withdraw dialog redirects to a claimed balance while live wallet r
         assert.equal(modal.view, 'withdraw');
         assert.match(modal.overlay.innerHTML, /id="zkapi-sync-withdrawal-btn"/);
         assert.doesNotMatch(modal.overlay.innerHTML,
-            /Returned to MetaMask|id="zkapi-retry-dropped-withdrawal-btn"|id="zkapi-retry-withdrawal-btn"|id="zkapi-finalize-btn"|id="zkapi-withdraw-btn"/);
+            /Returned to (?:MetaMask|your Ethereum wallet)|id="zkapi-retry-dropped-withdrawal-btn"|id="zkapi-retry-withdrawal-btn"|id="zkapi-finalize-btn"|id="zkapi-withdraw-btn"/);
         delete zkapiClient.config.prepared_withdrawal;
         modal.render();
         assert.equal(modal.view, 'balance');
@@ -1301,7 +1301,7 @@ test('historical wallet progress changes in place without remounting the card', 
     modal.render = () => assert.fail('progress must not rebuild the modal');
     modal.backgroundProgress.phase = 'wallet';
     modal.updateBackgroundProgress();
-    assert.equal(label.textContent, 'Waiting for MetaMask');
+    assert.equal(label.textContent, 'Waiting for your Ethereum wallet');
     modal.backgroundProgress.phase = 'confirming';
     modal.updateBackgroundProgress();
     assert.equal(label.textContent, 'Confirming transaction');

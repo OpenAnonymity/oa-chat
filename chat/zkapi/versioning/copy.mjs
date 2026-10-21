@@ -25,6 +25,13 @@
 //   V        a version named by a text that is about neither this page's
 //            version nor the other one with unfinished business
 //            (operator.reference)
+//   FP, NP   the protocol version people are shown for F and for N ("0.2"),
+//            read by the pill's help only (help.current, help.previous), which
+//            then names a version the way the pill does: "zkAPI v0.2". See
+//            displayProtocolVersion. Without one the help says "version F"
+//   sameName flag: F and N are different versions shown under the same name
+//            (help.previous then calls this page's one "an earlier build"
+//            instead of printing that name twice)
 //   closeBy  local date and time of the close-by instant
 //   expiry   local date and time the balance expires
 //   message  words for the service pause (service.paused): copyTokens fills it
@@ -96,13 +103,20 @@
 const TEMPLATES = Object.freeze({
     // Version pill and its help. The pill is amber only inside the prompt
     // window; that is styling, not words. With no version to name there is no
-    // pill text at all.
+    // pill text at all. A version with a protocol version is pilled as
+    // "zkAPI v{FP}" (VersionNotices.js); 'pill' is the fallback for a row
+    // without one. The help names versions the same way: FP/NP when known,
+    // else the registry name, and never one name for two different versions.
     'pill': '{?F}Version {F}{/F}',
     'help.title': 'About versions',
-    'help.current': 'Your balance is on {?F}version {F}, the latest version{/F}{!F}the latest version{/F}.',
-    'help.previous': 'Your balance is on {?F}version {F}{/F}{!F}an earlier version{/F}. It keeps working, '
-        + 'but new deposits go to {?N}version {N}{/N}{!N}a newer version{/N}, and a balance can’t move '
-        + 'between versions. To upgrade, withdraw your balance and deposit again.',
+    'help.current': 'Your balance is on {?FP}zkAPI v{FP}, the latest version{/FP}'
+        + '{!FP}{?F}version {F}, the latest version{/F}{!F}the latest version{/F}{/FP}.',
+    'help.previous': 'Your balance is on {?sameName}an earlier build{/sameName}'
+        + '{!sameName}{?FP}zkAPI v{FP}{/FP}{!FP}{?F}version {F}{/F}{!F}an earlier version{/F}{/FP}{/sameName}. '
+        + 'It keeps working, but new deposits go to '
+        + '{?NP}{?sameName}the latest build of zkAPI v{NP}{/sameName}{!sameName}zkAPI v{NP}, the latest version{/sameName}{/NP}'
+        + '{!NP}{?N}version {N}, the latest version{/N}{!N}a newer version{/N}{/NP}. '
+        + 'To move your balance, withdraw it and deposit again.',
 
     // Upgrade banner, by time left. The dates are the user's local date and time.
     'banner.available': '{?N}Version {N}{/N}{!N}A newer version{/N} is available. Your balance is on '
@@ -441,6 +455,40 @@ export function versionName(version) {
     return match ? match[1] : stripped;
 }
 
+// The protocol version people are SHOWN for a registry row, where it differs
+// from the row's own `protocolVersion`. UI words only: the row's id,
+// `protocolVersion`, adapter, routes, stored records, the build and every
+// protocol check keep their values. One entry per display decision:
+//   v4  the current PR31 version (active on Sepolia; protocolVersion "0.4",
+//       adapter leaf-bound-v2) is shown as "zkAPI v0.2" by product decision
+//       (October 2026), on every network that serves the row. The older
+//       rows keep their own names: v1 "zkAPI v0.1", v2 "zkAPI v0.2", v3
+//       "zkAPI v0.3"; where v2 and v4 meet (a version 2 balance whose
+//       deposits moved to v4) the help says "an earlier build" rather than
+//       print one name for both (`sameName`).
+// An entry applies only while BOTH the id and the registry protocolVersion
+// match, so a later edit of that row ends the override instead of renaming a
+// different protocol. Not a registry field on purpose: nothing but these
+// words reads it.
+const DISPLAY_PROTOCOL_VERSIONS = Object.freeze([
+    Object.freeze({ id: 'v4', protocolVersion: '0.4', display: '0.2' })
+]);
+
+/**
+ * The protocol version people are shown for a version ({id, protocolVersion},
+ * a ResolvedVersion or VersionState.current): the display override above
+ * when one applies, else the row's `protocolVersion`; '' when it has none.
+ * The pill prints "zkAPI v" before it.
+ */
+export function displayProtocolVersion(version) {
+    if (!isRecord(version)) return '';
+    const protocol = typeof version.protocolVersion === 'string' ? version.protocolVersion.trim() : '';
+    if (!protocol) return '';
+    const id = typeof version.id === 'string' ? version.id : '';
+    const override = DISPLAY_PROTOCOL_VERSIONS.find(entry => entry.id === id && entry.protocolVersion === protocol);
+    return override ? override.display : protocol;
+}
+
 const DEFAULT_DATE_OPTIONS = Object.freeze({
     year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
 });
@@ -551,7 +599,7 @@ function render(key, tokens, encode) {
     // Conditionals first, on the template only: a token value that happens to
     // look like template syntax is inserted afterwards and never re-read. A
     // conditional may hold others of a different name, so resolve until none
-    // is left (templates nest at most two deep).
+    // is left (templates nest at most three deep: the help).
     let resolved = TEMPLATES[key];
     for (let pass = 0; pass < 4; pass += 1) {
         const next = resolved.replace(CONDITIONAL, (match, sign, name, inner) => (
@@ -566,6 +614,15 @@ function render(key, tokens, encode) {
 // ---------------------------------------------------------------------------
 // Helpers that tie VersionState to the table
 // ---------------------------------------------------------------------------
+
+// A version ref with its registry protocol version: the ref's own, else the
+// table row's of the same id (VersionState.target carries only id and label).
+function withProtocol(version, table) {
+    if (typeof version.protocolVersion === 'string' && version.protocolVersion.trim()) return version;
+    const row = Array.isArray(table) ? table.find(entry => isRecord(entry) && entry.id === version.id) : null;
+    return row && typeof row.protocolVersion === 'string'
+        ? { id: version.id, protocolVersion: row.protocolVersion } : version;
+}
 
 // The registry label of a version id, when the caller passed the table; the
 // id alone otherwise (versionName reads "v2" as "2").
@@ -600,6 +657,11 @@ function namedById(id, table) {
  *            larger of the refused attempt's bound and the standing one
  *   retryIn  whole seconds until a refused withdrawal may be retried
  *            (`options.now`)
+ *   FP, NP   the protocol versions people are shown for F and N
+ *            (displayProtocolVersion): F's from `state.current` as the pill
+ *            reads it, N's from `table` by id when the ref (`state.target`)
+ *            carries none
+ *   sameName flag: F and N are different versions with the same FP/NP
  * Missing values are left out so the templates fall back to their plainer
  * wording.
  *
@@ -625,6 +687,14 @@ export function copyTokens(state, options) {
     };
     if (target) name('N', target);
     if (current) name('F', current);
+    // The names the pill shows (its help reads these). This page's version
+    // is read from the state alone, as the pill reads it; the target is a ref
+    // with no protocol version, so its table row supplies one.
+    const shownF = current ? displayProtocolVersion(current) : '';
+    const shownN = target ? displayProtocolVersion(withProtocol(target, table)) : '';
+    if (shownF) tokens.FP = shownF;
+    if (shownN) tokens.NP = shownN;
+    if (shownF && shownN && shownF === shownN && current.id !== target.id) tokens.sameName = 1;
     const previousId = isRecord(state.previous) && typeof state.previous.versionId === 'string'
         ? state.previous.versionId : '';
     if (previousId && previousId !== current?.id) name('P', namedById(previousId, table));

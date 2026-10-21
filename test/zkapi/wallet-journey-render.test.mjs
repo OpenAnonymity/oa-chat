@@ -62,15 +62,15 @@ test('while a withdrawal runs, the form folds to its method and the steps follow
     try {
         const modal = modalWith({}, { busy: true, journeyKind: 'withdraw', status: 'Confirm the mutual close in MetaMask…' });
         const html = modal.renderWithdrawal();
-        assert.match(html, /zkapi-meta">To your MetaMask account · Mutual close/);
+        assert.match(html, /zkapi-meta">To your Ethereum wallet account · Mutual close/);
         assert.doesNotMatch(html, /zkapi-withdraw-confirm|name="zkapi-withdraw-mode"/);
         assert.match(html, /data-zkapi-journey data-kind="withdraw"/);
         assert.match(html, /data-step="proof" data-state="complete"/);
         assert.match(html, /data-step="wallet" data-state="waiting" aria-current="step"/);
         assert.match(html, /data-step="chain" data-state="upcoming"/);
-        assert.match(html, /Confirm your withdrawal in MetaMask/);
-        assert.match(html, /Approve the transaction in MetaMask\./);
-        assert.match(html, /data-zkapi-busy-label>Waiting for MetaMask…/, 'the busy action says what it waits for');
+        assert.match(html, /Confirm your withdrawal in your Ethereum wallet/);
+        assert.match(html, /Approve the transaction in your Ethereum wallet\./);
+        assert.match(html, /data-zkapi-busy-label>Waiting for your Ethereum wallet…/, 'the busy action says what it waits for');
         assert.doesNotMatch(html, /zkapi-progress-text/);
     } finally { Object.assign(zkapiClient, original); }
 });
@@ -82,7 +82,7 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         const html = modalWith().renderWithdrawal();
         assert.match(html, /data-step="proof" data-state="complete"/);
         assert.match(html, /data-step="wallet" data-state="waiting"/);
-        assert.match(html, /MetaMask may still be open\. Check it, or recover the request/);
+        assert.match(html, /Your Ethereum wallet may still be open\. Check it, or recover the request/);
         assert.match(html, /Recover withdrawal/);
         assert.match(html, /id="zkapi-recover-withdrawal-btn"/);
         assert.match(html, /id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button"/);
@@ -102,7 +102,7 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         zkapiClient.config = { prepared_withdrawal: { phase: 'prepared', mode: 'mutual' } };
         const ready = modalWith().renderWithdrawal();
         assert.match(ready, /data-step="proof" data-state="complete"/);
-        assert.match(ready, /id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled>Continue in MetaMask/);
+        assert.match(ready, /id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled>Continue in your Ethereum wallet/);
         assert.doesNotMatch(ready, /id="zkapi-park-withdrawal-btn"/, "withdrawal recovery does not offer set aside");
     } finally { Object.assign(zkapiClient, original); }
 });
@@ -130,7 +130,7 @@ test('a deposit in flight shows its steps under the figure; a persisted pending 
         const ambiguous = modalWith({}, { view: 'balance' }).renderBalance();
         assert.match(ambiguous, /id="zkapi-check-deposit-btn" class="zkapi-primary-button"[^>]*>Check payment status/, 'an unknown outcome still asks for a check');
         assert.match(ambiguous, /Deposit status unknown/);
-        assert.match(ambiguous, /id="zkapi-retry-deposit-btn" class="zkapi-secondary-button"[^>]*>Try again in MetaMask/);
+        assert.match(ambiguous, /id="zkapi-retry-deposit-btn" class="zkapi-secondary-button"[^>]*>Try again in your Ethereum wallet/);
         assert.match(ambiguous, /whether your deposit went through/);
     } finally { Object.assign(zkapiClient, original); }
 });
@@ -149,7 +149,7 @@ test('a canceled MetaMask prompt is said in the dialog, on the step it stopped a
         assert.equal(modal.outcome.tone, 'info');
         assert.match(modal.rendered, /data-step="wallet" data-state="paused"/, 'nothing was submitted: the persisted phase is still prepared');
         assert.match(modal.rendered, /Withdrawal canceled\./);
-        assert.match(modal.rendered, /id="zkapi-withdraw-btn"[^>]*>Continue in MetaMask/);
+        assert.match(modal.rendered, /id="zkapi-withdraw-btn"[^>]*>Continue in your Ethereum wallet/);
     } finally { Object.assign(zkapiClient, original); }
 });
 
@@ -165,8 +165,8 @@ test('a canceled deposit retains any recovery plan that could not safely be clea
         // Found after a reload: the saved plan, and how to pick it up.
         const saved = modal.renderBalance();
         assert.match(saved, /Saved deposit/);
-        assert.match(saved, /Before resuming, check MetaMask for a pending transaction\./);
-        assert.match(saved, /Resume with MetaMask/);
+        assert.match(saved, /Before resuming, check your Ethereum wallet for a pending transaction\./);
+        assert.match(saved, /Resume with Ethereum wallet/);
         assert.doesNotMatch(saved, /Deposit canceled/);
 
         await modal.run(async report => { report('Confirm the deposit in MetaMask…'); throw Object.assign(new Error('User rejected the request.'), { code: 4001 }); }, { kind: 'deposit', title: 'Adding your balance' });
@@ -175,7 +175,7 @@ test('a canceled deposit retains any recovery plan that could not safely be clea
         assert.match(modal.rendered, /Saved deposit/);
         assert.doesNotMatch(modal.rendered, /Saved in this browser/);
         assert.doesNotMatch(modal.rendered, /Try again with Ethereum wallet/);
-        assert.match(modal.rendered, /Resume with MetaMask/);
+        assert.match(modal.rendered, /Resume with Ethereum wallet/);
     } finally { Object.assign(zkapiClient, original); }
 });
 
@@ -190,7 +190,7 @@ test('a deposit keeps one page from its first step to its confirmation', () => {
         assert.match(running, /<p class="zkapi-balance-caption">Deposit<\/p>/);
         assert.match(running, /data-zkapi-journey data-kind="deposit"/);
         assert.match(running, /data-step="deposit" data-state="waiting"/);
-        assert.match(running, /class="zkapi-funding-wait zkapi-deposit-wait" role="status">[^]*data-zkapi-deposit-wait>Confirm the deposit in MetaMask</, 'a quiet line names the current step');
+        assert.match(running, /class="zkapi-funding-wait zkapi-deposit-wait" role="status">[^]*data-zkapi-deposit-wait>Confirm the deposit in your Ethereum wallet</, 'a quiet line names the current step');
         assert.doesNotMatch(running, /zkapi-deposit-dismiss-btn|<button class="zkapi-primary-button" type="button" disabled>|Saved in this browser/, 'no dead button or Close while it runs');
         assert.doesNotMatch(running, /data-wallet-method|data-funding-amount|id="zkapi-deposit-btn"|zkapi-progress/, 'no amount field, method switch or loose status line while it runs');
         assert.equal(modal.pageKey(), 'deposit-progress');

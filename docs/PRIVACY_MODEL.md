@@ -824,13 +824,21 @@ Rules the app keeps:
   which the generated hosting configuration forwards to the one URL the
   reviewed profile pins. There is no person-chosen relay (that would route a
   request around the app's proxy).
-- The relay is contacted only after the person chose "Paid from this
-  withdrawal": asking for a quote and starting the withdrawal are the two
-  contacts, and opening the form sends nothing. The form says, before
-  anything is sent, that the withdrawal goes through this app to the service's
-  relay and that the relay sees it and the receiving address.
-- Paying from the wallet stays the default and is always offered beside it; an
-  unavailable quote says why and keeps the wallet.
+- The relay is contacted only after the person chose to pay from the
+  withdrawal: "Paid from this withdrawal" in the Ethereum wallet method, or
+  Continue in Send to address on a version that pins a sponsorship. Asking for
+  a quote and starting the withdrawal are the two contacts, and opening the
+  form sends nothing. The form says, before anything is sent, that the
+  withdrawal goes through this app to the service's relay and that the relay
+  sees it and the receiving address.
+- In the Ethereum wallet method, paying from the wallet stays the default and
+  is always offered beside it; an unavailable quote says why and keeps the
+  wallet. Send to address on a version that pins a sponsorship pays only from
+  the withdrawal (it never funds the browser-held address), so every such
+  withdrawal reaches the operator's relay, and such an escape is not
+  independent of the operator; the Ethereum wallet method keeps that
+  independence. A version without a sponsorship keeps Send to address's
+  funding-address route.
 - The Send Ethereum key signs a hash without a prompt, so the host judges each
   operation where it would leave the browser (payee, note, mode, concession,
   fee cap and cost against what the person confirmed, the pinned contracts
@@ -843,8 +851,8 @@ Rules the app keeps:
   read, and the rows stay in memory.
 
 **Limits.** The relay is a service of the operator, so it can refuse, delay or
-log; a refused or delayed withdrawal can always be started again from the
-wallet. If the receiving address is a contract that rejects a plain ETH
+log; a refused or delayed new withdrawal can always be started again from the
+Ethereum wallet method (a saved one stays bound to the key that prepared it). If the receiving address is a contract that rejects a plain ETH
 payment, the payout is held at the paymaster for that address to claim by one
 ordinary public transaction, which ties the sending account to it.
 
