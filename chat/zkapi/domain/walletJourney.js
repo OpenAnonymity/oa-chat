@@ -32,7 +32,10 @@ function stepsFor(kind, { hasLease = false, escapePeriod = '', addressFunding = 
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
             : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server authorizes it and this device makes the proof.' },
         addressFunding
-            ? { id: 'wallet', label: escape ? 'Send the escape start' : 'Send your withdrawal', detail: 'This browser signs it and pays the network fee from your funding address.' }
+            // Fee-neutral: Send to address pays from the withdrawal on a
+            // sponsored version and from the funding address otherwise.
+            ? { id: 'wallet', label: escape ? 'Send the escape start' : 'Send your withdrawal',
+                detail: escape ? 'This browser signs and sends the escape start.' : 'This browser signs and sends your withdrawal.' }
             : escape
                 ? { id: 'wallet', label: 'Confirm the escape start in your Ethereum wallet', detail: 'One transaction. Nothing moves before you confirm.' }
                 : { id: 'wallet', label: 'Confirm your withdrawal in your Ethereum wallet', detail: 'Approve the transaction in your Ethereum wallet.' },

@@ -81,6 +81,12 @@ test('with Send ETH the browser signs, so the steps say what it does and none wa
     const withdraw = walletJourney({ kind: 'withdraw', message: 'Confirm the mutual close in MetaMask…', addressFunding: true });
     assert.equal(withdraw.steps[1].label, 'Send your withdrawal');
     assert.equal(withdraw.steps[1].state, 'active');
+    // Fee-neutral: on a sponsored version the fee comes from the withdrawal,
+    // otherwise from the funding address; the step claims neither.
+    assert.equal(withdraw.steps[1].detail, 'This browser signs and sends your withdrawal.');
+    const escape = walletJourney({ kind: 'escape', message: 'Confirm the escape-hatch start in MetaMask…', addressFunding: true });
+    assert.equal(escape.steps.find(step => step.id === 'wallet').detail, 'This browser signs and sends the escape start.');
+    assert.doesNotMatch(JSON.stringify([withdraw.steps, escape.steps]), /network fee|funding address/i);
     assert.deepEqual(walletJourney({ kind: 'deposit', nativeEth: true }).steps.map(step => step.id), ['connect', 'deposit', 'chain'], 'MetaMask keeps its own steps');
     assert.equal(walletJourney({ kind: 'deposit', nativeEth: true }).steps[1].label, 'Confirm the deposit in your Ethereum wallet');
 });

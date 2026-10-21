@@ -71,6 +71,9 @@
   escape is not independent of the operator; the Ethereum wallet method keeps
   that independence. A relay refusal (balance below the fee, uneconomic,
   paused paymaster) leaves Send to address no way through but Ethereum wallet.
+- The Send to address withdrawal journey step is fee-neutral ("This browser
+  signs and sends your withdrawal." / "…the escape start.") because who pays
+  the fee depends on the version (domain/walletJourney.js).
 
 ## October 21, 2026 — "Ethereum wallet" everywhere
 
