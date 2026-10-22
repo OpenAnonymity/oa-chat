@@ -1170,7 +1170,7 @@ export default class Sidebar {
     }
 
     /**
-     * Full-title card beside the sidebar for chats whose title is cut off.
+     * Title and activity-time card beside the sidebar for every chat.
      * Pointer devices only; appears after a short rest, then follows the
      * pointer row to row without waiting again.
      */
@@ -1199,7 +1199,7 @@ export default class Sidebar {
     showHoverCard(row) {
         if (!row?.isConnected || row !== this.hoverCardRow || this.floatingMenu) return this.hideHoverCard({ keepRow: true });
         const input = row.querySelector('.session-title-input');
-        if (!input || !input.readOnly || input.scrollWidth <= input.clientWidth + 1) {
+        if (!input || !input.readOnly) {
             return this.hideHoverCard({ keepRow: true });
         }
         const sessionId = row.dataset.sessionId;
