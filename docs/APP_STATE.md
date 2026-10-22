@@ -7934,3 +7934,8 @@ behavior changes.
 The Account footer separator is always visible using the existing border color
 token, including empty/short histories and when scrolled to the bottom. It no
 longer depends on `has-more-below`. Footer placement and spacing are unchanged.
+
+The fixed 5px white strip above that separator is removed: the main sidebar
+and history frame have no bottom padding. The history viewport now meets the
+separator directly; the Account row and history's scrolling end spacer retain
+their existing dimensions.

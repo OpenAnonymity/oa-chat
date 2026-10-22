@@ -6602,7 +6602,12 @@ html {
 }
 
 .sidebar-main-content {
-    padding-bottom: 0.25rem !important;
+    padding-bottom: 0 !important;
+}
+
+/* Let history meet the footer separator without a fixed blank strip. */
+.sidebar-history-frame {
+    padding-bottom: 0;
 }
 
 .account-nav {
