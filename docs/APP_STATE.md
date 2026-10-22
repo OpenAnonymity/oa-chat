@@ -7930,3 +7930,7 @@ as well as clipped ones. The existing 500ms delay, pointer-only eligibility,
 rename/menu suppression, and dismissal on scroll, headings, gaps, or pointer
 exit are unchanged. This is a display-only change; no chat storage or account
 behavior changes.
+
+The Account footer separator is always visible using the existing border color
+token, including empty/short histories and when scrolled to the bottom. It no
+longer depends on `has-more-below`. Footer placement and spacing are unchanged.

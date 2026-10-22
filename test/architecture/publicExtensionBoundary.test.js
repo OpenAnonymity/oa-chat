@@ -134,12 +134,13 @@ test('signed-in Account uses the compact identity and disclosure treatment', () 
     assert.match(accountModal, /id="account-clear-btn" class="account-compact-row"/);
 });
 
-test('session history stops above the account row with a hairline continuation cue', () => {
+test('session history stops above the account row with a persistent separator', () => {
     const styles = read('chat/styles.css');
     const sidebar = read('chat/components/Sidebar.js');
     assert.doesNotMatch(styles, /\.session-scroll-fade/);
     assert.doesNotMatch(styles, /backdrop-filter:\s*blur\(2px\)/);
-    assert.match(styles, /#sidebar:has\(\.session-scroll-shell\.has-more-below\) \.account-nav\s*\{[^}]*border-top-color/s);
+    assert.match(styles, /\.account-nav\s*\{[^}]*border-top:\s*1px solid hsl\(var\(--color-border\)\);/s);
+    assert.doesNotMatch(styles, /#sidebar:has\(\.session-scroll-shell\.has-more-below\) \.account-nav/);
     assert.match(styles, /\.session-list-end-spacer\s*\{[^}]*height:\s*8px/s);
     assert.match(styles, /#sessions-list \.chat-session,\s*#sessions-list \.model-category-header\s*\{[^}]*var\(--session-row-h/s);
     assert.match(styles, /\.session-row-actions\s*\{[^}]*position:\s*absolute/s);
