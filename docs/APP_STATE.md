@@ -7923,3 +7923,10 @@ or live-provider release approval. Sentry remains outside this branch.
 The stalled-answer line now reads `Still working · Ns` after one second, measured from the last answer output, for single replies and Parallel lanes. Its counter is aria-hidden and the static status remains accessible. The existing runtime display registry owns the single-reply timestamp, so session restoration preserves elapsed time without changing Stop/disposal ownership. Parallel keeps the timestamp on its live lane state; no additional persistence operation or network telemetry is added. A shared DOM clock stops when no lines remain. Flat and bubble spacing follows the answer text edge. Rounded reasoning labels and the model → reasoning → answer order are preserved.
 
 Parallel restoration also reapplies active stalled lanes from the controller’s runtime registry after rendering saved messages. This covers simultaneous quiet lanes whose last persisted snapshots predate the stall. Entries are scoped per invocation, filtered by session/abort signal, and discarded on settlement. Both dynamic and restored lane lines use `role="status"`.
+## October 22, 2026 — sidebar hover cards for every title
+
+The sidebar title/activity-time hover card now appears for fully visible titles
+as well as clipped ones. The existing 500ms delay, pointer-only eligibility,
+rename/menu suppression, and dismissal on scroll, headings, gaps, or pointer
+exit are unchanged. This is a display-only change; no chat storage or account
+behavior changes.
