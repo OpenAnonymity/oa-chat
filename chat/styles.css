@@ -676,35 +676,95 @@ html.switching-theme *::after {
     overflow: hidden;
 }
 
-.session-scroll-fade {
+.session-list-end-spacer {
+    height: 8px;
+    flex: 0 0 8px;
+}
+
+/* One spacing model for full and virtualized lists, so row fitting
+   (Sidebar.applyRowFit) can predict where every row edge lands. */
+#sessions-list {
+    gap: 0;
+}
+
+#sessions-list .chat-session,
+#sessions-list .model-category-header {
+    height: var(--session-row-h, 2.25rem);
+}
+
+/* The row menu floats over the end of the title instead of reserving
+   space beside it, so titles use the full row until hover. */
+.session-row-actions {
     position: absolute;
-    right: 0;
+    top: 0;
+    right: 0.25rem;
     bottom: 0;
-    left: 0;
-    z-index: 2;
-    height: 2.5rem;
-    pointer-events: none;
-    background: linear-gradient(
-        to bottom,
-        hsl(var(--color-background) / 0),
-        hsl(var(--color-background) / 0.72) 58%,
-        hsl(var(--color-background) / 0.98)
-    );
-    -webkit-backdrop-filter: blur(2px);
-    backdrop-filter: blur(2px);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48%, #000);
-    mask-image: linear-gradient(to bottom, transparent, #000 48%, #000);
+    display: flex;
+    align-items: center;
     opacity: 0;
     transition: opacity 0.12s ease-out;
 }
 
-.session-scroll-shell.has-more-below .session-scroll-fade {
+.chat-session:hover .session-row-actions,
+.chat-session:focus-within .session-row-actions,
+.chat-session[data-menu-open] .session-row-actions {
     opacity: 1;
 }
 
-.session-list-end-spacer {
-    height: 40px;
-    flex: 0 0 40px;
+.chat-session:hover .session-title-wrap,
+.chat-session:focus-within .session-title-wrap,
+.chat-session[data-menu-open] .session-title-wrap {
+    /* Star + menu buttons cover the last ~3.4rem of the title. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+    mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+}
+
+.session-row-actions .session-star-btn {
+    width: 1.625rem;
+    height: 1.75rem;
+}
+
+.session-menu-separator {
+    height: 1px;
+    margin: 0.25rem 0.375rem;
+    background: hsl(var(--color-border));
+}
+
+/* Full title beside the sidebar for chats whose title is cut off. */
+.session-hover-card {
+    position: fixed;
+    z-index: 10004;
+    max-width: 18rem;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    background: hsl(var(--color-popover, var(--color-background)));
+    color: hsl(var(--color-foreground));
+    box-shadow: 0 8px 24px hsl(var(--color-foreground) / 0.12);
+    pointer-events: none;
+    animation: sessionHoverCardIn 0.12s ease-out;
+}
+
+.session-hover-card-title {
+    font-size: 0.875rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.session-hover-card-time {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+@keyframes sessionHoverCardIn {
+    from { opacity: 0; transform: translateX(-2px); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .session-hover-card { animation: none; }
+    .session-row-actions { transition: none; }
 }
 
 .chat-session {
@@ -6491,20 +6551,30 @@ html {
     display: contents;
 }
 
+/* History and the account row stack; the list never runs underneath. */
+#sidebar > .sidebar-main-content {
+    flex: 1 1 0;
+    min-height: 0;
+    height: auto;
+}
+
 .sidebar-main-content {
-    padding-bottom: 3.5rem !important;
+    padding-bottom: 0.25rem !important;
 }
 
 .account-nav {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    left: 0;
+    position: relative;
+    flex: 0 0 auto;
     z-index: 30;
     padding: 0;
-    border-top: 1px solid hsl(var(--color-border));
-    background: hsl(var(--color-background) / 0.96);
-    backdrop-filter: blur(12px);
+    border-top: 1px solid transparent;
+    background: hsl(var(--color-background));
+    transition: border-color 0.15s ease-out;
+}
+
+/* A hairline appears only while more history sits below the fold. */
+#sidebar:has(.session-scroll-shell.has-more-below) .account-nav {
+    border-top-color: hsl(var(--color-border));
 }
 
 .account-nav-row {

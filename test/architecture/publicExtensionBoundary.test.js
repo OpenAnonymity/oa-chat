@@ -88,7 +88,8 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
     assert.doesNotMatch(html, /account-menu-separator/);
     assert.match(html, /placeholder="Search chats\.\.\."/);
-    assert.match(html, /class="session-scroll-shell[^\"]*"[\s\S]*id="sessions-scroll-area"[\s\S]*class="session-scroll-fade"/);
+    assert.match(html, /class="session-scroll-shell[^\"]*"[\s\S]*id="sessions-scroll-area"/);
+    assert.doesNotMatch(html, /session-scroll-fade/);
     assert.doesNotMatch(html, /maximum-scale|user-scalable/);
     assert.match(html, /data-oa-extension-slot="account\.menuActions" hidden/);
     assert.match(html, /data-oa-extension-slot="sidebar\.accountActions" hidden/);
@@ -102,7 +103,8 @@ test('account footer keeps stable full-row trigger and menu dimensions', () => {
     assert.match(styles, /\.account-tab-btn\s*\{[^}]*min-height:\s*3rem;[^}]*padding:\s*0\.25rem 1rem;[^}]*border:\s*0;[^}]*border-radius:\s*0;/s);
     assert.doesNotMatch(styles, /@media \(any-pointer: coarse\)\s*\{\s*\.account-tab-btn/);
     assert.match(styles, /\.account-tab-avatar\s*\{[^}]*width:\s*1\.75rem;[^}]*height:\s*1\.75rem;/s);
-    assert.match(styles, /\.sidebar-main-content\s*\{[^}]*padding-bottom:\s*3\.5rem !important;/s);
+    assert.match(styles, /\.sidebar-main-content\s*\{[^}]*padding-bottom:\s*0\.25rem !important;/s);
+    assert.match(styles, /\.account-nav\s*\{[^}]*position:\s*relative;[^}]*flex:\s*0 0 auto;/s);
     assert.match(styles, /\.account-settings-menu\s*\{[^}]*right:\s*0\.5rem;[^}]*left:\s*0\.5rem/s);
     assert.match(styles, /\.account-menu-item\s*\{[^}]*min-height:\s*2\.625rem/s);
     assert.match(styles, /\.account-tab-btn\[data-status="loading"\]\s*\{[^}]*cursor:\s*wait/s);
@@ -132,19 +134,22 @@ test('signed-in Account uses the compact identity and disclosure treatment', () 
     assert.match(accountModal, /id="account-clear-btn" class="account-compact-row"/);
 });
 
-test('session history ends above the account row with an intentional continuation cue', () => {
+test('session history stops above the account row with a hairline continuation cue', () => {
     const styles = read('chat/styles.css');
     const sidebar = read('chat/components/Sidebar.js');
-    assert.match(styles, /\.session-scroll-fade\s*\{[^}]*linear-gradient/s);
-    assert.match(styles, /\.session-scroll-fade\s*\{[^}]*backdrop-filter:\s*blur\(2px\)/s);
-    assert.match(styles, /\.session-scroll-fade\s*\{[^}]*mask-image:\s*linear-gradient/s);
-    assert.match(styles, /\.session-list-end-spacer\s*\{[^}]*height:\s*40px/s);
-    assert.match(styles, /\.session-scroll-shell\.has-more-below \.session-scroll-fade\s*\{[^}]*opacity:\s*1/s);
+    assert.doesNotMatch(styles, /\.session-scroll-fade/);
+    assert.doesNotMatch(styles, /backdrop-filter:\s*blur\(2px\)/);
+    assert.match(styles, /#sidebar:has\(\.session-scroll-shell\.has-more-below\) \.account-nav\s*\{[^}]*border-top-color/s);
+    assert.match(styles, /\.session-list-end-spacer\s*\{[^}]*height:\s*8px/s);
+    assert.match(styles, /#sessions-list \.chat-session,\s*#sessions-list \.model-category-header\s*\{[^}]*var\(--session-row-h/s);
+    assert.match(styles, /\.session-row-actions\s*\{[^}]*position:\s*absolute/s);
     assert.doesNotMatch(styles, /\.session-initially-clipped/);
-    assert.match(sidebar, /const END_SPACER_HEIGHT = 40/);
+    assert.match(sidebar, /const END_SPACER_HEIGHT = 8/);
+    assert.match(sidebar, /export function fitSessionRowHeight/);
     assert.match(sidebar, /scheduleInitialViewportSettlement/);
     assert.match(sidebar, /releaseInitialViewportSettlement/);
     assert.doesNotMatch(sidebar, /session-initially-clipped/);
+    assert.doesNotMatch(sidebar, /class="\$\{starButtonClass\}"/);
     assert.match(sidebar, /items\.push\(\{ type: 'end-spacer' \}\)/);
     assert.match(sidebar, /class="session-list-end-spacer" aria-hidden="true"/);
 });
