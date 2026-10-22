@@ -10,7 +10,7 @@ const SESSION_ROW_HEIGHT = 36;
 const HEADER_ROW_HEIGHT = 36;
 const GROUP_SPACER_HEIGHT = 12;
 const FOOTER_ROW_HEIGHT = 32;
-const END_SPACER_HEIGHT = 40;
+const END_SPACER_HEIGHT = 8;
 const VIRTUALIZE_THRESHOLD = 400;
 const VIRTUAL_OVERSCAN = 8;
 const SIDEBAR_DEFAULT_WIDTH = 220;
@@ -19,6 +19,57 @@ const SIDEBAR_MAX_WIDTH = 420;
 const SIDEBAR_SNAPSHOT_KEY = 'oa-left-sidebar-width';
 const SESSION_MENU_GAP = 4;
 const SESSION_MENU_MARGIN = 8;
+const SESSION_GROUP_ORDER = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+// Row fitting may nudge each row by at most this share of its height.
+const ROW_FIT_MIN_SCALE = 0.9;
+const ROW_FIT_MAX_SCALE = 1.1;
+const HOVER_CARD_DELAY_MS = 500;
+const HOVER_CARD_GAP = 8;
+
+/**
+ * Picks a row height so the first screen of history ends exactly on a row
+ * boundary: no row is cut by the footer on load. Header and chat rows scale
+ * together; spacers keep their size. Chooses the boundary closest to the
+ * available height (above or below), so rows change by well under a pixel at
+ * normal window heights. Returns the base height when nothing would be cut
+ * or when fitting would need more than a ±10% change.
+ */
+export function fitSessionRowHeight(items, available, {
+    base = SESSION_ROW_HEIGHT,
+    fixedHeight = type => (type === 'spacer' ? GROUP_SPACER_HEIGHT : type === 'footer' ? FOOTER_ROW_HEIGHT : 0),
+    minScale = ROW_FIT_MIN_SCALE,
+    maxScale = ROW_FIT_MAX_SCALE
+} = {}) {
+    if (!Array.isArray(items) || !(available > 0) || !(base > 0)) return base;
+    let rows = 0;
+    let fixed = 0;
+    let best = null;
+    for (const item of items) {
+        const type = item?.type;
+        if (type === 'end-spacer') break;
+        if (type === 'header' || type === 'session') {
+            rows += 1;
+            const natural = rows * base + fixed;
+            if (!best || Math.abs(natural - available) < Math.abs(best.natural - available)) {
+                best = { natural, rows, fixed };
+            }
+            if (natural > available) break;
+        } else {
+            const before = rows * base + fixed;
+            fixed += fixedHeight(type);
+            // The edge falls inside a gap between groups: nothing is cut.
+            if (before <= available && rows * base + fixed >= available) return base;
+        }
+    }
+    if (!best) return base;
+    const total = rows * base + fixed;
+    // Everything fits without a cut: leave rows alone.
+    if (total <= available && best.rows === rows) return base;
+    const height = (available - best.fixed) / best.rows;
+    const scale = height / base;
+    if (scale < minScale || scale > maxScale) return base;
+    return height;
+}
 
 /**
  * Places a chat row's menu against its ··· button, in viewport coordinates.
@@ -66,6 +117,12 @@ export default class Sidebar {
         this.initialViewportSettled = false;
         this.initialViewportUserControlled = false;
         this.initialViewportFrame = null;
+        this.rowHeight = SESSION_ROW_HEIGHT;
+        this.rowFitDone = false;
+        this.listItems = [];
+        this.hoverCard = null;
+        this.hoverCardTimer = null;
+        this.hoverCardRow = null;
         this.isResizing = false;
         this.resizeStartX = 0;
         this.resizeStartWidth = 0;
@@ -145,6 +202,8 @@ export default class Sidebar {
         this.virtualState.enabled = shouldVirtualize;
         this.toggleVirtualizedClass(shouldVirtualize);
 
+        this.listItems = this.buildListItems(sessionsToRender);
+        this.applyRowFit({ rerender: false });
         if (shouldVirtualize) {
             this.prepareVirtualItems(sessionsToRender);
             this.renderVirtualRange(true);
@@ -152,6 +211,53 @@ export default class Sidebar {
             this.renderFullList(sessionsToRender);
         }
         this.scheduleInitialViewportSettlement(sessionsToRender.length > 0);
+        this.updateScrollFade();
+    }
+
+    /**
+     * Flat list of what the sidebar shows, top to bottom. Shared by the full
+     * and virtualized renderers and by row fitting.
+     */
+    buildListItems(sessionsToRender) {
+        const grouped = this.groupSessionsByDate(sessionsToRender);
+        const items = [];
+        SESSION_GROUP_ORDER.forEach(groupName => {
+            const sessions = grouped[groupName];
+            if (!sessions || sessions.length === 0) return;
+            if (items.length) items.push({ type: 'spacer' });
+            items.push({ type: 'header', label: groupName });
+            sessions.forEach(session => items.push({ type: 'session', session }));
+        });
+        const footerText = this.getFooterText();
+        if (footerText) items.push({ type: 'footer', text: footerText });
+        if (items.length) items.push({ type: 'end-spacer' });
+        return items;
+    }
+
+    /**
+     * Sizes rows once, when history first appears, so the opening screen ends
+     * on a whole row (see fitSessionRowHeight). The height then stays fixed:
+     * resizing the window or adding chats never re-fits, so rows don't shift
+     * while someone is looking at them. A later visit fits again.
+     */
+    applyRowFit({ rerender = true } = {}) {
+        if (this.rowFitDone) return;
+        const list = this.app.elements.sessionsList;
+        const scrollArea = this.app.elements.sessionsScrollArea;
+        if (!list || !scrollArea) return;
+        const available = scrollArea.clientHeight || 0;
+        // Wait for real history in a visible list (e.g. a collapsed sidebar).
+        if (!available || !this.listItems.some(item => item.type === 'session')) return;
+        this.rowFitDone = true;
+        this.rowFitObserver?.disconnect?.();
+        const height = fitSessionRowHeight(this.listItems, available);
+        if (height === this.rowHeight) return;
+        this.rowHeight = height;
+        list.style?.setProperty?.('--session-row-h', `${height}px`);
+        if (rerender && this.virtualState.enabled) {
+            this.recomputeVirtualOffsets();
+            this.renderVirtualRange(true);
+        }
         this.updateScrollFade();
     }
 
@@ -231,37 +337,32 @@ export default class Sidebar {
             </span>`;
         }
 
-        const starButtonClass = isStarred
-            ? 'session-star-btn session-star-btn--starred opacity-100'
-            : 'session-star-btn opacity-0 group-hover:opacity-100 focus-visible:opacity-100';
-        const starLabel = isStarred ? 'Unstar chat' : 'Star chat';
-        const starMenuLabel = isStarred ? 'Unstar' : 'Star';
-
         return `
-            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}" data-deleting="${isDeleting}" aria-busy="${isDeleting}">
+            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 pr-2 chat-session" data-session-id="${session.id}" data-deleting="${isDeleting}" aria-busy="${isDeleting}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
-                    <div class="flex min-w-0 flex-1 items-center">
+                    <div class="session-title-wrap flex min-w-0 flex-1 items-center">
                         <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly ${responding ? 'aria-description="Response in progress"' : ''} data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
                         ${indicatorHtml}
                     </div>
                 </a>
-                <div class="flex shrink-0 items-center relative">
-                    <button class="${starButtonClass}" aria-label="${starLabel}" title="${starLabel}" aria-pressed="${isStarred ? 'true' : 'false'}" data-session-id="${this.escapeHtmlAttribute(session.id)}">
+                <div class="session-row-actions">
+                    <button class="session-star-btn${isStarred ? ' session-star-btn--starred' : ''} rounded-md" aria-label="${isStarred ? 'Unstar chat' : 'Star chat'}" title="${isStarred ? 'Unstar' : 'Star'}" aria-pressed="${isStarred ? 'true' : 'false'}" data-session-id="${this.escapeHtmlAttribute(session.id)}">
                         ${this.getStarIconSvg(isStarred)}
                     </button>
-                    <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground border border-transparent h-9 w-9 opacity-0 group-hover:opacity-100" aria-label="Session options" aria-haspopup="menu" aria-expanded="false" data-session-id="${session.id}">
+                    <button class="session-menu-btn inline-flex items-center justify-center whitespace-nowrap rounded-md font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 leading-6 text-muted-foreground border border-transparent h-7 w-7" aria-label="Session options" aria-haspopup="menu" aria-expanded="false" data-session-id="${session.id}">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />
                         </svg>
                     </button>
                     <div class="session-menu hidden absolute right-0 top-10 z-[100] rounded-lg border border-border bg-popover shadow-lg p-1 min-w-[175px]" data-session-id="${session.id}">
                         <button class="rename-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Rename</button>
-                        <button class="toggle-star-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${starMenuLabel}</button>
+                        <button class="toggle-star-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${isStarred ? 'Unstar' : 'Star'}</button>
                         <button class="copy-link-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Copy Link</button>
                         <button class="share-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">${shareLabel}</button>
                         ${isShared ? `<button class="delete-share-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete Share</button>` : ''}
                         <button class="export-pdf-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Export as PDF</button>
                         <button class="export-markdown-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Export as Markdown</button>
+                        <div class="session-menu-separator" role="separator"></div>
                         <button class="delete-session-action w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors" data-session-id="${session.id}">Delete</button>
                     </div>
                 </div>
@@ -293,6 +394,7 @@ export default class Sidebar {
                 e.preventDefault();
                 e.stopPropagation();
                 this.closeAllMenus();
+                this.hideHoverCard();
                 await this.app.toggleSessionStar(starBtn.dataset.sessionId);
                 return;
             }
@@ -410,6 +512,15 @@ export default class Sidebar {
         };
         this.handleSessionListClick = handleClick;
         list.addEventListener('click', handleClick);
+
+        const view = list.ownerDocument?.defaultView;
+        // Only until the first fit: covers history that loads while the
+        // sidebar is collapsed or not yet laid out.
+        if (scrollArea && view?.ResizeObserver) {
+            this.rowFitObserver = new view.ResizeObserver(() => this.applyRowFit());
+            this.rowFitObserver.observe(scrollArea);
+        }
+        this.attachHoverCard(list);
 
         // The open menu lives at body level (see openSessionMenu), so it
         // needs its own outside-click, Escape and resize handling.
@@ -836,7 +947,7 @@ export default class Sidebar {
         if (!list) return;
 
         const grouped = this.groupSessionsByDate(sessionsToRender);
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const groupOrder = SESSION_GROUP_ORDER;
 
         const html = groupOrder.map(groupName => {
             const sessions = grouped[groupName];
@@ -867,48 +978,28 @@ export default class Sidebar {
     }
 
     prepareVirtualItems(sessionsToRender) {
-        const grouped = this.groupSessionsByDate(sessionsToRender);
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
-        const items = [];
+        const items = this.listItems?.length ? this.listItems : this.buildListItems(sessionsToRender);
+        this.virtualState.items = items;
+        this.recomputeVirtualOffsets();
+        this.virtualState.lastRange = null;
+    }
 
-        groupOrder.forEach(groupName => {
-            const sessions = grouped[groupName];
-            if (!sessions || sessions.length === 0) return;
-            if (items.length) {
-                items.push({ type: 'spacer' });
-            }
-            items.push({ type: 'header', label: groupName });
-            sessions.forEach(session => {
-                items.push({ type: 'session', session });
-            });
-        });
-
-        const footerText = this.getFooterText();
-        if (footerText) {
-            items.push({ type: 'footer', text: footerText });
-        }
-        if (items.length) {
-            items.push({ type: 'end-spacer' });
-        }
-
+    recomputeVirtualOffsets() {
         const offsets = [];
         let totalHeight = 0;
-        items.forEach(item => {
+        this.virtualState.items.forEach(item => {
             offsets.push(totalHeight);
             totalHeight += this.getItemHeight(item);
         });
-
-        this.virtualState.items = items;
         this.virtualState.offsets = offsets;
         this.virtualState.totalHeight = totalHeight;
-        this.virtualState.lastRange = null;
     }
 
     getItemHeight(item) {
         if (!item) return SESSION_ROW_HEIGHT;
         switch (item.type) {
             case 'header':
-                return HEADER_ROW_HEIGHT;
+                return this.rowHeight ?? HEADER_ROW_HEIGHT;
             case 'spacer':
                 return GROUP_SPACER_HEIGHT;
             case 'footer':
@@ -916,7 +1007,7 @@ export default class Sidebar {
             case 'end-spacer':
                 return END_SPACER_HEIGHT;
             default:
-                return SESSION_ROW_HEIGHT;
+                return this.rowHeight ?? SESSION_ROW_HEIGHT;
         }
     }
 
@@ -944,6 +1035,7 @@ export default class Sidebar {
     handleScroll(force = false) {
         // The menu is fixed to the viewport; scrolling the list would leave it behind.
         if (this.floatingMenu) this.closeFloatingMenu();
+        if (this.hoverCard && !this.hoverCard.hidden) this.hideHoverCard();
         this.updateScrollFade();
         if (!this.virtualState.enabled) return;
         if (!force) {
@@ -1072,6 +1164,82 @@ export default class Sidebar {
         return this.buildSessionHTML(item.session);
     }
 
+    /**
+     * Full-title card beside the sidebar for chats whose title is cut off.
+     * Pointer devices only; appears after a short rest, then follows the
+     * pointer row to row without waiting again.
+     */
+    attachHoverCard(list) {
+        const view = list.ownerDocument?.defaultView;
+        if (!view?.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches) return;
+        list.addEventListener('pointerover', (e) => {
+            const row = e.target.closest?.('.chat-session');
+            if (!row || row === this.hoverCardRow) return;
+            this.hoverCardRow = row;
+            view.clearTimeout(this.hoverCardTimer);
+            if (this.hoverCard && !this.hoverCard.hidden) {
+                this.showHoverCard(row);
+            } else {
+                this.hoverCardTimer = view.setTimeout(() => this.showHoverCard(row), HOVER_CARD_DELAY_MS);
+            }
+        });
+        list.addEventListener('pointerleave', () => this.hideHoverCard());
+        list.addEventListener('pointerdown', () => this.hideHoverCard());
+        this.app.elements.sessionsScrollArea?.addEventListener('scroll', () => this.hideHoverCard(), { passive: true });
+        view.addEventListener('blur', () => this.hideHoverCard());
+    }
+
+    showHoverCard(row) {
+        if (!row?.isConnected || row !== this.hoverCardRow || this.floatingMenu) return this.hideHoverCard({ keepRow: true });
+        const input = row.querySelector('.session-title-input');
+        if (!input || !input.readOnly || input.scrollWidth <= input.clientWidth + 1) {
+            return this.hideHoverCard({ keepRow: true });
+        }
+        const sessionId = row.dataset.sessionId;
+        const session = this.app.state.sessionsById?.get?.(sessionId)
+            || this.app.state.sessions?.find?.(s => s.id === sessionId);
+        const doc = row.ownerDocument;
+        if (!this.hoverCard) {
+            this.hoverCard = doc.createElement('div');
+            this.hoverCard.className = 'session-hover-card';
+            this.hoverCard.setAttribute('aria-hidden', 'true');
+            this.hoverCard.hidden = true;
+            doc.body.appendChild(this.hoverCard);
+        }
+        const time = this.formatTimeAgo(session?.updatedAt || session?.createdAt);
+        this.hoverCard.innerHTML = `<div class="session-hover-card-title">${this.escapeHtml(input.value)}</div>`
+            + (time ? `<div class="session-hover-card-time">${time}</div>` : '');
+        this.hoverCard.hidden = false;
+        const rowRect = row.getBoundingClientRect();
+        const sidebarRect = (this.app.elements.sidebar || row.closest('aside'))?.getBoundingClientRect?.() || rowRect;
+        const cardHeight = this.hoverCard.offsetHeight;
+        const viewHeight = doc.defaultView?.innerHeight || 0;
+        const top = Math.max(8, Math.min(rowRect.top + rowRect.height / 2 - cardHeight / 2, viewHeight - cardHeight - 8));
+        this.hoverCard.style.top = `${Math.round(top)}px`;
+        this.hoverCard.style.left = `${Math.round(sidebarRect.right + HOVER_CARD_GAP)}px`;
+    }
+
+    hideHoverCard({ keepRow = false } = {}) {
+        globalThis.clearTimeout?.(this.hoverCardTimer);
+        this.hoverCardTimer = null;
+        if (!keepRow) this.hoverCardRow = null;
+        if (this.hoverCard) this.hoverCard.hidden = true;
+    }
+
+    formatTimeAgo(timestamp) {
+        if (!timestamp) return '';
+        const minutes = Math.floor((Date.now() - timestamp) / 60000);
+        if (minutes < 1) return 'just now';
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days}d ago`;
+        const months = Math.floor(days / 30);
+        if (months < 12) return `${months}mo ago`;
+        return `${Math.floor(days / 365)}y ago`;
+    }
+
     scrollToSession(sessionId) {
         if (!sessionId) return;
         const scrollArea = this.app.elements.sessionsScrollArea;
@@ -1115,7 +1283,7 @@ export default class Sidebar {
     getSessionsInDisplayOrder() {
         const sessionsToRender = this.app.getFilteredSessions();
         const grouped = this.groupSessionsByDate(sessionsToRender);
-        const groupOrder = ['Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days', 'Older'];
+        const groupOrder = SESSION_GROUP_ORDER;
 
         const orderedSessions = [];
         groupOrder.forEach(groupName => {
