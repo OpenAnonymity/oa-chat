@@ -6610,14 +6610,8 @@ html {
     flex: 0 0 auto;
     z-index: 30;
     padding: 0;
-    border-top: 1px solid transparent;
+    border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background));
-    transition: border-color 0.15s ease-out;
-}
-
-/* A hairline appears only while more history sits below the fold. */
-#sidebar:has(.session-scroll-shell.has-more-below) .account-nav {
-    border-top-color: hsl(var(--color-border));
 }
 
 .account-nav-row {
