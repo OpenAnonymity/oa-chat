@@ -143,6 +143,14 @@ test('session history stops above the account row with a hairline continuation c
     assert.match(styles, /\.session-list-end-spacer\s*\{[^}]*height:\s*8px/s);
     assert.match(styles, /#sessions-list \.chat-session,\s*#sessions-list \.model-category-header\s*\{[^}]*var\(--session-row-h/s);
     assert.match(styles, /\.session-row-actions\s*\{[^}]*position:\s*absolute/s);
+    // Hidden row buttons cannot be tapped through visible title text.
+    assert.match(styles, /\.session-row-actions\s*\{[^}]*visibility:\s*hidden/s);
+    assert.match(styles, /@media \(hover: none\)\s*\{[\s\S]*?\.chat-session\.active \.session-title-wrap\s*\{[^}]*padding-right/);
+    // Renaming shows the whole editable title.
+    assert.match(styles, /\.chat-session\[data-renaming\] \.session-row-actions\s*\{[^}]*display:\s*none/s);
+    assert.match(styles, /\.chat-session\[data-renaming\] \.session-title-wrap\s*\{[^}]*mask-image:\s*none/s);
+    assert.match(sidebar, /setAttribute\('data-renaming', ''\)/);
+    assert.match(sidebar, /if \(!row\) \{ this\.hideHoverCard\(\); return; \}/);
     assert.doesNotMatch(styles, /\.session-initially-clipped/);
     assert.match(sidebar, /const END_SPACER_HEIGHT = 8/);
     assert.match(sidebar, /export function fitSessionRowHeight/);

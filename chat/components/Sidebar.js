@@ -572,6 +572,9 @@ export default class Sidebar {
 
         // Store original value for cancel
         input.dataset.originalValue = input.value;
+        // Editing: no title fade, no floating buttons, no hover card.
+        input.closest('.chat-session')?.setAttribute('data-renaming', '');
+        this.hideHoverCard();
 
         // Enable editing
         input.readOnly = false;
@@ -594,6 +597,7 @@ export default class Sidebar {
 
         // Reset input styling
         input.readOnly = true;
+        input.closest('.chat-session')?.removeAttribute('data-renaming');
         input.classList.add('cursor-pointer');
         input.classList.remove('cursor-text', 'bg-accent', 'rounded', 'px-1');
 
@@ -618,6 +622,7 @@ export default class Sidebar {
 
         // Reset input styling
         input.readOnly = true;
+        input.closest('.chat-session')?.removeAttribute('data-renaming');
         input.classList.add('cursor-pointer');
         input.classList.remove('cursor-text', 'bg-accent', 'rounded', 'px-1');
 
@@ -1174,7 +1179,9 @@ export default class Sidebar {
         if (!view?.matchMedia?.('(hover: hover) and (pointer: fine)')?.matches) return;
         list.addEventListener('pointerover', (e) => {
             const row = e.target.closest?.('.chat-session');
-            if (!row || row === this.hoverCardRow) return;
+            // Date headings and group gaps cancel a pending card and hide a shown one.
+            if (!row) { this.hideHoverCard(); return; }
+            if (row === this.hoverCardRow) return;
             this.hoverCardRow = row;
             view.clearTimeout(this.hoverCardTimer);
             if (this.hoverCard && !this.hoverCard.hidden) {

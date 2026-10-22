@@ -692,8 +692,10 @@ html.switching-theme *::after {
     height: var(--session-row-h, 2.25rem);
 }
 
-/* The row menu floats over the end of the title instead of reserving
-   space beside it, so titles use the full row until hover. */
+/* The row buttons float over the end of the title instead of reserving
+   space beside it, so titles use the full row until hover. While hidden
+   they are also untouchable (visibility), so a tap on visible title text
+   always opens the chat. */
 .session-row-actions {
     position: absolute;
     top: 0;
@@ -701,22 +703,63 @@ html.switching-theme *::after {
     bottom: 0;
     display: flex;
     align-items: center;
+    visibility: hidden;
     opacity: 0;
-    transition: opacity 0.12s ease-out;
+    transition: opacity 0.12s ease-out, visibility 0s linear 0.12s;
 }
 
-.chat-session:hover .session-row-actions,
 .chat-session:focus-within .session-row-actions,
 .chat-session[data-menu-open] .session-row-actions {
+    visibility: visible;
     opacity: 1;
+    transition-delay: 0s;
 }
 
-.chat-session:hover .session-title-wrap,
 .chat-session:focus-within .session-title-wrap,
 .chat-session[data-menu-open] .session-title-wrap {
     /* Star + menu buttons cover the last ~3.4rem of the title. */
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
     mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+}
+
+@media (hover: hover) {
+    .chat-session:hover .session-row-actions {
+        visibility: visible;
+        opacity: 1;
+        transition-delay: 0s;
+    }
+
+    .chat-session:hover .session-title-wrap {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+        mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+    }
+}
+
+/* Touch: no hover to reveal buttons, so the open chat shows them beside
+   its title (title makes room, no overlap). Other chats: tap to open. */
+@media (hover: none) {
+    .chat-session.active .session-row-actions {
+        visibility: visible;
+        opacity: 1;
+        transition: none;
+    }
+
+    .chat-session.active .session-title-wrap {
+        padding-right: 3.5rem;
+        -webkit-mask-image: none;
+        mask-image: none;
+    }
+}
+
+/* Renaming: show the whole editable title, caret included. */
+.chat-session[data-renaming] .session-row-actions {
+    display: none;
+}
+
+.chat-session[data-renaming] .session-title-wrap {
+    padding-right: 0;
+    -webkit-mask-image: none;
+    mask-image: none;
 }
 
 .session-row-actions .session-star-btn {
