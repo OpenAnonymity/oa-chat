@@ -70,8 +70,12 @@ export function replaceDisplayDollarMath(text, replacer) {
         };
         if (!content.trim() || (content.includes('\n') && (inTableRow(start) || inTableRow(end)))) continue;
         // "$$20 billion in pesos ... bank$$" is two prices, not an equation.
-        // Skip only the opener so a later real pair can still form.
-        if (looksLikeCurrencyProse(content)) continue;
+        // Both delimiters leave play, so the closing one cannot open a pair
+        // with the next "$$" and turn the prose between them into math.
+        if (looksLikeCurrencyProse(content)) {
+            i++;
+            continue;
+        }
         result += value.slice(cursor, start) + replacer(value.slice(start, end + 2), content);
         cursor = end + 2;
         i++;

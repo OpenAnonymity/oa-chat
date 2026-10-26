@@ -246,6 +246,10 @@ test('real math still renders beside currency', () => {
         replaceDisplayDollarMath('$$\\begin{aligned} x &= 1 \\end{aligned}$$', (_m, c) => `[${c}]`),
         '[\\begin{aligned} x &= 1 \\end{aligned}]'
     );
+    // A skipped price pair takes both of its delimiters out of play.
+    assert.equal(replaceDisplayDollarMath('$$20 billion in pesos$$, then $$5 million more$$', () => 'MATH'),
+        '$$20 billion in pesos$$, then $$5 million more$$');
+    assert.equal(replaceDisplayDollarMath('$$20 billion in pesos$$ and $$x^2$$', () => 'MATH'), '$$20 billion in pesos$$ and MATH');
     assert.equal(
         replaceDisplayDollarMath('$$\\text{Deposit on-chain} \\longrightarrow \\text{Server executes and refunds}$$', () => 'MATH'),
         'MATH'

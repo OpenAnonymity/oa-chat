@@ -56,7 +56,8 @@ function readReturnPoint(storage = deviceStorage(), now = Date.now()) {
     }
 }
 
-export function saveNavigationSelection(sessionId, storage = tabStorage(), returnStorage = deviceStorage()) {
+export function saveNavigationSelection(sessionId, storage = tabStorage(), returnStorage = deviceStorage(),
+    installed = isInstalledWebApp()) {
     const selection = typeof sessionId === 'string' && sessionId
         ? { version: 1, kind: 'conversation', sessionId }
         : { version: 1, kind: 'new-chat' };
@@ -68,6 +69,9 @@ export function saveNavigationSelection(sessionId, storage = tabStorage(), retur
     } catch {
         // Restricted storage must not prevent navigation or payment recovery.
     }
+    // Only an installed app keeps a return point: browser tabs never write
+    // a chat id to device storage (and never clear the app's).
+    if (!installed) return selection;
     // Keep the scroll recorded for this same chat; anything else replaces it.
     const existing = readReturnPoint(returnStorage);
     if (selection.kind === 'conversation') {
@@ -103,13 +107,13 @@ export async function restoreNavigationSelection({ search = '', loadSession, sto
     if (!selection && installed) {
         const point = readReturnPoint(returnStorage, now);
         if (point && await loadSession(point.sessionId)) {
-            return { ...saveNavigationSelection(point.sessionId, storage, returnStorage), scroll: point.scroll };
+            return { ...saveNavigationSelection(point.sessionId, storage, returnStorage, installed), scroll: point.scroll };
         }
         return null;
     }
     if (selection?.kind !== 'conversation') return selection;
     if (await loadSession(selection.sessionId)) return selection;
-    return saveNavigationSelection(null, storage, returnStorage);
+    return saveNavigationSelection(null, storage, returnStorage, installed);
 }
 
 // Shared by the fast first paint and app bootstrap. Explicit links take priority

@@ -70,6 +70,15 @@ test('an installed app relaunched by the system returns to the open chat and its
     assert.equal(readNavigationSelection(relaunch).sessionId, 'swap-line-chat', 'the relaunched tab adopts it');
 });
 
+test('browser tabs never write or clear the device return point', () => {
+    const device = storage();
+    saveNavigationSelection('tab-chat', storage(), device, false);
+    assert.equal(device.getItem('oa-chat-return-point-v1'), null);
+    rememberReturnPoint('app-chat', null, device, 1000);
+    saveNavigationSelection(null, storage(), device, false);
+    assert.match(device.getItem('oa-chat-return-point-v1'), /app-chat/);
+});
+
 test('browser tabs, New Chat, stale and deleted return points still open New Chat', async () => {
     const device = storage();
     rememberReturnPoint('chat', { top: 10, atBottom: true }, device, 1000);
@@ -85,7 +94,7 @@ test('browser tabs, New Chat, stale and deleted return points still open New Cha
         loadSession: async () => false }), null);
     // Choosing New Chat forgets the return point.
     rememberReturnPoint('chat', null, device, 1000);
-    saveNavigationSelection(null, fresh(), device);
+    saveNavigationSelection(null, fresh(), device, true);
     assert.equal(await restoreNavigationSelection({ storage: fresh(), returnStorage: device, installed: true, now: 2000,
         loadSession: never }), null);
 });

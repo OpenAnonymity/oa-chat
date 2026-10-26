@@ -56,7 +56,8 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
-import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending, rememberReturnPoint } from './services/navigationState.js';
+import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending, rememberReturnPoint,
+    isInstalledWebApp } from './services/navigationState.js';
 import { hasConversationParam, readConversationParam, setConversationParam, deleteConversationParam, normalizeConversationAddress } from './services/conversationLink.js';
 import { ensureModelTiersReady, ensureModelTiersPreviewReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
@@ -2190,7 +2191,7 @@ class ChatApp {
      * can return there (navigationState.js reads it for installed apps only).
      */
     installReturnPointRecorder() {
-        if (this.returnPointRecorderInstalled || typeof document === 'undefined') return;
+        if (this.returnPointRecorderInstalled || typeof document === 'undefined' || !isInstalledWebApp()) return;
         this.returnPointRecorderInstalled = true;
         const record = () => {
             const sessionId = this.state.currentSessionId;
