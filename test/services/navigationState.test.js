@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readNavigationSelection, saveNavigationSelection, restoreNavigationSelection } from '../../chat/services/navigationState.js';
+import { readNavigationSelection, saveNavigationSelection, restoreNavigationSelection, rememberReturnPoint,
+    isConversationRestorePending } from '../../chat/services/navigationState.js';
 
 function storage(seed = []) {
     const values = new Map(seed);
@@ -48,4 +49,43 @@ test('legacy, malformed, and unavailable storage are safe', () => {
     const unavailable = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
     assert.equal(readNavigationSelection(unavailable), null);
     assert.doesNotThrow(() => saveNavigationSelection(null, unavailable));
+});
+
+// iOS relaunches an evicted home-screen app as a fresh page: sessionStorage is
+// empty, so the person landed on New Chat instead of the chat they had open.
+test('an installed app relaunched by the system returns to the open chat and its scroll position', async () => {
+    const device = storage();
+    const firstLaunch = storage();
+    saveNavigationSelection('swap-line-chat', firstLaunch, device);
+    rememberReturnPoint('swap-line-chat', { top: 840, atBottom: false }, device, 1000);
+
+    const relaunch = storage();
+    assert.equal(isConversationRestorePending({ storage: relaunch, returnStorage: device, installed: true, now: 2000 }), true);
+    const loaded = [];
+    const result = await restoreNavigationSelection({ storage: relaunch, returnStorage: device, installed: true, now: 2000,
+        loadSession: async id => { loaded.push(id); return true; } });
+    assert.deepEqual(loaded, ['swap-line-chat']);
+    assert.equal(result.sessionId, 'swap-line-chat');
+    assert.deepEqual(result.scroll, { top: 840, atBottom: false });
+    assert.equal(readNavigationSelection(relaunch).sessionId, 'swap-line-chat', 'the relaunched tab adopts it');
+});
+
+test('browser tabs, New Chat, stale and deleted return points still open New Chat', async () => {
+    const device = storage();
+    rememberReturnPoint('chat', { top: 10, atBottom: true }, device, 1000);
+    const fresh = () => storage();
+    const never = async () => { throw new Error('must not load'); };
+    // A new browser tab is not a relaunch.
+    assert.equal(await restoreNavigationSelection({ storage: fresh(), returnStorage: device, installed: false, loadSession: never }), null);
+    // Older than a day.
+    assert.equal(await restoreNavigationSelection({ storage: fresh(), returnStorage: device, installed: true,
+        now: 1000 + 25 * 60 * 60 * 1000, loadSession: never }), null);
+    // Deleted since.
+    assert.equal(await restoreNavigationSelection({ storage: fresh(), returnStorage: device, installed: true, now: 2000,
+        loadSession: async () => false }), null);
+    // Choosing New Chat forgets the return point.
+    rememberReturnPoint('chat', null, device, 1000);
+    saveNavigationSelection(null, fresh(), device);
+    assert.equal(await restoreNavigationSelection({ storage: fresh(), returnStorage: device, installed: true, now: 2000,
+        loadSession: never }), null);
 });

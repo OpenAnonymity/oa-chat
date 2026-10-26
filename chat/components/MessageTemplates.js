@@ -20,6 +20,7 @@ import { buildStillWorkingLabel, stillWorkingSinceAttribute, startStillWorkingCl
 import { keptAccessStages } from '../domain/accessTrace.js';
 import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
 import { HTTP_STATUS_NAMES, describeInferenceFailure } from '../domain/inferenceFailure.js';
+import { replyHasEnded } from '../domain/messageLifecycle.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -2307,7 +2308,11 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
-    const shouldShowMemoryStatusSpacer = (hideAssistantActionsDuringReasoning || isAnsweringElsewhere) && !isMemoryStatusMessage;
+    // Copy/Retry belong to a reply that has ended. While text is arriving the
+    // row's footprint is reserved; finalizeStreamingMessage swaps in the row.
+    const replyStillArriving = !replyHasEnded(message);
+    const shouldShowMemoryStatusSpacer = (hideAssistantActionsDuringReasoning || isAnsweringElsewhere || replyStillArriving)
+        && !isMemoryStatusMessage;
     const assistantActionsRow = (shouldShowMemoryStatusSpacer || isMemoryStatusMessage) ? (
         isMemoryStatusMessage
             ? ''

@@ -1,3 +1,29 @@
+## October 26, 2026 — reply lifecycle, links that keep the chat, relaunch return point
+
+- `domain/messageLifecycle.js` names the reply states the send pipeline already
+  encodes: pending (`streamingPending`), streaming (`streamingTokens` is a
+  number, `streamingReasoning`, or `answeringElsewhere`), complete, interrupted
+  (error with partial output) and error. `MessageTemplates` renders Copy/Retry
+  only once `replyHasEnded`; while text arrives the row is the reserved
+  placeholder, and `finalizeStreamingMessage` swaps in the real row (it already
+  did for reasoning-first replies). Before, any visible text rendered the full
+  row from the first chunk. Interrupted and error replies keep Retry.
+- Web links in answers now open with `target="_blank" rel="noopener noreferrer"`.
+  They used to navigate the chat tab itself, which unloads the page: the
+  stream died mid-reply and the person had to find their way back.
+- Navigation stays tab-scoped (sessionStorage). An installed web app (iOS home
+  screen / display-mode standalone) also keeps `oa-chat-return-point-v1` in
+  localStorage: the open chat plus scroll, written on `visibilitychange` hidden
+  and `pagehide`, valid 24 hours, cleared by New Chat. Only a fresh installed
+  launch with no tab selection reads it, so browser tabs still open New Chat.
+- What leaving does to a paid request: switching chats or New Chat does not
+  stop an OA ticket reply. New Chat from a zkAPI chat still cancels that chat's
+  stream before settling its key (`shouldCancelOnNewChat`, the settlement gate
+  kept on purpose); tokens already generated are billed, the rest is never
+  produced. Reload, closing the page or iOS suspending it ends the request with
+  the page: there is no server to hold the stream, so on return the reply shows
+  as interrupted with its partial text and Retry. Not changed here.
+
 ## October 26, 2026 — currency dollars never open math
 
 Reported on iPhone (Haiku answer about the Treasury swap line): "$20 billion in

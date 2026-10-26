@@ -56,7 +56,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
-import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
+import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending, rememberReturnPoint } from './services/navigationState.js';
 import { hasConversationParam, readConversationParam, setConversationParam, deleteConversationParam, normalizeConversationAddress } from './services/conversationLink.js';
 import { ensureModelTiersReady, ensureModelTiersPreviewReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
@@ -1695,7 +1695,12 @@ class ChatApp {
             const safeHref = sanitizeUrl(href);
             if (!safeHref) return text;
             const safeTitle = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
-            return `<a href="${escapeHtmlAttribute(safeHref)}"${safeTitle}>${text}</a>`;
+            // A web link opened in this tab would unload the app and end any
+            // reply still streaming. Open it beside the chat instead.
+            const opensOutside = /^https?:\/\//i.test(safeHref)
+                ? ' target="_blank" rel="noopener noreferrer"'
+                : '';
+            return `<a href="${escapeHtmlAttribute(safeHref)}"${safeTitle}${opensOutside}>${text}</a>`;
         };
 
         renderer.image = (href, title, text) => {
@@ -2179,6 +2184,26 @@ class ChatApp {
     /**
      * Saves the current session's scroll position in-memory for this tab.
      */
+    /**
+     * iOS may evict a backgrounded home-screen app and relaunch it fresh. Record
+     * the open chat and its scroll whenever the page is hidden so the relaunch
+     * can return there (navigationState.js reads it for installed apps only).
+     */
+    installReturnPointRecorder() {
+        if (this.returnPointRecorderInstalled || typeof document === 'undefined') return;
+        this.returnPointRecorderInstalled = true;
+        const record = () => {
+            const sessionId = this.state.currentSessionId;
+            if (!sessionId) return;
+            this.saveCurrentSessionScrollPosition();
+            rememberReturnPoint(sessionId, this.sessionScrollPositions.get(sessionId) || null);
+        };
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') record();
+        });
+        window.addEventListener('pagehide', record);
+    }
+
     saveCurrentSessionScrollPosition() {
         const chatArea = this.elements.chatArea;
         const sessionId = this.state.currentSessionId;
@@ -3053,6 +3078,11 @@ class ChatApp {
             }
         });
         if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
+        // An installed app reopened by the system returns to where it was read.
+        if (selection?.scroll && selection.kind === 'conversation') {
+            this.sessionScrollPositions.set(selection.sessionId, selection.scroll);
+        }
+        this.installReturnPointRecorder();
         if (!hasConversationParam(window.location.search)) this.restoringInitialConversation = false;
 
         const [
