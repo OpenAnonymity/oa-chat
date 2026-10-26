@@ -1,3 +1,11 @@
+## October 26, 2026 — currency review preserves coefficients and units
+
+The staging integration narrows the amount-prefix currency heuristic to
+currency words (billion, million, dollars, per, etc.). An arbitrary word
+following a number is not sufficient: `$2 xy + 3 yz$`, `$2 ab = 4$` and
+`$10 cm^2$` must remain math, in both inline and display forms. A regression
+case fails on the supplied patch and passes with the narrower rule.
+
 ## October 26, 2026 — reasoning header no longer strobes during thinking
 
 `ChatArea.updateStreamingReasoning` called `resumeReasoningDisplay` on every
@@ -12,6 +20,97 @@ added for (a tool call between answer segments). Behavior there is unchanged,
 and withheld reasoning has its own path. `test/components/reasoningHeaderStrobe.test.js`
 drives the real method with a recording subtitle element: two headed chunks never
 write "Thinking..." between flushes, and a resume after settling still does.
+
+## October 26, 2026 — double-click rename, old names stay searchable
+
+- Double-clicking a sidebar title starts the same inline rename as the row
+  menu's Rename (`Sidebar.startInlineEdit`). Nothing suppresses the first
+  click of the pair, so a double-click on another chat also switches to it,
+  and that switch rebuilds the list with `innerHTML` while the rename is in
+  progress. `renderFullList` and `renderVirtualRange` now capture the editing
+  input (session id, value, original value, selection) before the rebuild and
+  restore it on the new row afterwards. Browsers differ on whether removing
+  the focused input fires `blur` (Firefox/Safari: no; Chrome: yes, while the
+  node is still connected), so `captureInlineEdit` makes the old input
+  read-only before the rebuild — the capturing `blur` listener already
+  ignores read-only inputs — and also skips a disconnected input. A row that
+  the virtualized range no longer renders after a rebuild simply drops the
+  edit without saving, as before. `scrollToSession` leaves a fully visible row alone, so the
+  restored edit survives a normal double-click (the restore focuses with
+  `preventScroll` so focus itself cannot trigger that commit); a row that was
+  only partly in view still scrolls, and that scroll commits the edit as
+  before. The phone layout ignores double-tap: the first tap closes the
+  sidebar overlay, and the row menu's Rename remains.
+- `updateSessionTitle` records the title being replaced in
+  `session.previousTitles` (`domain/sessionSearch.recordPreviousSessionTitle`:
+  newest first, deduplicated, at most 5, never "New Chat" or the new title).
+  `sessionMatchesSearchQuery` matches those names alongside `title`, so both
+  the in-memory filter and the IndexedDB scan find a chat by what it used to
+  be called. Generated titles replacing the local first-prompt title do not
+  go through `updateSessionTitle`; that first prompt is already covered by
+  `titleSearchText` / `conversationSearchText`. The field is a plain session
+  property saved by `chatDB.saveSession`, like `starred`; no migration.
+  Retention policy: old names are searchable on purpose (the request was that
+  search reflect the new name *and* the old), so a rename cannot be used to
+  take text out of a chat's searchable identity; there is no purge affordance
+  yet. This deliberately differs from the manual-title exclusion of
+  `titleSearchText`, which keeps the 1000-character first prompt out of
+  title matching — `previousTitles` holds only short former titles. The
+  share payload (`services/sharePayload.js`) copies explicit fields, so old
+  titles never leave the device; the local JSON export includes whole session
+  records, as it does for every other session field.
+- Tests: `test/components/sidebarRename.test.js` (double-click start, deleting
+  rows ignored, capture/restore across a rebuild, disconnected blur) and
+  `recordPreviousSessionTitle` cases in `test/domain/sessionSearch.test.js`.
+
+## October 26, 2026 — reply lifecycle, links that keep the chat, relaunch return point
+
+- `domain/messageLifecycle.js` names the reply states the send pipeline already
+  encodes: pending (`streamingPending`), streaming (`streamingTokens` is a
+  number, `streamingReasoning`, or `answeringElsewhere`), complete, interrupted
+  (error with partial output) and error. `MessageTemplates` renders Copy/Retry
+  only once `replyHasEnded`; while text arrives the row is the reserved
+  placeholder, and `finalizeStreamingMessage` swaps in the real row (it already
+  did for reasoning-first replies). Before, any visible text rendered the full
+  row from the first chunk. Interrupted and error replies keep Retry.
+- Web links in answers now open with `target="_blank" rel="noopener noreferrer"`.
+  They used to navigate the chat tab itself, which unloads the page: the
+  stream died mid-reply and the person had to find their way back.
+- Navigation stays tab-scoped (sessionStorage). An installed web app (iOS home
+  screen / display-mode standalone) also keeps `oa-chat-return-point-v1` in
+  localStorage: the open chat plus scroll, written on `visibilitychange` hidden
+  and `pagehide`, valid 24 hours, cleared by New Chat. Only a fresh installed
+  launch with no tab selection reads it, so browser tabs still open New Chat.
+- What leaving does to a paid request: switching chats or New Chat does not
+  stop an OA ticket reply. New Chat from a zkAPI chat still cancels that chat's
+  stream before settling its key (`shouldCancelOnNewChat`, the settlement gate
+  kept on purpose); tokens already generated are billed, the rest is never
+  produced. Reload, closing the page or iOS suspending it ends the request with
+  the page: there is no server to hold the stream, so on return the reply shows
+  as interrupted with its partial text and Retry. Not changed here.
+
+## October 26, 2026 — currency dollars never open math
+
+Reported on iPhone (Haiku answer about the Treasury swap line): "$20 billion in
+Argentine pesos from the central bank" rendered as one italic KaTeX run. Any
+opening `$20` could pair with a later dollar that has no digit after it (for
+example one ending a line), and everything between became math. The October 14
+display-dollar scanner fixed price ratings and table rows, but nothing judged
+what was *inside* a pair. `looksLikeCurrencyProse` now rejects a pair whose body
+starts with an amount and a currency word ("20 billion") or holds three bare words in a
+row; words inside `\text{}`, `\mathrm{}`, `\begin{}` and other commands do not
+count, so `$\text{total cost in dollars} = 20b$` still renders. Inline and
+display (`$$`) scanning share the rule; a rejected display pair removes both
+delimiters from consideration so its closer cannot consume the next real pair.
+
+`processContentWithLatex` moved out of `app.js` into
+`renderMarkdownWithMath` (mathRendering.js) so the whole placeholder round trip
+is unit-tested: math inside bold, lists, headings, tables, quotes, links,
+strikethrough and beside code is restored, and no streaming cut of a math-heavy
+answer leaks a placeholder. The `md://content?type=math&identifier=N` strings
+in the reported Opus answer do not exist anywhere in this client, oa-commercial,
+nanomem or their dependencies; OA placeholders are `OAMATH…PLACEHOLDER…END`.
+They came from the model's own text, so there is no math source to restore.
 
 ## October 21, 2026 — Sepolia password remembered across reloads
 

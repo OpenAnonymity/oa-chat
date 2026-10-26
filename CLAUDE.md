@@ -92,7 +92,7 @@ npm run fonts:sync
 
 **Data Storage:**
 - IndexedDB: sessions, messages, settings (via `db.js`)
-- localStorage: theme (`oa-theme-preference`), wide mode (`oa-wide-mode`), panel visibility (`oa-right-panel-visible`), proxy settings (`oa-network-proxy-settings`)
+- localStorage: theme (`oa-theme-preference`), wide mode (`oa-wide-mode`), panel visibility (`oa-right-panel-visible`), proxy settings (`oa-network-proxy-settings`), installed-app return point (`oa-chat-return-point-v1`: last open chat id + scroll, 24 h, written and read only when running as an installed web app, cleared by New Chat; never synced)
 - Network logs are memory-only (tab-scoped)
 - zkAPI version keys (documented exception to "persisted data flows through `chatDB`"): they must be readable synchronously before `chatDB` opens, because boot decides which SDK build to load first, and the upgrade intent must survive a new tab. They hold ids, enums and a stage only (no note id, deployment id, amount or address), are never account-synced and are never in `SYNCABLE_PREF_KEYS`. Every read and write is inside try/catch and the UI must render without them:
   - sessionStorage `oa-zkapi-version-switch`: one-shot hint for the next boot (reason, view, preferred version id); deleted when consumed, ignored after 5 minutes

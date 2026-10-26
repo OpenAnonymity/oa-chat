@@ -444,3 +444,31 @@ test('a reply saved with an old replacement notice renders as the plain answer, 
         }
     } finally { restore(); }
 });
+
+test('reply actions appear only once the reply has ended', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const { messageLifecycleState, MESSAGE_STATE } = await import('../../chat/domain/messageLifecycle.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const base = Object.freeze({ id: 'reply', sessionId: 'chat', role: 'assistant', model: 'Test', timestamp: 1 });
+        const streaming = { ...base, content: 'The first sentence of the answer', streamingTokens: 8 };
+        const streamingAfterThinking = { ...streaming, reasoning: 'Considered it', streamingReasoning: false };
+        const complete = { ...base, content: 'The whole answer.', streamingTokens: null };
+        const interrupted = { ...base, content: 'Half', inferenceError: 'The connection was lost.' };
+
+        assert.equal(messageLifecycleState(streaming), MESSAGE_STATE.STREAMING);
+        assert.equal(messageLifecycleState({ ...base, streamingPending: true }), MESSAGE_STATE.PENDING);
+        assert.equal(messageLifecycleState(complete), MESSAGE_STATE.COMPLETE);
+        assert.equal(messageLifecycleState(interrupted), MESSAGE_STATE.INTERRUPTED);
+        assert.equal(messageLifecycleState({ ...base, content: '', inferenceError: 'Failed' }), MESSAGE_STATE.ERROR);
+
+        for (const live of [streaming, streamingAfterThinking]) {
+            const html = buildMessageHTML(live, helpers, [], 'Test', { isSessionStreaming: true });
+            assert.doesNotMatch(html, /copy-message-btn|regenerate-message-btn/, 'no actions while text is arriving');
+            assert.match(html, /assistant-actions-placeholder/, 'the row footprint is reserved so nothing jumps');
+        }
+        assert.match(buildMessageHTML(complete, helpers, [], 'Test'), /copy-message-btn/);
+        assert.match(buildMessageHTML(interrupted, helpers, [], 'Test'), /regenerate-message-btn/);
+    } finally { restoreGlobals(); }
+});

@@ -8,7 +8,8 @@ import {
     buildSessionTitleSearchText,
     cleanGeneratedSessionTitle,
     getSearchableMessageText,
-    normalizeSessionSearchText
+    normalizeSessionSearchText,
+    recordPreviousSessionTitle
 } from '../../chat/domain/sessionSearch.js';
 
 test('buildLocalSessionTitle trims whitespace and caps fallback titles', () => {
@@ -98,4 +99,21 @@ test('cleanGeneratedSessionTitle removes prefixes, quotes, punctuation, and trun
         'A very long generated'
     );
     assert.equal(cleanGeneratedSessionTitle('...'), '');
+});
+
+test('recordPreviousSessionTitle keeps old names searchable, newest first and bounded', () => {
+    assert.deepEqual(recordPreviousSessionTitle({ title: 'Trip  planning' }, 'Japan 2027'), ['Trip planning']);
+    assert.deepEqual(
+        recordPreviousSessionTitle({ title: 'Second', previousTitles: ['First'] }, 'Third'),
+        ['Second', 'First']
+    );
+    // Placeholders, the new name itself and duplicates are never recorded.
+    assert.equal(recordPreviousSessionTitle({ title: 'New Chat' }, 'Named'), null);
+    assert.equal(recordPreviousSessionTitle({ title: 'Same' }, 'Same'), null);
+    assert.deepEqual(recordPreviousSessionTitle({ title: 'A', previousTitles: ['B', 'A'] }, 'C'), ['A', 'B']);
+    assert.deepEqual(recordPreviousSessionTitle({ title: 'B', previousTitles: ['A'] }, 'A'), ['B']);
+    assert.deepEqual(
+        recordPreviousSessionTitle({ title: 't6', previousTitles: ['t5', 't4', 't3', 't2', 't1'] }, 't7', { limit: 5 }),
+        ['t6', 't5', 't4', 't3', 't2']
+    );
 });

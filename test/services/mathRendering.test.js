@@ -10,7 +10,8 @@ import {
     renderMathContent,
     normalizeInlineDollarMath,
     protectDollarMathForMarkdown,
-    restoreLiteralDollarPlaceholders
+    restoreLiteralDollarPlaceholders,
+    renderMarkdownWithMath
 } from '../../chat/services/mathRendering.js';
 
 test('display math leaves restaurant price ratings and escaped dollars literal', () => {
@@ -202,4 +203,118 @@ test('math repair leaves embedded matrices, verbatim and URL commands intact', (
     assert.equal(normalized, sources[0] + String.raw` + \text{A \& B}`);
     const rendered = katex.renderToString(normalized, { throwOnError: true });
     assert.equal((rendered.match(/<mtd>/g) || []).length, 2);
+});
+
+// Reported 2026-10-26 (Haiku answer about the Treasury swap line): an opening
+// "$20" paired with a later dollar and KaTeX swallowed the prose between them.
+const CURRENCY_PROSE_CORPUS = [
+    'The ESF agreed to buy up to $20 billion in Argentine pesos from the central bank$\n\n$20 billion worth of pesos.',
+    'Buy up to $20 billion in pesos from the central bank$ then stop.',
+    'Up to $20 billion in Argentine pesos from the central bank$$20 billion worth',
+    'It raised $3 million from investors and spent it on servers$, then $4 more.',
+    'Costs were $1.5 billion last year and the budget$ was cut.',
+    '**$20 billion** in pesos from the central bank and **$20 billion** in dollars',
+    'Between $5 and $10 per seat.',
+    'Fees: $2/month for the basic tier, $5/month for pro$.'
+];
+
+test('currency dollars never open math around prose', () => {
+    for (const source of CURRENCY_PROSE_CORPUS) {
+        assert.equal(normalizeInlineDollarMath(source), source, source);
+        assert.equal(replaceDisplayDollarMath(source, () => 'MATH'), source, source);
+        const protectedContent = protectDollarMathForMarkdown(source, {
+            math: () => 'MATHPLACEHOLDER',
+            literalDollar: () => 'LITERALPLACEHOLDER'
+        });
+        assert.equal(protectedContent, source, source);
+    }
+});
+
+test('real math still renders beside currency', () => {
+    const examples = [
+        ['Spend $20 billion; then $x^2 + y^2 = r^2$ holds.', 'Spend $20 billion; then \\(x^2 + y^2 = r^2\\) holds.'],
+        ['$\\text{Revenue} = p \\cdot q$ costs $5.', '\\(\\text{Revenue} = p \\cdot q\\) costs $5.'],
+        ['$\\text{total cost in dollars} = 20b$', '\\(\\text{total cost in dollars} = 20b\\)'],
+        ['$O(n \\log n)$ and $\\lim_{n \\to \\infty} a_n$', '\\(O(n \\log n)\\) and \\(\\lim_{n \\to \\infty} a_n\\)'],
+        ['$2x + 3$ and $3 \\times 4$', '\\(2x + 3\\) and \\(3 \\times 4\\)'],
+        ['$A(\\rho)/T$ curve and $\\bar{\\omega}$', '\\(A(\\rho)/T\\) curve and \\(\\bar{\\omega}\\)']
+    ];
+    for (const [source, expected] of examples) {
+        assert.equal(normalizeInlineDollarMath(source), expected, source);
+    }
+    assert.equal(
+        replaceDisplayDollarMath('$$\\begin{aligned} x &= 1 \\end{aligned}$$', (_m, c) => `[${c}]`),
+        '[\\begin{aligned} x &= 1 \\end{aligned}]'
+    );
+    // A skipped price pair takes both of its delimiters out of play.
+    assert.equal(replaceDisplayDollarMath('$$20 billion in pesos$$, then $$5 million more$$', () => 'MATH'),
+        '$$20 billion in pesos$$, then $$5 million more$$');
+    assert.equal(replaceDisplayDollarMath('$$20 billion in pesos$$ and $$x^2$$', () => 'MATH'), '$$20 billion in pesos$$ and MATH');
+    assert.equal(
+        replaceDisplayDollarMath('$$\\text{Deposit on-chain} \\longrightarrow \\text{Server executes and refunds}$$', () => 'MATH'),
+        'MATH'
+    );
+});
+
+test('numeric coefficients and units remain math rather than currency prose', () => {
+    for (const expression of ['2 xy + 3 yz', '2 ab = 4', '10 cm^2', '2 xy', '3 sin(x)', '5 millionth']) {
+        assert.equal(normalizeInlineDollarMath(`$${expression}$`), `\\(${expression}\\)`);
+        assert.equal(replaceDisplayDollarMath(`$$${expression}$$`, (_match, value) => `[${value}]`), `[${expression}]`);
+    }
+    for (const amount of ['20 billion', '3.5 million', '5 per seat', '10 dollars']) {
+        assert.equal(normalizeInlineDollarMath(`$${amount}$`), `$${amount}$`);
+    }
+});
+
+test('math delimiters split across stream chunks settle to the final render', () => {
+    const final = 'Up to $20 billion in pesos. Then $x^2$ and \\(y\\) and $$z$$.';
+    for (let cut = 1; cut <= final.length; cut += 1) {
+        const partial = final.slice(0, cut);
+        // Partial renders may show literal text but must never swallow the
+        // currency sentence into math.
+        const normalized = normalizeInlineDollarMath(partial);
+        assert.ok(!normalized.includes('\\(20 billion'), partial);
+    }
+    assert.equal(
+        normalizeInlineDollarMath(final),
+        'Up to $20 billion in pesos. Then \\(x^2\\) and \\(y\\) and $$z$$.'
+    );
+});
+
+const renderMessage = content => renderMarkdownWithMath(content, {
+    parse: source => markedApi.parse(source),
+    escapeHtml: value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+});
+
+// Every structure Markdown can wrap around math. Each source holds `count`
+// math expressions; all must come back as their original delimiters.
+const PLACEHOLDER_CORPUS = [
+    ['**The $A(\\rho)/T$ curve:** how productive the leader is.', 1],
+    ['- **The $B(\\rho)$ curve:** balance of trade\n- Where $\\bar{\\rho}$ and $\\bar{\\omega}$ meet', 3],
+    ['1. Step $x$\n2. Step \\(y\\)\n3. Block:\n\n   $$z^2$$', 3],
+    ['## Heading with $\\rho$', 1],
+    ['| a | b |\n|---|---|\n| $x$ | \\(y\\) |', 2],
+    ['> Quoted $x+1$ and \\[y\\]', 2],
+    ['[link $x$](https://example.com) and _em $y$_ and ~~$z$~~', 3],
+    ['Use `code` then $x$ then `more` then \\(y\\).', 2],
+    ['**$$x^2$$** and *\\[y\\]*', 2],
+    ['$x$$y$ and \\(a\\)\\(b\\)', 3]
+];
+
+test('math placeholders are always restored, whatever Markdown wraps them in', () => {
+    for (const [source, count] of PLACEHOLDER_CORPUS) {
+        const html = renderMessage(source);
+        assert.doesNotMatch(html, /OAMATH|PLACEHOLDER|BLOCK\d+END|INLINE\d+END/, source);
+        const restored = (html.match(/\\\(|\\\[|\$\$|(?<![\\$])\$(?!\$)/g) || []).length;
+        assert.ok(restored >= count, `${source}\n${html}`);
+    }
+});
+
+test('no placeholder leaks at any streaming cut of a math-heavy answer', () => {
+    const answer = PLACEHOLDER_CORPUS.map(([source]) => source).join('\n\n')
+        + '\n\nThe Fund bought up to $20 billion in pesos from the central bank$\n\n$20 billion worth.';
+    for (let cut = 1; cut <= answer.length; cut += 1) {
+        const html = renderMessage(answer.slice(0, cut));
+        assert.doesNotMatch(html, /OAMATH|PLACEHOLDER/, `cut ${cut}`);
+    }
 });
