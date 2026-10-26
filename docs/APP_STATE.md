@@ -1,3 +1,45 @@
+## October 26, 2026 — double-click rename, old names stay searchable
+
+- Double-clicking a sidebar title starts the same inline rename as the row
+  menu's Rename (`Sidebar.startInlineEdit`). Nothing suppresses the first
+  click of the pair, so a double-click on another chat also switches to it,
+  and that switch rebuilds the list with `innerHTML` while the rename is in
+  progress. `renderFullList` and `renderVirtualRange` now capture the editing
+  input (session id, value, original value, selection) before the rebuild and
+  restore it on the new row afterwards. Browsers differ on whether removing
+  the focused input fires `blur` (Firefox/Safari: no; Chrome: yes, while the
+  node is still connected), so `captureInlineEdit` makes the old input
+  read-only before the rebuild — the capturing `blur` listener already
+  ignores read-only inputs — and also skips a disconnected input. A row that
+  the virtualized range no longer renders after a rebuild simply drops the
+  edit without saving, as before. `scrollToSession` leaves a fully visible row alone, so the
+  restored edit survives a normal double-click (the restore focuses with
+  `preventScroll` so focus itself cannot trigger that commit); a row that was
+  only partly in view still scrolls, and that scroll commits the edit as
+  before. The phone layout ignores double-tap: the first tap closes the
+  sidebar overlay, and the row menu's Rename remains.
+- `updateSessionTitle` records the title being replaced in
+  `session.previousTitles` (`domain/sessionSearch.recordPreviousSessionTitle`:
+  newest first, deduplicated, at most 5, never "New Chat" or the new title).
+  `sessionMatchesSearchQuery` matches those names alongside `title`, so both
+  the in-memory filter and the IndexedDB scan find a chat by what it used to
+  be called. Generated titles replacing the local first-prompt title do not
+  go through `updateSessionTitle`; that first prompt is already covered by
+  `titleSearchText` / `conversationSearchText`. The field is a plain session
+  property saved by `chatDB.saveSession`, like `starred`; no migration.
+  Retention policy: old names are searchable on purpose (the request was that
+  search reflect the new name *and* the old), so a rename cannot be used to
+  take text out of a chat's searchable identity; there is no purge affordance
+  yet. This deliberately differs from the manual-title exclusion of
+  `titleSearchText`, which keeps the 1000-character first prompt out of
+  title matching — `previousTitles` holds only short former titles. The
+  share payload (`services/sharePayload.js`) copies explicit fields, so old
+  titles never leave the device; the local JSON export includes whole session
+  records, as it does for every other session field.
+- Tests: `test/components/sidebarRename.test.js` (double-click start, deleting
+  rows ignored, capture/restore across a rebuild, disconnected blur) and
+  `recordPreviousSessionTitle` cases in `test/domain/sessionSearch.test.js`.
+
 ## October 26, 2026 — reply lifecycle, links that keep the chat, relaunch return point
 
 - `domain/messageLifecycle.js` names the reply states the send pipeline already

@@ -77,6 +77,7 @@ import {
     buildLocalSessionTitle as buildLocalSessionTitleText,
     buildForkSessionTitleFields as buildForkSessionTitleFieldsValue,
     buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
+    recordPreviousSessionTitle,
     normalizeSessionSearchText as normalizeSessionSearchTextValue,
     getSearchableMessageText as getSearchableMessageTextValue,
     buildSessionConversationSearchText as buildSessionConversationSearchTextValue,
@@ -5909,6 +5910,8 @@ class ChatApp {
             const reservation = this.beginSessionMutation(sessionId);
             if (!reservation) { await this.acknowledgeSessionMutationBusy(sessionId); return false; }
             try {
+                const previousTitles = recordPreviousSessionTitle(session, title);
+                if (previousTitles) session.previousTitles = previousTitles;
                 session.title = title;
                 session.titleSource = titleSource;
                 session.titleGenerationPending = Boolean(titleGenerationPending);
@@ -10823,6 +10826,7 @@ class ChatApp {
     sessionMatchesSearchQuery(session, query) {
         if (!session || !query) return false;
         return this.searchFieldMatches(query, session.title) ||
+            (Array.isArray(session.previousTitles) && session.previousTitles.some(title => this.searchFieldMatches(query, title))) ||
             this.searchFieldMatches(query, session.titleSource !== 'manual' ? session.titleSearchText : '') ||
             this.searchFieldMatches(query, session.conversationSearchText);
     }

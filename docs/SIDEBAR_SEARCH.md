@@ -5,9 +5,11 @@ tradeoffs behind it.
 
 ## What Gets Searched
 
-Sidebar search checks three session fields:
+Sidebar search checks these session fields:
 
 - `session.title`: the visible chat title.
+- `session.previousTitles`: names the chat had before a rename (newest first,
+  at most 5), so a renamed chat is still found by its old name.
 - `session.titleSearchText`: the legacy first-user-prompt text, only for
   non-manual titles.
 - `session.conversationSearchText`: a bounded text index built from non-local

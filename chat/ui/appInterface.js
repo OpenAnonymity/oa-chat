@@ -189,6 +189,7 @@ export function createSidebarInterface(app, options = {}) {
         toggleSessionStar: (sessionId) => app.toggleSessionStar(sessionId),
         deleteSession: (sessionId) => app.deleteSession(sessionId),
         switchSession: (sessionId) => app.switchSession(sessionId),
+        isMobileView: () => app.isMobileView(),
         shareCurrentSession: () => app.shareCurrentSession(),
         copySessionLink: () => app.copySessionLink(),
         deleteCurrentSessionShare: () => app.deleteCurrentSessionShare(),
