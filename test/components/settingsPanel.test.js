@@ -45,7 +45,7 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
         'All', 'Chat history', 'ChatGPT', 'Memories',
         'Share feedback',
         'Scrubber model',
-        'Use memories without asking', 'Memory model',
+        'Use saved memories', 'Memory model',
         'Web search', 'Council review', 'Council model', 'Effort'
     ]);
     // Memory export/import work whether Memory is on or off: the memories

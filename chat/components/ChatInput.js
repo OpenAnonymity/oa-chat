@@ -2187,8 +2187,8 @@ export default class ChatInput {
         this.updateSwitchToggleUI(
             memoryAutoIncludeToggle,
             effectiveMemoryAutoInclude,
-            'Use memories without asking is on',
-            memoryFeatureEnabled ? 'Use memories without asking is off' : memoryUnavailableReason
+            'Use saved memories: on',
+            memoryFeatureEnabled ? 'Use saved memories: off' : memoryUnavailableReason
         );
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;

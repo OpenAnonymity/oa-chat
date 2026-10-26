@@ -1,3 +1,9 @@
+## October 26, 2026 — saved-memory setting label
+
+The Memory setting is now labelled “Use saved memories”, with matching on/off
+tooltips. This is copy only; automatic inclusion behavior and stored settings
+are unchanged.
+
 ## October 26, 2026 — currency review preserves coefficients and units
 
 The staging integration narrows the amount-prefix currency heuristic to
