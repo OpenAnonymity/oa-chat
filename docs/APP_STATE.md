@@ -1,3 +1,18 @@
+## October 26, 2026 — reasoning header no longer strobes during thinking
+
+`ChatArea.updateStreamingReasoning` called `resumeReasoningDisplay` on every
+reasoning chunk since `4eaf6bc8` (Oct 15). That write puts "Thinking..." in the
+header synchronously; the debounced `flushReasoningBuffer` put the latest
+provider heading back about 80 ms later, so for models whose traces carry
+`**bold**` or `#` headings (GPT-6.1 Sol, for example) the header flashed between
+the two for the whole thinking phase. Traces without headings never showed it
+because both writers agree on "Thinking...". The call now runs only inside the
+settled-trace branch, which is the settled → thinking-again transition it was
+added for (a tool call between answer segments). Behavior there is unchanged,
+and withheld reasoning has its own path. `test/components/reasoningHeaderStrobe.test.js`
+drives the real method with a recording subtitle element: two headed chunks never
+write "Thinking..." between flushes, and a resume after settling still does.
+
 ## October 21, 2026 — Sepolia password remembered across reloads
 
 Staging (Sepolia) asked for the shared service password on every reload. The

@@ -2819,12 +2819,16 @@ export default class ChatArea {
             this.typewriter.messageId = messageId;
             this.typewriter.displayedLength = settledLength;
             document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
+            // Only this settled -> thinking transition sends the header back to
+            // the shimmer. Calling it on every chunk made the header strobe
+            // between "Thinking..." and the latest heading (the debounced flush
+            // rewrote it 80ms later) for the whole thinking phase.
+            this.resumeReasoningDisplay(messageId);
         }
         // Some models answer first, then reveal their first reasoning during a tool call.
         if (!document.getElementById(`reasoning-content-${messageId}`)) {
             this.insertSingleReasoningTrace(messageId, buildReasoningTrace(reasoning, messageId, true));
         }
-        this.resumeReasoningDisplay(messageId);
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
