@@ -1,3 +1,26 @@
+## October 26, 2026 — currency dollars never open math
+
+Reported on iPhone (Haiku answer about the Treasury swap line): "$20 billion in
+Argentine pesos from the central bank" rendered as one italic KaTeX run. Any
+opening `$20` could pair with a later dollar that has no digit after it (for
+example one ending a line), and everything between became math. The October 14
+display-dollar scanner fixed price ratings and table rows, but nothing judged
+what was *inside* a pair. `looksLikeCurrencyProse` now rejects a pair whose body
+starts with an amount and a word ("20 billion") or holds three bare words in a
+row; words inside `\text{}`, `\mathrm{}`, `\begin{}` and other commands do not
+count, so `$\text{total cost in dollars} = 20b$` still renders. Inline and
+display (`$$`) scanning share the rule, and a rejected display opener is skipped
+alone so a later real pair can still form.
+
+`processContentWithLatex` moved out of `app.js` into
+`renderMarkdownWithMath` (mathRendering.js) so the whole placeholder round trip
+is unit-tested: math inside bold, lists, headings, tables, quotes, links,
+strikethrough and beside code is restored, and no streaming cut of a math-heavy
+answer leaks a placeholder. The `md://content?type=math&identifier=N` strings
+in the reported Opus answer do not exist anywhere in this client, oa-commercial,
+nanomem or their dependencies; OA placeholders are `OAMATH…PLACEHOLDER…END`.
+They came from the model's own text, so there is no math source to restore.
+
 ## October 21, 2026 — Sepolia password remembered across reloads
 
 Staging (Sepolia) asked for the shared service password on every reload. The

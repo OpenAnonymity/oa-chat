@@ -36,13 +36,7 @@ import { parseReasoningContent } from './services/reasoningParser.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
 import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
-import {
-    createMathPlaceholderNamespace,
-    replaceDisplayDollarMath,
-    transformMarkdownOutsideCode,
-    protectDollarMathForMarkdown,
-    restoreLiteralDollarPlaceholders
-} from './services/mathRendering.js';
+import { renderMarkdownWithMath } from './services/mathRendering.js';
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import { noteLoadedSession } from './services/inference/accessDiscardLog.js';
@@ -1806,70 +1800,10 @@ class ChatApp {
      * This prevents marked from breaking LaTeX delimiters
      */
     processContentWithLatex(content) {
-        // Store block-level and inline LaTeX to prevent markdown from breaking them
-        // Terminate numeric IDs: token 1 must never match the prefix of token 10.
-        const placeholderNamespace = createMathPlaceholderNamespace(content);
-        const blockLatexPlaceholders = [];
-        const inlineLatexPlaceholders = [];
-        const literalDollarPlaceholders = [];
-        let processedContent = content;
-
-        // Extract block LaTeX \[...\] and replace with placeholders
-        processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
-            blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
-            return `\n\n${placeholder}\n\n`;
+        return renderMarkdownWithMath(content, {
+            parse: source => marked.parse(source),
+            escapeHtml: value => this.escapeHtml(value)
         });
-
-        // Extract block LaTeX $$...$$ and replace with placeholders
-        processedContent = transformMarkdownOutsideCode(processedContent, segment => replaceDisplayDollarMath(segment, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
-            blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
-            return `\n\n${placeholder}\n\n`;
-        }));
-
-        // Extract inline LaTeX \(...\) and replace with placeholders
-        processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
-            inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
-            return placeholder;
-        });
-
-        // Gemini sometimes emits $...$ despite the requested \(...\) format.
-        // Protect valid pairs before Markdown can split or reinterpret them.
-        processedContent = protectDollarMathForMarkdown(processedContent, {
-            math: match => {
-                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
-                inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
-                return placeholder;
-            },
-            // Marked consumes the slash in \$, so carry literal-dollar intent
-            // through parsing with a non-math span.
-            literalDollar: () => {
-                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}END`;
-                literalDollarPlaceholders.push(placeholder);
-                return placeholder;
-            }
-        });
-
-        // Process markdown (uses custom renderer configured in init)
-        let html = marked.parse(processedContent);
-
-        // Restore block LaTeX without <p> wrapping
-        blockLatexPlaceholders.forEach(({ placeholder, latex }) => {
-            // Remove <p> tags around placeholder and replace with the LaTeX
-            html = html.split(`<p>${placeholder}</p>`).join(placeholder);
-            html = html.split(placeholder).join(latex);
-        });
-
-        // Restore inline LaTeX
-        inlineLatexPlaceholders.forEach(({ placeholder, latex }) => {
-            html = html.split(placeholder).join(latex);
-        });
-
-        html = restoreLiteralDollarPlaceholders(html, literalDollarPlaceholders);
-
-        return html;
     }
 
     initScrollAwareScrollbars(element, hideDelayMs = 1500) {

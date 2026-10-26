@@ -69,6 +69,9 @@ export function replaceDisplayDollarMath(text, replacer) {
             return /^\s*\|.*\|\s*$/.test(value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd));
         };
         if (!content.trim() || (content.includes('\n') && (inTableRow(start) || inTableRow(end)))) continue;
+        // "$$20 billion in pesos ... bank$$" is two prices, not an equation.
+        // Skip only the opener so a later real pair can still form.
+        if (looksLikeCurrencyProse(content)) continue;
         result += value.slice(cursor, start) + replacer(value.slice(start, end + 2), content);
         cursor = end + 2;
         i++;
@@ -97,11 +100,29 @@ function canCloseInlineMath(text, index) {
         && !(next && /\d/.test(next));
 }
 
+// TeX commands whose braced argument is prose by design: their words are not
+// evidence that a dollar pair wraps a sentence.
+const TEXT_ARGUMENT_COMMAND = /\\(?:text[a-z]*|math[a-z]*|operatorname\*?|mbox|hbox|begin|end|label|tag|color|textcolor|mathrm)\s*\{[^{}]*\}/g;
+
+/**
+ * A dollar pair around prose is two currency amounts, not math. Models write
+ * "$20 billion in pesos from the central bank$..." far more often than TeX
+ * with three bare words in a row; TeX words are commands or \text arguments.
+ */
+export function looksLikeCurrencyProse(content) {
+    const value = String(content ?? '');
+    // "$20 billion", "$3.5 million", "$5 per seat": an amount, then a word.
+    if (/^\s*\d[\d,.]*\s+[A-Za-z]{2,}/.test(value)) return true;
+    const bare = value.replace(TEXT_ARGUMENT_COMMAND, ' ').replace(/\\[A-Za-z]+/g, ' ');
+    return /(?:^|[^\\A-Za-z])[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}(?![A-Za-z])/.test(bare);
+}
+
 function isPlausibleInlineMath(content) {
     const value = content.trim();
     return Boolean(value)
         && !/[\r\n]/.test(value)
-        && !/[+\-*/=<>|,;:.([{]$/.test(value);
+        && !/[+\-*/=<>|,;:.([{]$/.test(value)
+        && !looksLikeCurrencyProse(value);
 }
 
 function findInlineDollarMathPairs(value) {
@@ -430,4 +451,55 @@ export function renderMathContent(root) {
         equation.setAttribute('role', 'region');
         equation.setAttribute('aria-label', 'Equation');
     });
+}
+
+/**
+ * Markdown + math for one message. Math is swapped for namespaced placeholders
+ * before Markdown so emphasis and lists cannot split it, then swapped back.
+ * Every placeholder is restored, whatever Markdown did around it.
+ */
+export function renderMarkdownWithMath(content, { parse, escapeHtml }) {
+    const source = String(content ?? '');
+    // Terminate numeric IDs: token 1 must never match the prefix of token 10.
+    const placeholderNamespace = createMathPlaceholderNamespace(source);
+    const blockLatexPlaceholders = [];
+    const inlineLatexPlaceholders = [];
+    const literalDollarPlaceholders = [];
+    const blockPlaceholder = match => {
+        const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
+        blockLatexPlaceholders.push({ placeholder, latex: escapeHtml(match) });
+        return `\n\n${placeholder}\n\n`;
+    };
+    const inlinePlaceholder = match => {
+        const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
+        inlineLatexPlaceholders.push({ placeholder, latex: escapeHtml(match) });
+        return placeholder;
+    };
+
+    let processedContent = source.replace(/\\\[([\s\S]*?)\\\]/g, match => blockPlaceholder(match));
+    processedContent = transformMarkdownOutsideCode(processedContent,
+        segment => replaceDisplayDollarMath(segment, match => blockPlaceholder(match)));
+    processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, match => inlinePlaceholder(match));
+    // Gemini sometimes emits $...$ despite the requested \(...\) format.
+    processedContent = protectDollarMathForMarkdown(processedContent, {
+        math: match => inlinePlaceholder(match),
+        // Marked consumes the slash in \$, so carry literal-dollar intent
+        // through parsing with a non-math span.
+        literalDollar: () => {
+            const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}END`;
+            literalDollarPlaceholders.push(placeholder);
+            return placeholder;
+        }
+    });
+
+    let html = parse(processedContent);
+
+    blockLatexPlaceholders.forEach(({ placeholder, latex }) => {
+        html = html.split(`<p>${placeholder}</p>`).join(placeholder);
+        html = html.split(placeholder).join(latex);
+    });
+    inlineLatexPlaceholders.forEach(({ placeholder, latex }) => {
+        html = html.split(placeholder).join(latex);
+    });
+    return restoreLiteralDollarPlaceholders(html, literalDollarPlaceholders);
 }
