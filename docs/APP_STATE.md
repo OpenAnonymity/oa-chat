@@ -1,3 +1,13 @@
+## October 27, 2026 — production-based pairing candidate, local only
+
+Pairing changes are selectively applied to production client 5ba13ac5. Staging
+request-timing source is excluded. Existing production Google/passkey transport
+and current UI fixes are preserved. Server candidate is based on a read-only
+snapshot of the deployed source, including its stricter account-bound keyring ADD
+check. Server, web and iOS pairing stay off by default. No deployment or phone
+installation. Candidate evidence: workspace
+`deployment/phone-pairing-20261027/production-candidate/`.
+
 ## October 19, 2026 — local review of database-close recovery
 
 `831654b` is distinct from the withdrawn history-hardening candidate: healthy

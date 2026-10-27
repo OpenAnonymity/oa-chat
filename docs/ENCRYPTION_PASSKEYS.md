@@ -110,6 +110,18 @@ Username and Google identities are separate account types and cannot be linked
 in this version. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for the full
 protocol and compatibility contract.
 
+## A phone that holds none of the account's passkeys
+
+A passkey created in Chrome on a Mac, in Windows Hello or in a desktop-only
+password manager never reaches an iPhone's iCloud Keychain. The iOS app asks
+only for credentials already on the device
+(`preferImmediatelyAvailableCredentials`), so such a phone is not sent to the
+system's cross-device QR, which a computer cannot answer; it shows its own
+"Your passkey isn't on this phone yet" state instead. The planned remedy, a
+computer with the wallet unlocked giving the phone a passkey over an OA
+pairing QR, is specified in [PHONE_PAIRING.md](PHONE_PAIRING.md). Phones whose
+passkey synced through iCloud Keychain are unaffected by either.
+
 ## Returning-device flow
 
 Returning Google accounts show **Use saved passkey** after OAuth succeeds, rather

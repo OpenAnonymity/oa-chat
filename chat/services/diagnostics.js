@@ -47,8 +47,25 @@ export const DIAGNOSTIC_CATALOG = Object.freeze({
         op: ENUM(['read', 'write', 'upgrade'])
     },
     // Encrypted wallet sync did not complete.
-    'sync.failed': { reason: ENUM(REQUEST_REASONS), stage: ENUM(['pull', 'push', 'merge', 'status']) }
+    'sync.failed': { reason: ENUM(REQUEST_REASONS), stage: ENUM(['pull', 'push', 'merge', 'status']) },
+    // A passkey unlock of the encryption keyring did not complete. `unavailable`
+    // is the browser reporting that none of the account's passkeys exist in this
+    // profile (NotFoundError); `cancelled` is the native sheet closed without a
+    // credential, which on a phone with no synced passkey is the usual outcome.
+    'unlock.failed': {
+        outcome: ENUM(['unavailable', 'cancelled', 'no_prf', 'failed']),
+        account: ENUM(['google', 'username']),
+        prelaunch: BOOL
+    }
 });
+
+/** The finite outcome an unlock error maps to; never its text. */
+export function unlockFailureOutcome(error) {
+    if (error?.code === 'ENCRYPTION_PASSKEY_NOT_AVAILABLE' || error?.name === 'PasskeyUnavailableError') return 'unavailable';
+    if (error?.name === 'NotAllowedError' || error?.name === 'AbortError') return 'cancelled';
+    if (/\bPRF\b/i.test(String(error?.message || ''))) return 'no_prf';
+    return 'failed';
+}
 
 /** The finite reason an error maps to; never its text. */
 export function requestFailureReason(error) {
@@ -65,8 +82,11 @@ export function requestFailureReason(error) {
     return 'unexpected';
 }
 
-const BREADCRUMB_CATEGORIES = Object.freeze(['access', 'verify', 'tickets', 'stream', 'sync', 'send', 'billing', 'local', 'other']);
-const BREADCRUMB_CODES = new Set(['request_confidential_key', 'request_key', 'submit_key', 'attestation', 'register', 'split', 'code_redeem', 'free_access', 'waitlist', 'legacy_transfer', 'request', 'auth', 'completion', 'models', 'ticket_select', 'ticket_select_split', 'tickets_blind', 'tickets_signed', 'tickets_unblind', 'prompt_edit', 'session_fork', 'access_discard', 'access_replace', 'started', 'opened', 'first_output', 'failed', 'timeout']);
+const BREADCRUMB_CATEGORIES = Object.freeze(['access', 'verify', 'tickets', 'stream', 'sync', 'send', 'billing', 'local', 'pairing', 'other']);
+// Phone pairing steps (docs/PHONE_PAIRING.md): the state names of the
+// computer's session, nothing from the QR or the messages.
+const PAIRING_CODES = ['showing', 'scanned', 'approving', 'done', 'expired', 'declined', 'failed'];
+const BREADCRUMB_CODES = new Set([...PAIRING_CODES, 'request_confidential_key', 'request_key', 'submit_key', 'attestation', 'register', 'split', 'code_redeem', 'free_access', 'waitlist', 'legacy_transfer', 'request', 'auth', 'completion', 'models', 'ticket_select', 'ticket_select_split', 'tickets_blind', 'tickets_signed', 'tickets_unblind', 'prompt_edit', 'session_fork', 'access_discard', 'access_replace', 'started', 'opened', 'first_output', 'failed', 'timeout']);
 // The org's structured error codes (oa-org auth/ticket_auth.py and the
 // billing, account and sync routes). A code not listed here is not carried.
 export const ORG_ERROR_CODES = Object.freeze([

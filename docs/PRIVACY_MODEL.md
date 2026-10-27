@@ -690,3 +690,14 @@ covered setting name and direction relative to its built-in default are reported
 the previous and next values stay in the browser. No preference census, user
 history, identity, model selection or content is sent. See
 [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for scope and exclusions.
+
+
+## Optional phone pairing
+
+The computer approves a fresh passkey prompt before sending the account master
+key encrypted under a QR-secret-bound ephemeral ECDH key. The org sees account
+identity, pairing time, source IPs and ciphertext sizes, and stores the resulting
+credential/encrypted wrapper. It cannot decrypt the mailbox messages from its
+retained values. Pairing links devices to an account; it does not make that account
+activity anonymous. It introduces no account identifiers into inference or ticket
+redemption. QR secrets and keys never enter telemetry. See [PHONE_PAIRING.md](PHONE_PAIRING.md).

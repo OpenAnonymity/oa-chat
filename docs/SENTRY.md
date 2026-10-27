@@ -222,3 +222,18 @@ server-side Sentry and Sentry project administration are not changed. Before
 promoting additional telemetry to production, an administrator must verify
 IP-storage prevention and `$user.geo.**` scrubbing in the hosted project. Local
 sanitizer tests do not establish those hosted settings.
+
+
+## Passkey unlock outcome
+
+`unlock.failed` reports only allowlisted outcome (unavailable, cancelled, no_prf,
+failed), account kind (google or username), and whether prelaunch was used. No
+account ID, credential, key or error text is included.
+
+## Phone pairing breadcrumbs
+
+The computer's pairing session (`chat/services/phonePairingSession.js`, via
+`app.js`) records a breadcrumb per state in the `pairing` category: `showing`,
+`scanned`, `approving`, `done`, `expired`, `declined`, `failed`. The state name
+is the whole breadcrumb; the QR line, the phone's device name and both tunnel
+messages are not in the vocabulary and cannot be sent.

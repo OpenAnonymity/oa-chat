@@ -1,7 +1,7 @@
 import { STILL_WORKING_DELAY_MS } from './services/streamSegments.js';
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
-import { reportDiagnostic } from './services/diagnostics.js';
+import { reportDiagnostic, addBreadcrumb } from './services/diagnostics.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateConversationInput } from './services/inference/inputLimits.js';
@@ -62,6 +62,8 @@ import { hasConversationParam, readConversationParam, setConversationParam, dele
 import { ensureModelTiersReady, ensureModelTiersPreviewReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
+import { createPhonePairingSession, phonePairingBuildEnabled } from './services/phonePairingSession.js';
+import { pairingQrSvg } from './services/phonePairingQr.js';
 import sessionService from './services/sessionService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -764,6 +766,34 @@ class ChatApp {
                         for (const [type, handler] of Object.entries(handlers)) window.removeEventListener(type, handler);
                     };
                 }
+            }),
+            // Phone pairing, "Sync from your computer" (docs/PHONE_PAIRING.md).
+            // The host renders the QR and the approve step; the cryptography,
+            // the passkey prompt and the org requests stay in oa-chat.
+            pairing: Object.freeze({
+                available: () => phonePairingBuildEnabled()
+                    && window.electronAPI?.isElectron !== true
+                    && accountService.pairingAccountKind() !== null,
+                create: ({ onChange } = {}) => createPhonePairingSession({
+                    request: (path, init) => accountService.pairingRequest(path, init),
+                    accountKind: () => accountService.pairingAccountKind(),
+                    accountId: () => accountService.getState().accountId || null,
+                    revealMasterKey: options => accountService.revealMasterKeyForPairing(options),
+                    accountGeneration: () => accountService.loginGeneration,
+                    approveUsername: options => accountService.approveUsernamePairing(options),
+                    env: /staging|localhost|127\.0\.0\.1/.test(ORG_API_BASE) ? 'staging' : 'prod',
+                    // Each step is a breadcrumb for the error reporter (state
+                    // name only) and three of them count as feature usage;
+                    // the QR, the device and the messages never leave here.
+                    onChange: state => {
+                        addBreadcrumb({ category: 'pairing', code: state.status });
+                        if (state.status === 'showing') trackFeatureUsage('pairing_started');
+                        if (state.status === 'scanned') trackFeatureUsage('pairing_scanned');
+                        if (state.status === 'done') trackFeatureUsage('pairing_completed');
+                        onChange?.(state);
+                    }
+                }),
+                qrSvg: text => pairingQrSvg(String(text || ''))
             }),
             payments: Object.freeze({
                 // 'tickets' or 'zkapi'. Hosts use it to keep ticket

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
     DIAGNOSTIC_EVENT, BREADCRUMB_EVENT, DIAGNOSTIC_CATALOG,
     bucketCount, normalizeDiagnostic, normalizeBreadcrumb, breadcrumbFromLogEntry,
-    createDiagnosticsReporter, requestFailureReason, isDiagnosticName, createDiagnosticTrail
+    createDiagnosticsReporter, requestFailureReason, isDiagnosticName, createDiagnosticTrail, unlockFailureOutcome
 } from '../../chat/services/diagnostics.js';
 
 const privateText = 'PRIVATE_PROMPT_KEY_TICKET_EMAIL';
@@ -150,4 +150,21 @@ test('concurrent request trails remain isolated, bounded, and contain only relat
     for (let i = 0; i < 60; i++) a.add('request_key');
     assert.equal(a.snapshot().length, 40);
     assert.equal(normalizeBreadcrumb({ category: 'access', code: 'private_user_prompt' }), null);
+});
+
+test('unlock failures map to finite outcomes with the account kind; the message is never carried', () => {
+    const unavailable = new Error(`This passkey is not available ${privateText}`);
+    unavailable.name = 'PasskeyUnavailableError';
+    unavailable.code = 'ENCRYPTION_PASSKEY_NOT_AVAILABLE';
+    assert.equal(unlockFailureOutcome(unavailable), 'unavailable');
+    assert.equal(unlockFailureOutcome({ name: 'NotAllowedError', message: privateText }), 'cancelled');
+    assert.equal(unlockFailureOutcome({ name: 'AbortError' }), 'cancelled');
+    assert.equal(unlockFailureOutcome(new Error(`This passkey did not provide an encryption key. Use a PRF-capable passkey. ${privateText}`)), 'no_prf');
+    assert.equal(unlockFailureOutcome(new Error(privateText)), 'failed');
+    assert.equal(unlockFailureOutcome(null), 'failed');
+
+    const sent = normalizeDiagnostic('unlock.failed', { outcome: 'unavailable', account: 'google', prelaunch: false, message: privateText });
+    assert.deepEqual(sent, { outcome: 'unavailable', account: 'google', prelaunch: false });
+    assert.deepEqual(normalizeDiagnostic('unlock.failed', { outcome: privateText, account: 'apple' }), {});
+    assert.ok(!JSON.stringify(sent).includes(privateText));
 });

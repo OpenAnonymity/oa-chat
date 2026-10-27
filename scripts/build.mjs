@@ -251,6 +251,7 @@ const build = async () => {
             '.otf': 'file'
         },
         define: {
+            '__OA_PHONE_PAIRING__': JSON.stringify(process.env.OA_PHONE_PAIRING === 'true'),
             '__DEV__': 'false',
             '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
