@@ -1,10 +1,27 @@
 import http from 'node:http';
+import { build } from 'esbuild';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 
 const port = Number.parseInt(process.env.OA_CHAT_DEV_PORT || '8080', 10);
 const chatRoot = resolve('chat');
+// These client modules depend on npm CommonJS packages. Production bundles
+// them already; the unbundled local server needs the same browser conversion.
+const bundledModules = new Map([
+    [resolve(chatRoot, 'services/phonePairingQr.js'), null],
+    [resolve(chatRoot, 'zkapi/components/FundingPaymentQr.js'), null]
+]);
+
+async function bundledModule(filePath) {
+    if (!bundledModules.has(filePath)) return null;
+    if (!bundledModules.get(filePath)) {
+        bundledModules.set(filePath, build({ entryPoints: [filePath], bundle: true,
+            platform: 'browser', format: 'esm', write: false }).then(result => result.outputFiles[0].text));
+    }
+    return bundledModules.get(filePath);
+}
+
 const orgTarget = new URL(
     process.env.OA_ORG_DEV_URL || 'http://127.0.0.1:8005'
 );
@@ -67,7 +84,7 @@ async function serveStatic(
             '</head>',
             '<script>globalThis.__OA_LOCAL_ORG_PROXY__ = true;</script></head>'
         )
-        : null;
+        : await bundledModule(file.path);
     response.statusCode = 200;
     response.setHeader(
         'Content-Type',

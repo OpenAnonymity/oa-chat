@@ -1,3 +1,10 @@
+## October 28, 2026 — local QR module loading
+
+The unbundled development server bundles only the two QR helper modules for
+browser consumption. Both import npm packages that browsers cannot resolve
+directly. This restores local chat startup and provider-fault checks after
+pairing integration; deployed artifacts already bundle these dependencies.
+
 ## October 28, 2026 — additive staging pairing integration
 
 Port the existing production phone pairing feature onto current staging without
