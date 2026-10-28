@@ -31,6 +31,7 @@ import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 import sessionService from './sessionService.js';
 import { isAmbiguousAccountFailure, toFriendlyAccountError } from '../domain/accountErrors.js';
+import { reportDiagnostic, unlockFailureOutcome } from './diagnostics.js';
 import storageEvents from './storageEvents.js';
 import syncService, { SYNC_ACCOUNT_SCOPE_KEY as SYNC_ACCOUNT_SCOPE_SETTING } from './encryptedSyncService.js';
 import {
@@ -455,10 +456,14 @@ async function fetchJson(
     body,
     {
         timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS,
-        method = 'POST'
+        method = 'POST',
+        signal
     } = {}
 ) {
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) controller.abort();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     let data = null;
@@ -477,6 +482,7 @@ async function fetchJson(
         try {
             data = await response.json();
         } catch (error) {
+            if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
             if (controller.signal.aborted) {
                 const timeout = new Error(`Account request timed out after ${timeoutMs}ms`);
                 timeout.name = 'TimeoutError';
@@ -487,6 +493,7 @@ async function fetchJson(
         }
     } finally {
         clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', cancel);
     }
     if (!response.ok) {
         // Detect token invalidation (e.g., after recovery on another device)
@@ -918,6 +925,100 @@ class AccountService {
 
     getMasterKey() {
         return this.masterKey ? new Uint8Array(this.masterKey) : null;
+    }
+
+    // --- Phone pairing (docs/PHONE_PAIRING.md) ------------------------------
+    // The raw master key is zeroed after every unlock; only non-extractable
+    // CryptoKeys stay. So "Approve with Touch ID" is a real re-unlock: the
+    // same passkey prompt this account uses, with the result handed to the
+    // pairing session for one message and then zeroed by the caller.
+
+    /** 'google' (PRF keyring) or 'username' (passkey login), or null. */
+    pairingAccountKind() {
+        if (!this.state.accountId || !this.state.sessionVerified || this.state.busy) return null;
+        if (this.state.encryptionMode === 'PRF' && this.state.googleLinked) return 'google';
+        if (this.state.encryptionMode === 'LEGACY_PASSKEY' && this.state.username) return 'username';
+        return null;
+    }
+
+    /**
+     * Unwraps and returns the raw 32-byte master key after a fresh passkey
+     * prompt. The caller zeroes it. Never changes account state; a different
+     * account answering the prompt is refused.
+     */
+    async revealMasterKeyForPairing({ signal } = {}) {
+        const kind = this.pairingAccountKind();
+        if (!kind) throw new Error('Sign in and unlock before adding a phone');
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        const isCurrent = () => this.state.accountId === expectedAccountId && this.loginGeneration === generation && !signal?.aborted;
+
+        if (kind === 'google') {
+            const keyring = await this.fetchOAuthKeyring();
+            if (!isCurrent()) throw new Error('The account changed');
+            const unlocked = await unlockEncryptionKeyring((keyring.wrappers || []).map(wrapper => ({ ...wrapper })), { signal });
+            if (!isCurrent()) {
+                unlocked.masterKey.fill(0);
+                throw new Error('The account changed');
+            }
+            return unlocked.masterKey;
+        }
+
+        throw new Error('Username pairing requires server-verified approval');
+    }
+
+    /**
+     * The pairing session's org requests, with the session cookie. Paths are
+     * restricted to the tunnel so this cannot become a general org client.
+     */
+    pairingRequest(path, { method = 'POST', body = null, signal } = {}) {
+        if (!/^\/auth\/pairing(\/[A-Za-z0-9_-]{22}(\/computer)?)?$/.test(String(path))) {
+            throw new TypeError('Pairing requests are restricted to /auth/pairing');
+        }
+        return fetchJson(path, body, { method, signal });
+    }
+
+    /** A fresh, tunnel-bound server assertion approves enrollment and unwraps locally. */
+    async approveUsernamePairing({ tunnelId, signal } = {}) {
+        if (this.pairingAccountKind() !== 'username') throw new Error('Username account required');
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        const check = () => {
+            if (signal?.aborted || this.loginGeneration !== generation
+                || this.state.accountId !== expectedAccountId || this.pairingAccountKind() !== 'username') {
+                throw new DOMException('Pairing cancelled or account changed', 'AbortError');
+            }
+        };
+        check();
+        const challenge = await fetchJson('/auth/credentials/grant/challenge', { tunnelId }, { signal });
+        check();
+        const prfInput = await digestAccountId(expectedAccountId);
+        check();
+        const assertion = await navigator.credentials.get({ publicKey: buildRequestOptions(challenge, prfInput), signal });
+        check();
+        if (!assertion) throw new DOMException('Passkey request cancelled', 'AbortError');
+        const prfBytes = getPrfOutput(assertion);
+        if (!prfBytes) throw new Error('This passkey cannot unlock the encrypted data');
+        let masterKey = null;
+        try {
+            const approved = await fetchJson('/auth/credentials/grant', {
+                tunnelId, challengeId: challenge.challengeId, assertion: assertionToJSON(assertion)
+            }, { signal });
+            check();
+            if (normalizeAccountId(approved.accountId) !== expectedAccountId || !/^[A-Za-z0-9_-]{43}$/.test(approved.grant)) {
+                throw new Error('Pairing approval does not match this account');
+            }
+            const wrappingKey = await importAesKey(prfBytes);
+            check();
+            masterKey = await decryptBytes(wrappingKey, decodeWrappedKey(approved.wrappedKeyPasskey));
+            check();
+            return { masterKey, grant: approved.grant };
+        } catch (error) {
+            masterKey?.fill(0);
+            throw error;
+        } finally {
+            prfBytes.fill(0);
+        }
     }
 
     /**
@@ -3031,6 +3132,9 @@ class AccountService {
             return true;
         } catch (error) {
             if (!isCurrent()) return false;
+            reportDiagnostic('unlock.failed', {
+                outcome: unlockFailureOutcome(error), account: 'google', prelaunch: usePrelaunchPasskey === true
+            });
             this.setState({
                 busy: false,
                 action: null,
@@ -3358,6 +3462,9 @@ class AccountService {
             // Record failed attempt for rate limiting (unless silent)
             if (!silent) {
                 this.recordFailedAttempt();
+            }
+            if (!silent) {
+                reportDiagnostic('unlock.failed', { outcome: unlockFailureOutcome(error), account: 'username', prelaunch: false });
             }
 
             const message = toFriendlyError(error);

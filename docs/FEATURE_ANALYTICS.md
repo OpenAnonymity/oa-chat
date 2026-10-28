@@ -19,6 +19,9 @@ commercial startup explicitly installs the build-time loader's reporter.
 | Parallel run completed | Every first-stage lane returns a nonempty successful response and the turn is not cancelled. |
 | Council review started | Synthesis begins after its access is acquired. |
 | Council review completed | Synthesis returns a nonempty response without cancellation. Can follow partially successful first-stage responses. |
+| Phone pairing started | The Add phone view shows a pairing code (web, computer side; [PHONE_PAIRING.md](PHONE_PAIRING.md)). A new code after expiry counts again. |
+| Phone pairing scanned | A phone's message was opened and matched this account; the approve step is showing. |
+| Phone pairing completed | The person approved and the key was sent. Says nothing about the phone finishing its passkey. |
 
 Council also generates the applicable Parallel events. Do not sum these as
 independent people or conversations. Per-lane regeneration, automatic memory

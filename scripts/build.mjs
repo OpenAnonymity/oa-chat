@@ -288,6 +288,7 @@ const build = async () => {
         define: {
             '__OA_STAGING_TIMING__': JSON.stringify(stagingTiming),
             '__OA_TIMING_RELEASE__': JSON.stringify(stagingTiming ? timingRelease : ''),
+            '__OA_PHONE_PAIRING__': JSON.stringify(process.env.OA_PHONE_PAIRING === 'true'),
             '__DEV__': 'false',
             '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
             // Registry projection. Empty in ticket-only and SDK-default builds

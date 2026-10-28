@@ -1,3 +1,11 @@
+## October 28, 2026 — additive staging pairing integration
+
+Port the existing production phone pairing feature onto current staging without
+replacing its payment or timing implementation. Retain the existing double-click
+rename and landing integration. Build definitions retain the staging experiment
+and add the separate phone-pairing flag. Live org pairing is not certified here;
+user accepts staging UI/check coverage and a later production-device ceremony.
+
 ## October 27, 2026 — incompatible passkey storage guidance
 
 Username signup now says: “This passkey storage option doesn’t support account
@@ -218,6 +226,15 @@ boundary and delayed-tab cases also have deterministic clock tests.
 Sentry reporting is unchanged. See the legibility follow-up in `SENTRY.md`:
 fixed readable titles first, then a separate reviewed classification change.
 No model/request identifiers, success events or timing experiment were added.
+## October 27, 2026 — production-based pairing candidate, local only
+
+Pairing changes are selectively applied to production client 5ba13ac5. Staging
+request-timing source is excluded. Existing production Google/passkey transport
+and current UI fixes are preserved. Server candidate is based on a read-only
+snapshot of the deployed source, including its stricter account-bound keyring ADD
+check. Server, web and iOS pairing stay off by default. No deployment or phone
+installation. Candidate evidence: workspace
+`deployment/phone-pairing-20261027/production-candidate/`.
 
 ## October 19, 2026 — local review of database-close recovery
 

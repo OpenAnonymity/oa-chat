@@ -41,7 +41,11 @@ export const FEATURE_USAGE_EVENTS = Object.freeze({
     parallel_started: 'Parallel run started',
     parallel_completed: 'Parallel run completed',
     council_started: 'Council review started',
-    council_completed: 'Council review completed'
+    council_completed: 'Council review completed',
+    // Phone pairing (docs/PHONE_PAIRING.md): the computer's side only.
+    pairing_started: 'Phone pairing started',
+    pairing_scanned: 'Phone pairing scanned',
+    pairing_completed: 'Phone pairing completed'
 });
 
 let reporter = null;

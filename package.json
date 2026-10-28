@@ -21,6 +21,7 @@
     "terser": "^5.31.0"
   },
   "scripts": {
+    "pairing:fixture": "node scripts/phone-pairing-fixture.mjs",
     "prepare:nanomem": "if [ -d nanomem/src ]; then exit 0; fi; if [ -n \"$GITHUB_PAT\" ]; then git submodule set-url nanomem \"https://${GITHUB_PAT}@github.com/OpenAnonymity/nanomem.git\" && git submodule sync; fi; git submodule update --init nanomem",
     "prebuild": "npm run vendor:supertokens",
     "build": "npm run prepare:nanomem && node scripts/build.mjs",

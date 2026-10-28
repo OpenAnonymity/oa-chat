@@ -882,3 +882,13 @@ moving later is a new vault and a user migration, which is a public withdrawal
 and deposit and is linkable as described under upgrading. Version 1's repaired
 setup is also single-party (see [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md)).
 Details: [ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md#single-party-development-proof-setup-known-limitation).
+
+## Optional phone pairing
+
+The computer approves a fresh passkey prompt before sending the account master
+key encrypted under a QR-secret-bound ephemeral ECDH key. The org sees account
+identity, pairing time, source IPs and ciphertext sizes, and stores the resulting
+credential/encrypted wrapper. It cannot decrypt the mailbox messages from its
+retained values. Pairing links devices to an account; it does not make that account
+activity anonymous. It introduces no account identifiers into inference or ticket
+redemption. QR secrets and keys never enter telemetry. See [PHONE_PAIRING.md](PHONE_PAIRING.md).
