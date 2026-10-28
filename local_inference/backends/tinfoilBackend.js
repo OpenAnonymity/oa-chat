@@ -1,4 +1,5 @@
 import { createOpenAICompatibleBackend } from './httpOpenAIBackend.js';
+import { withTinfoilRequestUsage } from '../../chat/services/tinfoilRequestUsage.js';
 
 const tinfoilBackend = createOpenAICompatibleBackend({
     id: 'tinfoil',
@@ -11,4 +12,4 @@ const tinfoilBackend = createOpenAICompatibleBackend({
     chatEndpoint: '/v1/chat/completions'
 });
 
-export default tinfoilBackend;
+export default withTinfoilRequestUsage(tinfoilBackend);

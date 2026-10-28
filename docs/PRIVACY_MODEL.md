@@ -677,13 +677,20 @@ inference prompts enter the address-funding service.
 ## Optional commercial feature analytics
 
 The commercial web composition can opt into fixed-name feature usage events for
-Memory, Tab Tab, Parallel and Council through its existing Fathom loader. The
+Memory, Tab Tab, Parallel, Council and resolved Tinfoil calls through its existing Fathom loader. The
 standalone app has no reporter by default. Events have no prompt, response,
 memory content, model, account, chat, credential or ticket fields, and do not join
 accounts to inference keys. The analytics provider still sees ordinary network
 metadata and event timing; this feature telemetry is outside the cryptographic
 unlinkability guarantee. Browser Global Privacy Control and Do Not Track disable
 collection. See [event definitions and limits](FEATURE_ANALYTICS.md).
+
+Tinfoil completion events also cover individual automatic Memory LLM calls.
+They reveal that a Tinfoil call completed and its approximate timing to Fathom,
+alongside ordinary browser/network metadata. They are not protected by the
+inference relay and can create timing-correlation signals. No prompt, response,
+model, request/key identifier, token count, cost or latency measurement is sent.
+This fixed event is separate from the staging-only request-latency experiment.
 
 Settings-change analytics use the same optional fixed-event boundary. Only the
 covered setting name and direction relative to its built-in default are reported;

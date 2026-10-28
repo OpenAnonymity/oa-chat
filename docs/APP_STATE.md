@@ -7957,3 +7957,15 @@ The fixed 5px white strip above that separator is removed: the main sidebar
 and history frame have no bottom padding. The history viewport now meets the
 separator directly; the Account row and history's scrolling end spacer retain
 their existing dimensions.
+# Tinfoil request analytics — October 28, 2026
+
+The optional fixed `tinfoil_request_completed` feature code wraps the Tinfoil
+local backend's completion methods and the Memory bridge's existing nanomem
+OpenAI-compatible client. Memory constructs that same client lazily through
+`llmClient`, preserving retries and abort handling; retrieval/ingestion can
+make multiple counted calls. No key issuance or higher-level feature hook is
+counted as a request. Rejected calls emit nothing. There is no global fetch
+patch, persistent telemetry or latency recorder. Commercial Fathom reports
+total completions, with hostname and GPC/DNT controls; standalone/desktop have
+no reporter. See [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for scope, timing
+metadata tradeoff and provider comparison limits.

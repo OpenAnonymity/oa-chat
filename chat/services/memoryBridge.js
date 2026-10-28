@@ -1,5 +1,6 @@
 import { DEFAULT_MEMORY_AGENT_MODEL, isAllowedConfidentialModel } from './confidentialModelConfig.js';
 import { getMemoryRetrievalErrorStatus } from './memoryRetrievalError.js';
+import { withTinfoilRequestUsage } from './tinfoilRequestUsage.js';
 
 const TINFOIL_BASE_URL = 'https://inference.tinfoil.sh/v1';
 const MEMORY_KEY_GRACE_MS = 60_000;
@@ -89,15 +90,22 @@ async function loadNanomemBrowser(signal = null) {
     return module;
 }
 
+export async function createConfidentialMemoryClient(apiKey, signal = null) {
+    throwIfAborted(signal);
+    // Preserve nanomem's existing OpenAI-compatible transport and retries.
+    // Construct it explicitly so each internal Memory LLM call is counted,
+    // rather than counting a multi-request retrieval/ingestion as one request.
+    const { createOpenAIClient } = await import('../nanomem/src/internal/llm-client/openai.js');
+    throwIfAborted(signal);
+    return withTinfoilRequestUsage(createOpenAIClient({ apiKey, baseUrl: TINFOIL_BASE_URL }));
+}
+
 async function createConfidentialMemoryBank({ apiKey, model, onProgress, onModelText, onToolCall, signal = null }) {
     const { createMemoryBank } = await loadNanomemBrowser(signal);
+    const llmClient = await createConfidentialMemoryClient(apiKey, signal);
     throwIfAborted(signal);
     return createMemoryBank({
-        llm: {
-            apiKey,
-            baseUrl: TINFOIL_BASE_URL,
-            provider: 'openai'
-        },
+        llmClient,
         model: resolveMemoryAgentModel(model),
         storage: 'indexeddb',
         onProgress,

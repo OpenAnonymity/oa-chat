@@ -9,6 +9,7 @@ commercial startup explicitly installs the build-time loader's reporter.
 
 | Fathom event | Counted when |
 | --- | --- |
+| Tinfoil request completed | One Tinfoil client call resolves, including confidential local-backend chat/Tab Tab and each internal Memory LLM call (retrieval, ingestion, import). Uses total event completions, not daily uniques. |
 | Memory enabled / disabled | The global Save memories setting changes and is persisted; loading saved settings does not count. |
 | Memory panel opened | The panel successfully opens; an already-open panel does not count again. |
 | Memory retrieval started | A retrieval operation begins after obtaining access. |
@@ -26,7 +27,8 @@ commercial startup explicitly installs the build-time loader's reporter.
 Council also generates the applicable Parallel events. Do not sum these as
 independent people or conversations. Per-lane regeneration, automatic memory
 extraction, backfill, import/export, and unlisted controls are not
-instrumented. Counts are feature uses, not exact unique
+instrumented as feature actions; their individual successful Tinfoil calls are
+included in `Tinfoil request completed`. Counts are feature uses, not exact unique
 users. A started/completed gap is not proof of failure: cancellation, navigation,
 privacy settings, and blocked analytics can also cause it.
 
@@ -75,6 +77,22 @@ there is no historical backfill. Privacy blocking and the bounded startup queue
 can undercount or make totals and breakdowns differ.
 
 ## Privacy and delivery
+
+`Tinfoil request completed` counts each resolved provider-client call, including
+automatic Memory ingestion and retrieval tool loops. The Memory bridge uses the
+same nanomem OpenAI-compatible client and retries as before; each successful call
+emits once after internal retries. Tab Tab and local Tinfoil chat/embedding calls
+use the same fixed event. No event is emitted for key issuance, model discovery,
+failed/aborted calls, or other providers. A resolved client call is not a billing
+receipt or proof of a semantically complete answer. Provider-billed interrupted
+streams and retries may not have a corresponding completion event. The event
+is not coalesced per day and does not automatically establish `App active`.
+The independent reporter remains absent from standalone/desktop compositions.
+Use daily total event completions for comparison with provider request-date
+aggregates; never substitute daily unique visitors or key-creation cohorts.
+There is no historical backfill. Existing hostname, GPC/DNT and bounded-queue
+controls apply. Completion-time metadata becomes observable to Fathom even
+though no content, model, duration, token count, cost or identifier is sent.
 
 Only an allowlisted string code reaches the host, and only its fixed event name
 reaches `fathom.trackEvent`. There are no additional event properties, values,
