@@ -1,3 +1,11 @@
+## October 27, 2026 — incompatible passkey storage guidance
+
+Username signup now says: “This passkey storage option doesn’t support account
+encryption. Choose another option to save your passkey.” This replaces the
+misleading suggestion to use browser storage after an incompatible browser
+profile credential fails PRF. Copy only; encryption requirements and retry
+behavior are unchanged. No provider compatibility promises are added.
+
 ## October 26, 2026 — saved-memory setting label
 
 The Memory setting is now labelled “Use saved memories”, with matching on/off

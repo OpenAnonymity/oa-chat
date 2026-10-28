@@ -1921,7 +1921,7 @@ class AccountService {
             }
             if (!prfBytes) {
                 this.state.prfSupported = false;
-                this.state.error = 'This passkey can\u2019t encrypt your account. Try a passkey saved in your browser, phone or password manager.';
+                this.state.error = 'This passkey storage option doesn’t support account encryption. Choose another option to save your passkey.';
                 this.notify();
                 return false;
             }
