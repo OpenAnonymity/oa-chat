@@ -1,3 +1,11 @@
+## October 28, 2026 — double-click rename release preparation
+
+Port the reviewed sidebar rename and bounded old-title search from ecc7aff1 onto
+current production, preserving pairing/passkey changes. Desktop also retains its
+0.1.49 native and client safeguards. No request-timing experiment included.
+Commands/evidence: workspace deployment/double-click-release-20261028/.
+No deployment or exact-build manual acceptance claimed.
+
 ## October 27, 2026 — incompatible passkey storage guidance
 
 Username signup now says: “This passkey storage option doesn’t support account

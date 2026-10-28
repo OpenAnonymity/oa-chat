@@ -541,6 +541,20 @@ export default class Sidebar {
             if (this.floatingMenu) this.closeFloatingMenu();
         });
 
+        // Double-clicking a title renames it, like the row menu's Rename.
+        // The first click of the pair is already switching to the chat; that
+        // switch may rebuild the list after this (see captureInlineEdit).
+        list.addEventListener('dblclick', (e) => {
+            const input = e.target.closest?.('.session-title-input');
+            if (!input || !input.readOnly) return;
+            // On phones the first tap already closed the sidebar overlay.
+            if (this.app.isMobileView()) return;
+            const sessionId = input.dataset.sessionId;
+            if (!sessionId || this.deletingSessionIds.has(sessionId)) return;
+            e.preventDefault();
+            this.startInlineEdit(sessionId);
+        });
+
         list.addEventListener('keydown', (e) => {
             const input = e.target.closest('.session-title-input');
             if (!input || input.readOnly) return;
@@ -557,7 +571,7 @@ export default class Sidebar {
 
         list.addEventListener('blur', (e) => {
             const input = e.target.closest('.session-title-input');
-            if (!input || input.readOnly) return;
+            if (!input || input.readOnly || input.isConnected === false) return;
             this.finishInlineEdit(input);
         }, true);
     }
@@ -567,7 +581,7 @@ export default class Sidebar {
      * @param {string} sessionId - Session ID to edit
      */
     startInlineEdit(sessionId) {
-        const input = document.querySelector(`.session-title-input[data-session-id="${sessionId}"]`);
+        const input = this.findSessionTitleInput(sessionId);
         if (!input) return;
 
         // Store original value for cancel
@@ -576,14 +590,67 @@ export default class Sidebar {
         input.closest('.chat-session')?.setAttribute('data-renaming', '');
         this.hideHoverCard();
 
-        // Enable editing
+        this.applyInlineEditStyle(input);
+
+        // Select all text and focus; a scroll here would finish the edit.
+        input.select();
+        input.focus({ preventScroll: true });
+    }
+
+    findSessionTitleInput(sessionId) {
+        return this.app.elements.sessionsList?.querySelector?.(
+            `.session-title-input[data-session-id="${sessionId}"]`
+        ) || null;
+    }
+
+    applyInlineEditStyle(input) {
         input.readOnly = false;
         input.classList.remove('cursor-pointer');
         input.classList.add('cursor-text', 'bg-accent', 'rounded', 'px-1');
+    }
 
-        // Select all text and focus
-        input.select();
-        input.focus();
+    /**
+     * A list rebuild (e.g. the session switch from the first click of a
+     * rename double-click) replaces the input mid-edit. Capture the edit
+     * before the rebuild and restore it on the new row afterwards.
+     */
+    captureInlineEdit() {
+        const input = this.app.elements.sessionsList?.querySelector?.('.session-title-input:not([readonly])');
+        if (!input) return null;
+        const edit = {
+            sessionId: input.dataset.sessionId,
+            value: input.value,
+            originalValue: input.dataset.originalValue,
+            selectionStart: input.selectionStart,
+            selectionEnd: input.selectionEnd,
+            selectionDirection: input.selectionDirection
+        };
+        // Browsers differ on whether removing the focused input fires blur,
+        // and Chrome fires it while the node is still connected. Make the
+        // old input read-only now so that blur cannot commit a half-typed
+        // title; the edit continues on the rebuilt row.
+        input.readOnly = true;
+        return edit;
+    }
+
+    restoreInlineEdit(edit) {
+        if (!edit?.sessionId) return;
+        const input = this.findSessionTitleInput(edit.sessionId);
+        if (!input) return;
+        input.dataset.originalValue = edit.originalValue ?? input.value;
+        input.value = edit.value;
+        input.closest('.chat-session')?.setAttribute('data-renaming', '');
+        this.hideHoverCard();
+        this.applyInlineEditStyle(input);
+        // A scroll here would finish the edit (handleScroll); keep the list still.
+        input.focus({ preventScroll: true });
+        try {
+            if (typeof edit.selectionStart === 'number' && typeof edit.selectionEnd === 'number') {
+                input.setSelectionRange(edit.selectionStart, edit.selectionEnd, edit.selectionDirection || 'none');
+            }
+        } catch {
+            // Selection ranges are a nicety; the edit itself is what matters.
+        }
     }
 
     /**
@@ -978,7 +1045,9 @@ export default class Sidebar {
             ? '<div class="session-list-end-spacer" aria-hidden="true"></div>'
             : '';
 
+        const edit = this.captureInlineEdit();
         list.innerHTML = html + footerHtml + emptyHtml + endSpacerHtml;
+        this.restoreInlineEdit(edit);
         this.syncFloatingMenu();
     }
 
@@ -1147,7 +1216,9 @@ export default class Sidebar {
             .map(item => this.buildVirtualItemHTML(item))
             .join('');
 
+        const edit = this.captureInlineEdit();
         list.innerHTML = topSpacer + visibleHtml + bottomSpacer;
+        this.restoreInlineEdit(edit);
         this.syncFloatingMenu();
         this.virtualState.lastRange = { start: startIndex, end: endIndex };
     }
