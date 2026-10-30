@@ -1,3 +1,13 @@
+## 2026-10-30 — Ticket expiry notice
+
+The `ticket-key-invalidated` listener now shows the neutral, text-only
+“Unused tickets are no longer valid.” notice for five seconds, and only when
+`removedCount` is a positive integer. This is a confirmed invalidation/removal
+notice, not a midnight timer: it appears when a key request discovers a retired
+issuer key. The event cannot distinguish scheduled monthly expiry from a manual
+rotation, so do not label it “last month's” without additional server evidence.
+No ticket spending, deletion, syncing, or expiry policy changed.
+
 ## October 28, 2026 — double-click rename release preparation
 
 Port the reviewed sidebar rename and bounded old-title search from ecc7aff1 onto

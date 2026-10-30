@@ -3002,14 +3002,10 @@ class ChatApp {
 
         window.addEventListener('ticket-key-invalidated', (event) => {
             const removedCount = Number(event.detail?.removedCount || 0);
-            const removedLabel = removedCount > 0
-                ? `${removedCount} old ticket${removedCount === 1 ? '' : 's'} removed.`
-                : 'Old tickets were removed.';
-            this.showToast(
-                `The org rotated its ticket signing key. ${removedLabel}`,
-                'error',
-                7000
-            );
+            // This signal also covers non-monthly rotations. Describe only
+            // confirmed removals; zero-removal/replayed checks stay quiet.
+            if (!Number.isInteger(removedCount) || removedCount <= 0) return;
+            this.showToast('Unused tickets are no longer valid.', 'info', 5000);
         });
 
         // Load cached verifier trust before any persisted access is restored or
