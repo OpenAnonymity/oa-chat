@@ -1,3 +1,16 @@
+## 2026-10-31 — Ticket expiry notice with next step
+
+The `ticket-key-invalidated` listener now shows the neutral, text-only
+“Your unused tickets have expired. Tickets expire at the end of each month.
+Open Account to get more tickets.” notice for five seconds, and only when
+`removedCount` is a positive integer. This is a confirmed invalidation/removal
+notice, not a midnight timer: it appears when a key request discovers a retired
+issuer key. The event cannot distinguish scheduled monthly expiry from a manual
+rotation. Per the user's October 31 copy request, it explains the monthly expiry
+rule without attributing the removed tickets to a particular month. The server's
+UTC month boundary remains authoritative.
+No ticket spending, deletion, syncing, or expiry policy changed.
+
 ## October 30, 2026 — Quick Ask excludes raw PDF attachments
 
 - `buildQuickAskMessages` replaces PDF file parts in its outgoing context with
