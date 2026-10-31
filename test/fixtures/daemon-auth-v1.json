@@ -1,0 +1,48 @@
+{
+  "transaction": "tRaNsAcTiOn_vector-0123456789abcdefghijklmn",
+  "accountId": "1234567890123456",
+  "origin": "https://staging.openanonymity.ai",
+  "masterKey": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+  "daemonPublicKey": "BIM2r_9OHYtE0bh-F9v8JA3PmqzGySC8DdxZznXdopyskNTXIfeQjZfwu8hfsgoVJSR8lnZEBZ3hQRBIrFpXCOw",
+  "daemonPrivateJwk": {
+    "key_ops": [
+      "deriveBits"
+    ],
+    "ext": true,
+    "kty": "EC",
+    "x": "gzav_04di0TRuH4X2_wkDc-arMbJILwN3FnOdd2inKw",
+    "y": "kNTXIfeQjZfwu8hfsgoVJSR8lnZEBZ3hQRBIrFpXCOw",
+    "crv": "P-256",
+    "d": "mYoIoVeLkoJFHiDdCU8hiaIwuziUtBSz-I5W1zi0Vsw"
+  },
+  "ephemeralPrivateJwk": {
+    "key_ops": [
+      "deriveBits"
+    ],
+    "ext": true,
+    "kty": "EC",
+    "x": "Fv2JiJIvVmffqEFC20zD-Q3M0pxvyHHco3cmXmz-fW0",
+    "y": "chNvNer8PkgYOpRDolQppLVn2toG4MrL8NEZ1IRD8ek",
+    "crv": "P-256",
+    "d": "AM3FJm-DKZvAXRQVDQSMf78A2uzx5vE1Np46eNEkVa4"
+  },
+  "sealed": {
+    "ephemeralPublicKey": "BBb9iYiSL1Zn36hBQttMw_kNzNKcb8hx3KN3Jl5s_n1tchNvNer8PkgYOpRDolQppLVn2toG4MrL8NEZ1IRD8ek",
+    "nonce": "QkJCQkJCQkJCQkJC",
+    "ciphertext": "Ka8bB_yjewm53Jok3WjZvNeEzgAkEPzv61Si3bXQyraMDc7632X7JnljfhAp5cbkam16nSVRFenalLfmxRCZZJbq_RXBHE_Hb1YSzp70IcPrSnBJnin-YceG3BK9_UqgrDvNOnxQ90xBZ96blw6dqruo12mRT4tA-GS2NNKI21cO4kPnFg4eQCiqgXw3NG1eZ7M8_UgGoQiOzCshN8CNFPSibnY4z_ErAI6uuZOviWxsHkMGrwQFh0QaC8HaNtzgAHuDRBYy-bgrnowqvTSMajSeLfSjwA-T"
+  },
+  "syncBlobs": {
+    "active": {
+      "id": "9150bae328fa9a4c218917bec5a85a5d",
+      "ciphertext": "hBgXG/ZJdp35fi1K3+v9jKWZb5fF5ADa2siB2hDATJI+iUCXKCdBZZXm002FKvh/vdLFW+ULO5/KXnu/Bot+4qVa/kNADgJkl2WKDn1KmdT9MtdFVksdRdU1phXt0ikj+O1I0Q==",
+      "iv": "BwcHBwcHBwcHBwcH",
+      "version": 1
+    },
+    "lease": {
+      "id": "c1d0e9ee34750ab721860d03632c269a",
+      "ciphertext": "o3CKYbIdyL57U9LEUz1mQNhy8Q6YAxi32l62NgigHTby92k/oONKXPKWKgnchZBplbdwruMrrQpiBFz7ibCNAdvMRYnPAZ3rCDCuW+B4UNQdYmGoLbRV3asW237QWpIB2y54OBsNm5SpsQOUWtz8c7Iv2MsTCTD9IMB2QOGduPKYcj7qxMM4tMh3MXOKttIy5+p7o1iADXs0F+o8ZvNL0XqWOWV/hrpZ3qpmhB0y+a53R/3TKf73BAY+X+oF1w==",
+      "iv": "BwcHBwcHBwcHBwcH",
+      "version": 1
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "device_id": "0123456789abcdef0123456789abcdef",
+  "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "lease": {
+    "id": "a18a7653178df37895dd357b45e9b54c",
+    "ciphertext": "bq+swqvD6ARaVhpuwyFco8D3ffyTCOAzG8INMQoeeOlKIOPOUz/ZBG0Tk8ggroxuqUARAHuf5kKUIuut63UCNEThCboXX720kZxAbtzGaiwdQjfwnKADh/JZt/9q4POaosVRkMe7KtZTAvdjly/na06x8WvwpyEdNWOkKdwdYBTkZcnxO3F/aWNR4DP2NYytFs4uuKTSSzMvTLP00t7voen+/SwLySPbM7q0TNV1af42jZV5jmFqLwG7MvHV7XnAhlT0Dh2vrYw=",
+    "iv": "xJCWWkQXQs9PLzu6",
+    "version": 1
+  },
+  "master_hex": "42 repeated 32 times",
+  "removals": {
+    "id": "908601aee18bcde8cb2f8f6bdde1030e",
+    "ciphertext": "0n+hR+P2zE8ySTJiSOzxtmfN0tAvAooCZ0O66FDxdTfBaG4HRb6HAF7+ldUOSbaFsoban35b2Ye/ae1SKrENS0DOm64tebVyzCIYQl0r44kTML7PX3trv/nEYXBka58PzbdS2r5KG2qYxTRchw5UWgFlGHCNe//9O4Q3VuCUAm31M5R0AGRmf7uRg6AYfZeIgETrwhe6jkLzc+MN0zvwAnn97HI9yftZu9aOYfVauv/k/ZylmyQB",
+    "iv": "KvFVTByAwopNTQeN",
+    "version": 1
+  }
+}

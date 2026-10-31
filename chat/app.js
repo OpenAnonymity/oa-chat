@@ -119,6 +119,7 @@ import {
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
 import { routeAuthenticationIntent } from './application/authIntent.js';
+import { createDaemonAuthorizationFlow } from './application/daemonAuthorizationFlow.js';
 import CouncilController from './application/councilController.js';
 import {
     getPendingEntitlementClaim,
@@ -2759,6 +2760,16 @@ class ChatApp {
      * Initializes the application: loads data, sets up components, and renders initial state.
      */
     async init() {
+        // Before anything awaits or rewrites the address. The dialog waits for
+        // the initial account route below.
+        if (this.features.accounts) {
+            this.daemonAuthorizationFlow = createDaemonAuthorizationFlow({
+                accountService,
+                accountModal: () => this.accountModal,
+                openAuthorization: intent => this.ui.openDaemonAuthorization?.(intent),
+                openDevices: () => this.ui.openDaemonDevices?.()
+            });
+        }
         this.restoringInitialConversation = isConversationRestorePending({ search: window.location.search });
         // Configure marked.js renderer for code blocks (with syntax highlighting + copy button)
         this.configureMarkedRenderer();
@@ -2907,6 +2918,7 @@ class ChatApp {
         } catch (error) {
             console.warn('Initial account route could not be completed:', error);
         } finally {
+            this.daemonAuthorizationFlow?.start();
             // Whatever the route decided, the early arrival spinner from
             // index.html must not outlive it (the dialog clears it itself on open).
             document.documentElement?.removeAttribute?.('data-auth-arriving');

@@ -6,6 +6,7 @@ import ChatInput from '../../components/ChatInput.js';
 import ModelPicker from '../../components/ModelPicker.js';
 import ChatHistoryImportModal from '../../components/ChatHistoryImportModal.js';
 import AccountModal from '../../components/AccountModal.js';
+import DaemonAuthorizeModal from '../../components/DaemonAuthorizeModal.js';
 import MemoryEditor from '../../components/MemoryEditor.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
 import SettingsDialog from '../../components/SettingsDialog.js';
@@ -74,6 +75,16 @@ export default class VanillaChatUi {
         this.components.rightPanel.mount();
         this.shellMount?.();
         return this.components;
+    }
+
+    openDaemonAuthorization(intent) {
+        this.daemonAuthorizeModal ||= new DaemonAuthorizeModal({ accountService });
+        return this.daemonAuthorizeModal.open(intent);
+    }
+
+    openDaemonDevices() {
+        this.daemonAuthorizeModal ||= new DaemonAuthorizeModal({ accountService });
+        return this.daemonAuthorizeModal.openDevices();
     }
 
     mountMessageNavigation() {

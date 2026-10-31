@@ -30,6 +30,16 @@ test('an already-spent refusal names the one ticket the org refused', () => {
     assert.deepEqual(ticketClient.createTicketRedemptionError(spentBody(0), 401, 'fallback').usedIndices, [0]);
 });
 
+test('a ticket another request holds is reported, not spent', () => {
+    const error = ticketClient.createTicketRedemptionError({
+        detail: { error_code: 'TICKET_REQUEST_IN_PROGRESS', message: 'held', failed_ticket: { index: 2, reason: 'held_by_other_request' } }
+    }, 503, 'fallback');
+    assert.equal(error.code, 'TICKET_REQUEST_IN_PROGRESS');
+    assert.equal(error.failedIndex, 2);
+    assert.notEqual(error.consumeTickets, true);
+    assert.equal(error.status, 503);
+});
+
 test('without an index (an older org) the refusal names no ticket, as before', () => {
     const older = ticketClient.createTicketRedemptionError({ detail: 'Ticket already spent (double-spending detected)' }, 401, 'fallback');
     assert.equal(older.code, 'TICKET_USED');

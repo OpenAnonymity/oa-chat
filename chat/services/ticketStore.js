@@ -6,11 +6,12 @@
 import storageEvents from './storageEvents.js';
 import { reportDiagnostic } from './diagnostics.js';
 import { chatDB } from '../db.js';
-import syncService from './encryptedSyncService.js';
+import syncService, { activeLeaseFingerprints } from './encryptedSyncService.js';
 import { PREF_KEYS } from './preferencesStore.js';
 import { withAccountDataLock } from './accountDataLock.js';
 import { requestQueuedLock } from '../application/queuedLock.js';
 import {
+    fingerprintFinalizedTicket,
     createTicketTombstones,
     filterTicketsByTombstones,
     mergeTicketTombstones
@@ -31,10 +32,12 @@ const DB_TOMBSTONES_KEY = 'tickets-tombstones';
 const LOCK_NAME = 'oa-inference-tickets';
 const DB_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
 const TICKETS_UPDATED_EVENT = 'tickets-updated';
+const TICKET_CONTENDED_MS = 60 * 1000;
 
 export class TicketStore {
     constructor() {
         this.lockQueue = Promise.resolve();
+        this.contendedUntil = new Map();
         this.tickets = [];
         this.archive = [];
         this.initPromise = null;
@@ -442,18 +445,20 @@ export class TicketStore {
         }
 
         try {
-            const [active, archived, tombstones, invalidatedKeyIds] = await Promise.all([
+            const [active, archived, tombstones, invalidatedKeyIds, leases] = await Promise.all([
                 chatDB.getSetting(DB_ACTIVE_KEY),
                 chatDB.getSetting(DB_ARCHIVE_KEY),
                 chatDB.getSetting(DB_TOMBSTONES_KEY),
-                chatDB.getSetting(DB_INVALIDATED_KEYS_KEY)
+                chatDB.getSetting(DB_INVALIDATED_KEYS_KEY),
+                chatDB.getSetting('tickets-leases')
             ]);
 
             return {
                 active: Array.isArray(active) ? active : [],
                 archived: Array.isArray(archived) ? archived : [],
                 tombstones: Array.isArray(tombstones) ? tombstones : [],
-                invalidatedKeyIds: normalizeInvalidatedTicketKeyIds(invalidatedKeyIds)
+                invalidatedKeyIds: normalizeInvalidatedTicketKeyIds(invalidatedKeyIds),
+                leases
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
@@ -693,6 +698,31 @@ export class TicketStore {
 
     isHeld(ticket) {
         return this.heldKeyIds.size > 0 && this.heldKeyIds.has(getTicketKeyId(ticket));
+    }
+
+    /**
+     * Tickets another client may be spending go last. A daemon's unexpired lease
+     * and a ticket the org just said another request holds are collision avoidance
+     * only: they never make the wallet look short, because a lease is not custody
+     * and the org's single-spend check decides.
+     */
+    async deprioritizeContended(tickets, leases) {
+        const now = Date.now();
+        for (const [token, until] of this.contendedUntil) {
+            if (until <= now) this.contendedUntil.delete(token);
+        }
+        const leased = activeLeaseFingerprints(leases, now);
+        if (leased.size === 0 && this.contendedUntil.size === 0) return { free: tickets, contended: [] };
+        const fingerprints = leased.size > 0
+            ? await Promise.all(tickets.map(fingerprintFinalizedTicket))
+            : [];
+        const free = [];
+        const contended = [];
+        tickets.forEach((ticket, index) => {
+            const taken = this.contendedUntil.has(ticket.finalized_ticket) || leased.has(fingerprints[index]);
+            (taken ? contended : free).push(ticket);
+        });
+        return { free, contended };
     }
 
     spendable(tickets) {
@@ -1009,9 +1039,10 @@ export class TicketStore {
             }
 
             const order = options.order === 'tail' ? 'tail' : 'head';
+            const ordered = await this.deprioritizeContended(spendable, stored.leases);
             const selected = order === 'tail'
-                ? spendable.slice(spendable.length - count)
-                : spendable.slice(0, count);
+                ? [...ordered.contended, ...ordered.free].slice(spendable.length - count)
+                : [...ordered.free, ...ordered.contended].slice(0, count);
             const selectedValues = new Set(selected.map(ticket => ticket.finalized_ticket));
             const remaining = active.filter(ticket => !selectedValues.has(ticket.finalized_ticket));
 
@@ -1035,7 +1066,13 @@ export class TicketStore {
                     result
                 };
             } catch (error) {
-                if (error?.code === 'TICKET_KEY_INVALIDATED') {
+                if (error?.code === 'TICKET_REQUEST_IN_PROGRESS') {
+                    // Nothing is spent. Try other tickets for a while: a request
+                    // that died can hold one for up to 15 minutes at the org.
+                    const named = selected[error.failedIndex];
+                    const until = Date.now() + TICKET_CONTENDED_MS;
+                    (named ? [named] : selected).forEach(ticket => this.contendedUntil.set(ticket.finalized_ticket, until));
+                } else if (error?.code === 'TICKET_KEY_INVALIDATED') {
                     const invalidatedKeyId = normalizeTicketKeyId(error.invalidatedKeyId);
                     const activePartition = partitionTicketsByKeyId(active, invalidatedKeyId);
                     const archivedPartition = partitionTicketsByKeyId(archived, invalidatedKeyId);

@@ -148,6 +148,17 @@ class TicketClient {
             return error;
         }
 
+        if (parsed.code === 'TICKET_REQUEST_IN_PROGRESS') {
+            // Another request holds a ticket provisionally and may yet roll back,
+            // so nothing is archived. The caller tries other tickets.
+            const error = new Error('Another of your devices is using these tickets. Please try again in a moment.');
+            error.code = 'TICKET_REQUEST_IN_PROGRESS';
+            error.status = status;
+            const failedIndex = parsed.detail?.failed_ticket?.index;
+            if (Number.isInteger(failedIndex) && failedIndex >= 0) error.failedIndex = failedIndex;
+            return error;
+        }
+
         if (parsed.code === 'TICKET_ALREADY_SPENT' ||
             (!parsed.code && status === 401 && (
                 messageLower.includes('double') ||

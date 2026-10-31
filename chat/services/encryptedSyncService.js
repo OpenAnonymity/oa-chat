@@ -50,6 +50,7 @@ const TICKETS_ACTIVE_KEY = 'tickets-active';
 const TICKETS_ARCHIVE_KEY = 'tickets-archive';
 const TICKETS_TOMBSTONES_KEY = 'tickets-tombstones';
 const TICKETS_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
+const TICKETS_LEASES_KEY = 'tickets-leases';
 
 // Preference keys to sync
 const SYNCABLE_PREF_KEYS = [
@@ -69,6 +70,7 @@ const LOGICAL_IDS = {
     TICKETS_INVALIDATED_KEYS: 'tickets-invalidated-key-ids',
     TICKET_INVALIDATION_ITEM: 'ticket-invalidation-item',
     TICKET_REMOVALS: 'ticket-removals',
+    TICKET_LEASE_ITEM: 'ticket-lease-item',
     // Preferences use their key as logical ID
 };
 
@@ -185,6 +187,22 @@ async function decryptBlob(keyMaterial, logicalId, ciphertext, iv) {
     return JSON.parse(textDecoder.decode(plaintext));
 }
 
+export function normalizeTicketLeases(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return value;
+}
+
+/** Fingerprints other devices currently hold; an expired lease holds nothing. */
+export function activeLeaseFingerprints(value, now = Date.now()) {
+    const held = new Set();
+    for (const lease of Object.values(normalizeTicketLeases(value))) {
+        if (Number(lease?.expires_at_ms) > now && Array.isArray(lease?.fingerprints)) {
+            lease.fingerprints.forEach(fingerprint => held.add(fingerprint));
+        }
+    }
+    return held;
+}
+
 export class SyncService {
     constructor() {
         this.syncInProgress = false;
@@ -253,6 +271,7 @@ export class SyncService {
             TICKETS_ARCHIVE_KEY,
             TICKETS_TOMBSTONES_KEY,
             TICKETS_INVALIDATED_KEYS_KEY,
+            TICKETS_LEASES_KEY,
             SYNC_LAST_TIME_KEY,
             SYNC_SCHEMA_VERSION_KEY,
             SYNC_WALLET_WRITER_KEY,
@@ -1049,6 +1068,10 @@ export class SyncService {
             LOGICAL_IDS.TICKET_INVALIDATION_ITEM,
             LOGICAL_IDS.TICKET_REMOVALS
         ];
+        if (!mappedLogicalId) {
+            const leaseApplied = await this._applyLeaseBlob(masterKey, serverBlob, credentialGeneration);
+            if (leaseApplied !== null) return leaseApplied;
+        }
         let payload;
         let logicalId;
         for (const candidate of candidates) {
@@ -1149,6 +1172,47 @@ export class SyncService {
             }
         }
         return applied;
+    }
+
+    /**
+     * A device's ticket lease: fingerprints it intends to spend, on a record only
+     * that device writes. Spending here takes them last until it expires. Returns
+     * null when this is not a lease, so the caller keeps probing.
+     */
+    async _applyLeaseBlob(masterKey, serverBlob, credentialGeneration) {
+        let payload;
+        try {
+            payload = await decryptBlob(
+                masterKey,
+                LOGICAL_IDS.TICKET_LEASE_ITEM,
+                serverBlob.ciphertext,
+                serverBlob.iv
+            );
+        } catch {
+            return null;
+        }
+        const deviceId = typeof payload?.device_id === 'string' ? payload.device_id : '';
+        if (payload?.type !== 'ticket-lease' || !/^[0-9a-f]{32}$/.test(deviceId)) return false;
+        const expectedId = await deriveOpaqueBlobId(
+            masterKey,
+            `${LOGICAL_IDS.TICKET_LEASE_ITEM}:${deviceId}`
+        );
+        if (expectedId !== serverBlob.id) return false;
+        this.assertCredentialsCurrent(credentialGeneration);
+        const current = await chatDB.getSetting(TICKETS_LEASES_KEY);
+        // A revoked or removed daemon never writes again; expired entries go here.
+        const now = Date.now();
+        const leases = Object.fromEntries(Object.entries(normalizeTicketLeases(current))
+            .filter(([, lease]) => Number(lease?.expires_at_ms) > now));
+        leases[deviceId] = {
+            fingerprints: (Array.isArray(payload.fingerprints) ? payload.fingerprints : [])
+                .filter(value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)),
+            expires_at_ms: Number(payload.expires_at_ms) || 0
+        };
+        this.assertCredentialsCurrent(credentialGeneration);
+        await chatDB.saveSettings([{ key: TICKETS_LEASES_KEY, value: leases }]);
+        this.assertCredentialsCurrent(credentialGeneration);
+        return false;
     }
 
     /**

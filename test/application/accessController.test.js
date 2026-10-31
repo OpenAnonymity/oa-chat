@@ -1133,3 +1133,17 @@ test('a cancellation during pricing never starts shortage billing', async () => 
         onTicketShortage: () => assert.fail('Cancelled send must not buy tickets')
     }), { name: 'AbortError' });
 });
+
+test('a ticket another request holds is retried on other tickets, a bounded number of times', async () => {
+    const heldError = () => Object.assign(new Error('held'), { code: 'TICKET_REQUEST_IN_PROGRESS' });
+    const once = createStaleWalletHarness({ stale: 0, tickets: 5, onAttempt: attempt => {
+        if (attempt === 1) throw heldError();
+    } });
+    assert.equal(await acquireWith(once), 'fresh-key');
+    assert.equal(once.requested.length, 2);
+    assert.equal(once.sweeps.length, 0, 'nothing was skipped as spent');
+
+    const always = createStaleWalletHarness({ stale: 0, tickets: 5, onAttempt: () => { throw heldError(); } });
+    await assert.rejects(acquireWith(always), { code: 'TICKET_REQUEST_IN_PROGRESS' });
+    assert.equal(always.requested.length, 3);
+});

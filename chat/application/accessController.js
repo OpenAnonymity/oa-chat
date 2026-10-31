@@ -7,6 +7,9 @@ import { getCreditLimitSource, isKeyLimitExceededResponse, parseOutputAffordabil
 import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
 import { waitForSignal } from '../services/inference/reliability.js';
 
+// Each retry selects other tickets, so this only bounds a wallet that is all in use.
+const MAX_CONTENDED_TICKET_RETRIES = 2;
+
 export function isAccessCreditExhaustedError(error) {
     const status = error?.status;
     if (status !== 402 && status !== 403) return false;
@@ -269,6 +272,7 @@ async function acquireVerifiedAccessMeasured(options) {
     let result;
     let pricingRetried = false;
     let selectionRetried = false;
+    let contendedRetries = 0;
     // Tickets the org had already seen — spent from another device or
     // browser, or left behind by a lost sync. Each one is archived locally
     // and the next is tried, for as long as the wallet lasts: the user
@@ -317,6 +321,11 @@ async function acquireVerifiedAccessMeasured(options) {
                     pricingRetried = true;
                     ticketsRequired = await resolveTicketCost({ forceRefresh: true });
                     await checkBalance();
+                    continue;
+                }
+                if (error.code === 'TICKET_REQUEST_IN_PROGRESS' && contendedRetries < MAX_CONTENDED_TICKET_RETRIES) {
+                    // The store set the held ticket aside; nothing was spent.
+                    contendedRetries += 1;
                     continue;
                 }
                 if (error.code === 'TICKET_USED') {

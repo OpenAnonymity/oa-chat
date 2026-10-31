@@ -1021,6 +1021,74 @@ class AccountService {
         }
     }
 
+    // --- Daemon authorization (docs/DAEMON_AUTHORIZATION.md) -------------------
+    // The raw master key is zeroed after every unlock; only non-extractable
+    // CryptoKeys stay. So approving a daemon is a real re-unlock with this
+    // account's passkey, and the result goes to one sealed envelope.
+
+    /** The org requests the dialog makes, restricted so this stays narrow. */
+    daemonAuthRequest(path, body = null, { method = 'POST' } = {}) {
+        if (!/^\/auth\/daemon\/(lookup|check-code|approve|deny|devices\/list|devices\/[A-Za-z0-9_-]{1,128})$/.test(String(path))) {
+            throw new TypeError('Daemon requests are restricted to the authorization routes');
+        }
+        return fetchJson(path, body, { method });
+    }
+
+    /**
+     * Returns the raw 32-byte master key after a fresh passkey prompt. The caller
+     * zeroes it. Never changes account state; another account answering the
+     * prompt is refused. Google accounts use the keyring; username and legacy
+     * passkey accounts need a server-verified assertion to read their wrapper,
+     * through a route that creates no session.
+     */
+    async revealMasterKeyForDaemon({ transaction, userCode }) {
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        const check = () => {
+            if (this.state.accountId !== expectedAccountId || this.loginGeneration !== generation) {
+                throw new Error('The account changed');
+            }
+        };
+        if (!expectedAccountId || !this.state.sessionVerified) throw new Error('Sign in first');
+        if (this.state.encryptionMode === 'PRF') {
+            const keyring = await this.fetchOAuthKeyring();
+            check();
+            const unlocked = await unlockEncryptionKeyring((keyring.wrappers || []).map(wrapper => ({ ...wrapper })));
+            try {
+                check();
+            } catch (error) {
+                unlocked.masterKey.fill(0);
+                throw error;
+            }
+            return unlocked.masterKey;
+        }
+        if (this.state.encryptionMode !== 'LEGACY_PASSKEY') {
+            throw Object.assign(new Error('This account cannot authorize a computer yet'), { code: 'DAEMON_AUTH_UNSUPPORTED' });
+        }
+        const challenge = await fetchJson('/auth/daemon/reveal/challenge', { transaction });
+        check();
+        const assertion = await navigator.credentials.get({
+            publicKey: buildRequestOptions(challenge, await digestAccountId(expectedAccountId))
+        });
+        check();
+        if (!assertion) throw new DOMException('Passkey request cancelled', 'AbortError');
+        const prfBytes = getPrfOutput(assertion);
+        if (!prfBytes) throw new Error('This passkey cannot unlock the encrypted data');
+        try {
+            const revealed = await fetchJson('/auth/daemon/reveal', {
+                transaction,
+                userCode,
+                credentialId: assertion.id,
+                assertion: assertionToJSON(assertion)
+            });
+            check();
+            const wrappingKey = await importAesKey(prfBytes);
+            return await decryptBytes(wrappingKey, decodeWrappedKey(revealed.wrappedKeyPasskey));
+        } finally {
+            prfBytes.fill(0);
+        }
+    }
+
     /**
      * Get the non-extractable CryptoKey for encryption operations.
      * Returns the CryptoKey if available, null otherwise.

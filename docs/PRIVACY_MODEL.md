@@ -97,6 +97,34 @@ The historical dual-mode OA Chat daemon and its ticket privacy analysis remain
 in [the pre-migration source](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md). This web app's ticket
 privacy model below continues to apply to the browser.
 
+### oa-clientd: account tickets on a local daemon
+
+`oa-clientd` is another device on an account's encrypted wallet, authorized in the
+browser as described in [Authorizing oa-clientd](DAEMON_AUTHORIZATION.md). The org
+receives only ciphertext it cannot open: the browser seals the sync key to a public key
+from the URL fragment, and the wallet stays opaque blobs.
+
+Account traffic and anonymous traffic use separate HTTP clients. Finalized tickets, keys
+and prompts carry no account credential, and prompts go directly to the provider.
+Redemption never triggers a sync, and sync never redeems. A daemon's redemption carries a
+random `X-OA-Redemption-Nonce` that scopes the org's replay; it is not derived from the
+account or wallet, so a browser that selects the same ticket cannot receive that key. The
+browser sends no nonce and keeps its exact-batch replay recovery. Encrypted ticket leases
+only make clients avoid each other: they are not custody or a security boundary, and a
+browser spends leased tickets last rather than running short.
+
+**What this adds.** A daemon syncs in the background whether or not a browser is open, so
+the org sees authenticated sync timing and ciphertext sizes more continuously than from
+an occasional browser session, and can attempt to correlate them with redemption. The sync
+key and tickets are on that computer, protected by file permissions. Revoking stops its
+sync but cannot take back tickets it holds. This is the Google and username tradeoff in
+section 5, applied to a long-running client; it is not the identity-free flow.
+
+**Visible as a class.** Daemon redemptions carry a fixed User-Agent and a nonce header that
+browsers do not send, and daemon sessions are marked, so while few people use oa-clientd a
+daemon redemption narrows to those accounts, even over Tor. This does not link a specific
+ticket to its issuance.
+
 ### 1. Ticket issuance (blind signatures)
 
 See blog post [Section 1: Blind Signatures](https://openanonymity.ai/blog/unlinkable-inference/#1-blind-signatures)

@@ -1,3 +1,31 @@
+## 2026-10-31: Authorizing oa-clientd (staging)
+
+- `#oa-daemon=` opens an approval dialog after ordinary sign-in; see
+  [DAEMON_AUTHORIZATION.md](DAEMON_AUTHORIZATION.md). `#oa-daemon-devices` lists and revokes,
+  through `POST /auth/daemon/devices/list`: a same-origin GET carries no Origin.
+- `application/daemonAuthorizationFlow.js` reads the address first thing in `ChatApp.init`,
+  because later boot code rewrites the address without its fragment. It then polls every 500 ms
+  until the account is ready and the account dialog is closed: closing that dialog changes no
+  account state, so there is no event to wait for.
+- A fresh browser hits the first-visit redirect, so the commercial landing page forwards the
+  fragment as `/?auth=daemon#...`. Without that a new visitor would stay on `/login` and the
+  request would be lost.
+- `sessionStorage` `oa-daemon-authorization` carries the intent across a same-tab sign-in, including
+  the landing page's own Google redirect. No secret is stored.
+- `consumeTickets` takes tickets under another device's unexpired `tickets-leases` entry last and
+  never reports a shortage because of one. The port from `main` refused instead, which could stall a
+  small wallet and open the shortage and billing paths.
+- `TICKET_REQUEST_IN_PROGRESS` (503) keeps the ticket, sets it aside in memory for 60 seconds and
+  tries others, bounded to two retries. Earlier `TICKET_ALREADY_SPENT` could archive a ticket whose
+  holder then rolled back.
+- `chat/tailwind.generated.css` is committed, not built: new classes render as nothing until
+  `npm run tailwind:build`. Regenerating here also dropped the unused-in-source
+  `focus-visible:opacity-100` rule, kept by hand so this change alters no other surface.
+  A test pins the dialog's own classes.
+- `scripts/run-unit-tests.mjs` bundles tests elsewhere: `test/services/*` must find fixtures
+  from `process.cwd()`, not `import.meta.url`.
+- Not exercised against a real org with a real passkey and Google return: see the handoff evidence.
+
 ## October 30, 2026 — Quick Ask excludes raw PDF attachments
 
 - `buildQuickAskMessages` replaces PDF file parts in its outgoing context with
