@@ -3003,7 +3003,7 @@ class ChatApp {
             // This signal also covers non-monthly rotations. Describe only
             // confirmed removals; zero-removal/replayed checks stay quiet.
             if (!Number.isInteger(removedCount) || removedCount <= 0) return;
-            this.showToast('Unused tickets are no longer valid.', 'info', 5000);
+            this.showToast('Your unused tickets have expired. Tickets expire at the end of each month. Open Account to get more tickets.', 'info', 5000);
         });
 
         // Load cached verifier trust before any persisted access is restored or
