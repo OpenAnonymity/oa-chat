@@ -16,10 +16,10 @@ function fixture() {
     return { listener, notices };
 }
 
-test('confirmed invalidation uses neutral accurate copy, without claiming a month or spent count', () => {
+test('confirmed invalidation explains monthly expiry and where to get more tickets', () => {
     const { listener, notices } = fixture();
     listener({ detail: { removedCount: 23 } });
-    assert.deepEqual(notices, [['Unused tickets are no longer valid.', 'info', 5000]]);
+    assert.deepEqual(notices, [['Your unused tickets have expired. Tickets expire at the end of each month. Open Account to get more tickets.', 'info', 5000]]);
 });
 
 test('empty, duplicate zero-removal and malformed invalidations remain silent', () => {

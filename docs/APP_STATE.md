@@ -1,11 +1,14 @@
-## 2026-10-30 — Ticket expiry notice
+## 2026-10-31 — Ticket expiry notice with next step
 
 The `ticket-key-invalidated` listener now shows the neutral, text-only
-“Unused tickets are no longer valid.” notice for five seconds, and only when
+“Your unused tickets have expired. Tickets expire at the end of each month.
+Open Account to get more tickets.” notice for five seconds, and only when
 `removedCount` is a positive integer. This is a confirmed invalidation/removal
 notice, not a midnight timer: it appears when a key request discovers a retired
 issuer key. The event cannot distinguish scheduled monthly expiry from a manual
-rotation, so do not label it “last month's” without additional server evidence.
+rotation. Per the user's October 31 copy request, it explains the monthly expiry
+rule without attributing the removed tickets to a particular month. The server's
+UTC month boundary remains authoritative.
 No ticket spending, deletion, syncing, or expiry policy changed.
 
 ## October 28, 2026 — double-click rename release preparation
