@@ -24,7 +24,13 @@
   A test pins the dialog's own classes.
 - `scripts/run-unit-tests.mjs` bundles tests elsewhere: `test/services/*` must find fixtures
   from `process.cwd()`, not `import.meta.url`.
-- Not exercised against a real org with a real passkey and Google return: see the handoff evidence.
+- `loginGeneration`, not the account ID alone, scopes an approval: an ID comparison passes after
+  A to B to A. `revalidate` also ends an approving attempt until the POST starts, and `fail` ignores late
+  answers once terminal. Modal callbacks carry an owner token, because `this.overlay` is truthy for a newer
+  dialog too. `open` and `openDevices` return whether they accepted; the flow keeps the request until true.
+- The first-visit redirect cannot be tested through `page.route`: Playwright does not re-intercept the
+  redirected request, so it would reach the real network. The browser script uses real local servers instead.
+- Not exercised against a real org with a real passkey and Google return.
 
 ## October 30, 2026 — Quick Ask excludes raw PDF attachments
 

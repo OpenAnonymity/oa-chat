@@ -8,8 +8,8 @@ import {
 const READY = { accountId: 'a', sessionVerified: true, status: 'unlocked', accountScopeReady: true, busy: false };
 const INTENT = { transaction: 'T'.repeat(43), daemonPublicKey: 'k', savedAt: 0 };
 
-function harness({ state = {}, intent = INTENT, devices = false, modalOpen = false } = {}) {
-    const calls = { authorize: [], devices: 0, modalOpens: 0, cleared: 0 };
+function harness({ state = {}, intent = INTENT, devices = null, modalOpen = false } = {}) {
+    const calls = { authorize: [], devices: 0, modalOpens: 0, cleared: [], devicesCleared: 0 };
     const listeners = {};
     const world = { state, clock: 0, tick: null };
     const modal = { isOpen: modalOpen, open: () => { calls.modalOpens += 1; modal.isOpen = true; } };
@@ -18,12 +18,21 @@ function harness({ state = {}, intent = INTENT, devices = false, modalOpen = fal
     const flow = createDaemonAuthorizationFlow({
         accountService: { getState: () => world.state },
         accountModal: () => modal,
-        openAuthorization: value => calls.authorize.push(value),
-        openDevices: () => { calls.devices += 1; },
+        openAuthorization: value => {
+            if (world.dialogBusy) return false;
+            calls.authorize.push(value);
+            return true;
+        },
+        openDevices: () => {
+            if (world.dialogBusy) return false;
+            calls.devices += 1;
+            return true;
+        },
         windowImpl: { addEventListener: (name, handler) => { listeners[name] = handler; } },
         consumeIntent: () => { const value = pendingIntent; pendingIntent = null; return value; },
-        consumeDevices: () => { const value = pendingDevices; pendingDevices = false; return value; },
-        clearIntent: () => { calls.cleared += 1; },
+        consumeDevices: () => { const value = pendingDevices; pendingDevices = null; return value; },
+        clearIntent: transaction => { calls.cleared.push(transaction); },
+        clearDevices: () => { calls.devicesCleared += 1; },
         now: () => world.clock,
         setIntervalImpl: handler => { world.tick = handler; return 1; },
         clearIntervalImpl: () => { world.tick = null; }
@@ -36,7 +45,7 @@ function harness({ state = {}, intent = INTENT, devices = false, modalOpen = fal
             world.tick?.();
         },
         arrive(value) { pendingIntent = value; listeners.hashchange(); },
-        arriveDevices() { pendingDevices = true; listeners.hashchange(); }
+        arriveDevices() { pendingDevices = { savedAt: world.clock }; listeners.hashchange(); }
     };
 }
 
@@ -107,7 +116,7 @@ test('an intent past its lifetime is dropped, not shown', () => {
     flow.start();
     advance(16 * 60 * 1000, READY);
     assert.equal(calls.authorize.length, 0);
-    assert.equal(calls.cleared, 1);
+    assert.deepEqual(calls.cleared, [INTENT.transaction]);
     assert.equal(world.tick, null);
 });
 
@@ -122,11 +131,70 @@ test('a link opened in a tab already on the app is picked up', () => {
 });
 
 test('the devices view needs the same ready account', () => {
-    const { flow, calls, advance } = harness({ state: { accountId: null }, intent: null, devices: true });
+    const { flow, calls, advance } = harness({ state: { accountId: null }, intent: null, devices: { savedAt: 0 } });
     flow.start();
     assert.equal(calls.devices, 0);
     assert.equal(calls.modalOpens, 1);
     calls.modalOpens = 0;
     advance(500, READY);
     assert.equal(calls.devices, 0, 'waits for the sign-in dialog');
+});
+
+test('a request stays pending while an approval runs, then opens once', () => {
+    const { flow, calls, world, arrive, advance } = harness({ state: READY, intent: null });
+    flow.start();
+    world.dialogBusy = true;
+    const newer = { ...INTENT, transaction: 'N'.repeat(43), savedAt: 0 };
+    arrive(newer);
+    advance(500);
+    assert.equal(calls.authorize.length, 0);
+    assert.equal(flow.pending().intent, newer);
+    assert.equal(calls.cleared.length, 0, 'the saved request is kept');
+    world.dialogBusy = false;
+    advance(500);
+    assert.deepEqual(calls.authorize, [newer]);
+    assert.equal(world.tick, null);
+    advance(500);
+    assert.equal(calls.authorize.length, 1);
+});
+
+test('the newest of several waiting requests wins', () => {
+    const { flow, calls, world, arrive, advance } = harness({ state: READY, intent: null });
+    flow.start();
+    world.dialogBusy = true;
+    arrive({ ...INTENT, transaction: 'A'.repeat(43), savedAt: 0 });
+    const last = { ...INTENT, transaction: 'B'.repeat(43), savedAt: 0 };
+    arrive(last);
+    world.dialogBusy = false;
+    advance(500);
+    assert.deepEqual(calls.authorize, [last]);
+});
+
+test('the devices request is cleared only once the list took it, and it expires', () => {
+    const shown = harness({ state: READY, intent: null, devices: { savedAt: 0 } });
+    shown.world.dialogBusy = true;
+    shown.flow.start();
+    assert.equal(shown.calls.devicesCleared, 0);
+    assert.ok(shown.flow.pending().devices);
+    shown.world.dialogBusy = false;
+    shown.advance(500);
+    assert.equal(shown.calls.devices, 1);
+    assert.equal(shown.calls.devicesCleared, 1);
+
+    const late = harness({ state: { accountId: null }, intent: null, devices: { savedAt: 0 } });
+    late.flow.start();
+    late.modal.isOpen = false;
+    late.advance(16 * 60 * 1000, READY);
+    assert.equal(late.calls.devices, 0);
+    assert.equal(late.calls.devicesCleared, 1);
+});
+
+test('after a same-tab sign-in a saved devices request opens for whichever account arrives', () => {
+    const { flow, calls, modal, advance } = harness({ state: { accountId: null }, intent: null, devices: { savedAt: 0 } });
+    flow.start();
+    assert.equal(calls.modalOpens, 1, 'signed out: sign-in comes first');
+    assert.equal(calls.devices, 0);
+    modal.isOpen = false;
+    advance(500, READY);
+    assert.equal(calls.devices, 1);
 });

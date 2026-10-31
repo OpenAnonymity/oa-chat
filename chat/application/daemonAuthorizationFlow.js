@@ -2,8 +2,10 @@
 // is read as soon as this is created, and also on a later hash change, because the
 // app rewrites the address during boot. Dialogs wait for the ordinary sign-in flows:
 // a new account's own steps, such as saving a recovery code, are never interrupted.
+// A request stays pending until the dialog says it took it: one may be mid-approval.
 import {
     clearDaemonIntent,
+    clearDevicesIntent,
     consumeDaemonIntent,
     consumeDevicesIntent,
     isDaemonIntentFresh
@@ -28,7 +30,8 @@ export function createDaemonAuthorizationFlow({
     windowImpl = globalThis.window,
     consumeIntent = consumeDaemonIntent,
     consumeDevices = consumeDevicesIntent,
-    clearIntent = clearDaemonIntent,
+    clearIntent = transaction => clearDaemonIntent(undefined, transaction),
+    clearDevices = clearDevicesIntent,
     now = () => Date.now(),
     setIntervalImpl = (handler, ms) => setInterval(handler, ms),
     clearIntervalImpl = timer => clearInterval(timer)
@@ -47,8 +50,12 @@ export function createDaemonAuthorizationFlow({
 
     const check = () => {
         if (intent && !isDaemonIntentFresh(intent, now())) {
+            clearIntent(intent.transaction);
             intent = null;
-            clearIntent();
+        }
+        if (devices && !isDaemonIntentFresh(devices, now())) {
+            clearDevices();
+            devices = null;
         }
         if (!intent && !devices) {
             stopWaiting();
@@ -59,11 +66,13 @@ export function createDaemonAuthorizationFlow({
         if (isAccountReadyForDaemon(state)) {
             // The account dialog closes itself after sign-in; wait out its own steps.
             if (modal?.isOpen) return;
-            const pending = intent;
-            intent = null;
-            devices = false;
-            stopWaiting();
-            void (pending ? openAuthorization(pending) : openDevices());
+            if (intent) {
+                if (openAuthorization(intent) === true) intent = null;
+            } else if (openDevices() === true) {
+                devices = null;
+                clearDevices();
+            }
+            if (!intent && !devices) stopWaiting();
             return;
         }
         if (modal?.isOpen || state.busy) return;
@@ -88,7 +97,7 @@ export function createDaemonAuthorizationFlow({
         const nextIntent = consumeIntent();
         const nextDevices = consumeDevices();
         if (nextIntent && nextIntent.transaction !== intent?.transaction) intent = nextIntent;
-        if (nextDevices) devices = true;
+        if (nextDevices) devices = nextDevices;
         schedule();
     });
 

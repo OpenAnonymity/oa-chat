@@ -106,10 +106,11 @@ from the URL fragment, and the wallet stays opaque blobs.
 
 Account traffic and anonymous traffic use separate HTTP clients. Finalized tickets, keys
 and prompts carry no account credential, and prompts go directly to the provider.
-Redemption never triggers a sync, and sync never redeems. A daemon's redemption carries a
-random `X-OA-Redemption-Nonce` that scopes the org's replay; it is not derived from the
-account or wallet, so a browser that selects the same ticket cannot receive that key. The
-browser sends no nonce and keeps its exact-batch replay recovery. Encrypted ticket leases
+Redemption never triggers a sync, and sync never redeems. A daemon redeems only on the
+dedicated `/api/request_key/nonce`, with no fallback, under a random `X-OA-Redemption-Nonce`
+that scopes the org's replay; it is not derived from the account or wallet, so a browser that
+selects the same ticket cannot receive that key. The browser stays on `/api/request_key`, sends
+no nonce and keeps its exact-batch replay recovery. Encrypted ticket leases
 only make clients avoid each other: they are not custody or a security boundary, and a
 browser spends leased tickets last rather than running short.
 

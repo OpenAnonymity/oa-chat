@@ -65,10 +65,11 @@ this browser or send it towards buying tickets it does not need. `getCount` stil
 leased tickets, so a lease does not trigger auto-reload and the balance shown includes them.
 
 Leases only avoid collisions. Two clients can lease the same ticket and a stale browser can
-spend a leased one. The org's single-spend check decides, and a daemon's anonymous durable
-nonce scopes its redemption, so a browser that lands on the same ticket can never receive the
-daemon's provider key. This browser sends no nonce: its reload recovery relies on replay of the
-exact tokens, which would need a durable per-intent nonce to change.
+spend a leased one. The org's single-spend check decides. A daemon redeems only on the dedicated
+`POST /api/request_key/nonce`, with no fallback: its required anonymous durable nonce scopes the
+redemption, so a browser that lands on the same ticket can never receive the daemon's provider key,
+and an older org answers 404 before touching a ticket. This browser stays on `/api/request_key` and
+sends no nonce: its reload recovery relies on replay of the exact tokens.
 
 When the org answers 503 `TICKET_REQUEST_IN_PROGRESS`, another request holds a ticket and may
 yet roll back, so nothing is archived. The ticket store sets that ticket aside in memory for 60
@@ -78,12 +79,41 @@ other tickets up to twice before showing the error. `networkProxy` also retries 
 Removal records are unchanged: a daemon writes the same per-writer `ticket-removals` record as
 any browser installation, and spent or removed tickets merge as before. Sync never redeems.
 
+## One attempt, one sign-in
+
+An attempt is bound to the account and login generation that opened it (`loginGeneration` moves on every
+lock and logout), so A to B to A also ends it. After every await, and last thing before the approval is
+sent, the account, generation and expiry are checked. The raw key is zeroed as soon as it is sealed, before
+the approval goes out. `approve` carries `expectedAccountId`, that bound 16-digit ID and never a fresh read:
+the org answers 409 `DAEMON_AUTH_ACCOUNT_MISMATCH` before changing anything if the session is now another
+account's. Once the approval has started the dialog never says nothing was sent.
+
+## Dialogs and pending requests
+
+- Each open of `DaemonAuthorizeModal` has an owner token. A list, lookup, render, timer or click from an
+  earlier open is ignored, so a late response can never draw over a newer dialog.
+- A request stays pending in `daemonAuthorizationFlow` until the dialog accepts it. A newer link replaces an
+  idle dialog (declining a review it supersedes) but waits while an approval is running. The devices list waits
+  for any open authorization dialog. Closing a dialog clears only its own saved transaction.
+- `sessionStorage` `oa-daemon-devices` (`{savedAt}`, 15 minutes, no secret) carries `#oa-daemon-devices`
+  across a same-tab sign-in. It is cleared when the list is shown or expires. The list is always that of
+  whichever account is signed in when it opens, and closes if the account changes.
+
 ## Staging
 
 This integration is on the staging branch, rooted at the deployed staging revision, which carries
 the request-timing experiment and so must not reach production, desktop or mobile
-([STAGING_REQUEST_TIMING.md](STAGING_REQUEST_TIMING.md)). The org routes answer 404 until
-`DAEMON_AUTH_ENABLED=true`, so deploy the backend first.
+([STAGING_REQUEST_TIMING.md](STAGING_REQUEST_TIMING.md)).
+
+The backend goes first, and its runbook `docs/daemon-rollback.md` in oa-org is the source. A worker without
+the session scope guard treats a surviving daemon token as an ordinary account session, so:
+activate the compatibility release (guard and nonce fence, feature off) on **every** worker, and only
+then set `DAEMON_AUTH_ENABLED=true`. Rolling back means the feature off, then the saved compatibility release if
+needed. Do not restore an older tree generically: an unguarded rollback needs verified zero daemon Core
+sessions first, and it can otherwise widen what a daemon token reaches.
 
 A daemon's lease renewals move the account's `last_sync`, so a browser that is open runs its normal
 pull and push cycle after them, on its existing polling cadence.
+
+`test-faults/daemon-authorization.mjs` drives this page in real Chromium against a stand-in org, with a
+virtual passkey and no outside network.

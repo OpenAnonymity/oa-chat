@@ -6,12 +6,14 @@ import {
     bytesToBase64Url,
     base64UrlToBytes,
     clearDaemonIntent,
+    clearDevicesIntent,
     consumeDaemonIntent,
     consumeDevicesIntent,
     createDaemonAuthorization,
     daemonPublicKeyHash,
     parseDaemonFragment,
     sealForDaemon,
+    DAEMON_DEVICES_STORAGE_KEY,
     DAEMON_INTENT_STORAGE_KEY
 } from '../../chat/services/daemonAuthorization.js';
 
@@ -139,14 +141,15 @@ test('a stale or malformed saved intent is dropped; a bad fragment is still remo
 test('the devices view opens only from its exact fragment', () => {
     const replaced = [];
     const historyImpl = { state: null, replaceState: (_s, _t, url) => replaced.push(url) };
-    assert.equal(consumeDevicesIntent({ locationImpl: { hash: '#oa-daemon-devices', pathname: '/', search: '' }, historyImpl }), true);
-    assert.equal(consumeDevicesIntent({ locationImpl: { hash: '#oa-daemon-devices2', pathname: '/', search: '' }, historyImpl }), false);
+    const storage = memoryStorage();
+    assert.deepEqual(consumeDevicesIntent({ locationImpl: { hash: '#oa-daemon-devices2', pathname: '/', search: '' }, historyImpl, storage, now: 5 }), null);
+    assert.deepEqual(consumeDevicesIntent({ locationImpl: { hash: '#oa-daemon-devices', pathname: '/', search: '' }, historyImpl, storage, now: 5 }), { savedAt: 5 });
     assert.deepEqual(replaced, ['/']);
 });
 
-function harness({ lookup, responses = {}, account = '1234567890123456', reveal } = {}) {
+function harness({ lookup, responses = {}, account = '1234567890123456', reveal, now } = {}) {
     const calls = [];
-    const state = { account };
+    const state = { account, epoch: 1 };
     const revealed = [];
     return {
         calls, state, revealed,
@@ -156,6 +159,8 @@ function harness({ lookup, responses = {}, account = '1234567890123456', reveal 
                 intent: { transaction, daemonPublicKey: publicKey },
                 origin: 'https://staging.openanonymity.ai',
                 accountId: () => state.account,
+                accountEpoch: () => state.epoch,
+                ...(now ? { now } : {}),
                 request: async (path, body) => {
                     calls.push({ path, body });
                     if (responses[path]) return responses[path](body);
@@ -343,4 +348,181 @@ test('every class the dialog uses is in the committed stylesheet', () => {
     const escape = name => name.replace(/[^a-zA-Z0-9_-]/g, char => `\\${char}`);
     const missing = [...classes].filter(name => !css.includes(`.${escape(name)}`));
     assert.deepEqual(missing, []);
+});
+
+test('the devices request survives a same-tab sign-in, until shown or expired', () => {
+    const storage = memoryStorage();
+    const historyImpl = { state: null, replaceState: () => {} };
+    const away = { hash: '', pathname: '/', search: '' };
+    consumeDevicesIntent({ locationImpl: { hash: '#oa-daemon-devices', pathname: '/', search: '?auth=daemon' }, historyImpl, storage, now: 1000 });
+    assert.deepEqual(consumeDevicesIntent({ locationImpl: away, historyImpl, storage, now: 2000 }), { savedAt: 1000 });
+    clearDevicesIntent(storage);
+    assert.equal(consumeDevicesIntent({ locationImpl: away, historyImpl, storage, now: 2000 }), null);
+    consumeDevicesIntent({ locationImpl: { hash: '#oa-daemon-devices', pathname: '/', search: '' }, historyImpl, storage, now: 1000 });
+    assert.equal(consumeDevicesIntent({ locationImpl: away, historyImpl, storage, now: 1000 + 16 * 60 * 1000 }), null);
+    assert.equal(storage.getItem(DAEMON_DEVICES_STORAGE_KEY), null);
+});
+
+test('clearing one request leaves a newer one saved over it', () => {
+    const storage = memoryStorage();
+    storage.setItem(DAEMON_INTENT_STORAGE_KEY, JSON.stringify({ transaction: 'new' }));
+    clearDaemonIntent(storage, 'old');
+    assert.ok(storage.getItem(DAEMON_INTENT_STORAGE_KEY));
+    clearDaemonIntent(storage, 'new');
+    assert.equal(storage.getItem(DAEMON_INTENT_STORAGE_KEY), null);
+});
+
+// Holds the named SubtleCrypto call at its `nth` use while `during` changes the world.
+function holdSubtle(method, nth = 1) {
+    const original = crypto.subtle[method];
+    let release;
+    let seen = 0;
+    const reached = new Promise(resolve => {
+        crypto.subtle[method] = async function (...args) {
+            seen += 1;
+            if (seen === nth) {
+                resolve();
+                await new Promise(done => { release = done; });
+            }
+            return original.apply(crypto.subtle, args);
+        };
+    });
+    return { reached, release: () => release(), restore: () => { delete crypto.subtle[method]; } };
+}
+
+const approvalScenarios = [
+    ['another account', h => { h.state.account = '9999999999999999'; }, 'failed'],
+    ['away and back to the same account', h => { h.state.account = '9999999999999999'; h.state.account = '1234567890123456'; h.state.epoch += 2; }, 'failed'],
+    ['logged out', h => { h.state.account = null; }, 'failed']
+];
+// digest: 1 is lookup's hash in load(), counted after it, so 1 here is the approval's own hash.
+// During sealing the holds are the AES encrypt and HKDF's digest of the transaction.
+for (const [point, method, nth] of [['hashing', 'digest', 1], ['sealing (salt)', 'digest', 2], ['sealing (encrypt)', 'encrypt', 1]]) {
+    for (const [name, change, status] of approvalScenarios) {
+        test(`${name} during ${point}: no approval is sent and the key is zeroed`, async () => {
+            const { publicKey } = await daemonKey();
+            const h = harness();
+            const session = await h.build(publicKey);
+            await session.load();
+            const hold = holdSubtle(method, nth);
+            try {
+                const running = session.approve('ABCD-EFGH');
+                await hold.reached;
+                change(h);
+                session.revalidate();
+                assert.equal(session.getState().status, status, 'ends at once, not only at the next step');
+                hold.release();
+                await running;
+            } finally {
+                hold.restore();
+            }
+            assert.equal(session.getState().status, status);
+            assert.equal(h.calls.some(call => call.path === '/auth/daemon/approve'), false);
+            for (const key of h.revealed) assert.ok(key.every(byte => byte === 0));
+        });
+    }
+
+    test(`expiry during ${point}: no approval is sent and the key is zeroed`, async () => {
+        const { publicKey } = await daemonKey();
+        let clock = 1000;
+        const h = harness({ now: () => clock });
+        const session = await h.build(publicKey);
+        await session.load();
+        const hold = holdSubtle(method, nth);
+        try {
+            const running = session.approve('ABCD-EFGH');
+            await hold.reached;
+            clock += 601000;
+            hold.release();
+            await running;
+        } finally {
+            hold.restore();
+        }
+        assert.equal(session.getState().status, 'expired');
+        assert.equal(h.calls.some(call => call.path === '/auth/daemon/approve'), false);
+        for (const key of h.revealed) assert.ok(key.every(byte => byte === 0));
+    });
+}
+
+test('the approval names the account bound at the start, and the key is zeroed before it leaves', async () => {
+    const { publicKey } = await daemonKey();
+    let zeroedAtSend = null;
+    const realKey = new Uint8Array(32).fill(9);
+    const custom = harness({
+        reveal: async () => realKey,
+        responses: { '/auth/daemon/approve': () => { zeroedAtSend = realKey.every(byte => byte === 0); return { success: true }; } }
+    });
+    const bound = await custom.build(publicKey);
+    await bound.load();
+    await bound.approve('ABCD-EFGH');
+    const body = custom.calls.find(call => call.path === '/auth/daemon/approve').body;
+    assert.equal(body.expectedAccountId, '1234567890123456');
+    assert.equal(zeroedAtSend, true);
+    assert.equal(bound.getState().status, 'done');
+});
+
+test('an org refusal for another account is final and says nothing was approved', async () => {
+    const { publicKey } = await daemonKey();
+    const h = harness({ responses: { '/auth/daemon/approve': () => { throw Object.assign(new Error('x'), { code: 'DAEMON_AUTH_ACCOUNT_MISMATCH', status: 409 }); } } });
+    const session = await h.build(publicKey);
+    await session.load();
+    await session.approve('ABCD-EFGH');
+    assert.equal(session.getState().status, 'failed');
+    assert.match(session.getState().error, /nothing was approved/);
+});
+
+test('once the approval has started no failure claims nothing was sent', async () => {
+    for (const error of [new DOMException('timed out', 'AbortError'), Object.assign(new Error('gone'), { code: 'DAEMON_AUTH_EXPIRED' }), new Error('network')]) {
+        const { publicKey } = await daemonKey();
+        const h = harness({ responses: { '/auth/daemon/approve': () => { throw error; } } });
+        const session = await h.build(publicKey);
+        await session.load();
+        await session.approve('ABCD-EFGH');
+        assert.equal(session.getState().status, 'failed');
+        assert.match(session.getState().error, /could not confirm/);
+    }
+});
+
+test('a sent approval is not ended by an account change; its answer decides', async () => {
+    const { publicKey } = await daemonKey();
+    let answer;
+    const h = harness({ responses: { '/auth/daemon/approve': () => new Promise(resolve => { answer = resolve; }) } });
+    const session = await h.build(publicKey);
+    await session.load();
+    const running = session.approve('ABCD-EFGH');
+    for (let i = 0; i < 20000 && !answer; i += 1) await new Promise(resolve => setImmediate(resolve));
+    h.state.account = '9999999999999999';
+    session.revalidate();
+    assert.equal(session.getState().status, 'approving');
+    answer({ success: true });
+    await running;
+    assert.equal(session.getState().status, 'done');
+});
+
+test('a late answer does not reopen a finished attempt', async () => {
+    const { publicKey } = await daemonKey();
+    let answer;
+    const h = harness({ responses: { '/auth/daemon/check-code': () => new Promise((_, reject) => { answer = reject; }) } });
+    const session = await h.build(publicKey);
+    await session.load();
+    const running = session.approve('ABCD-EFGH');
+    for (let i = 0; i < 20000 && !answer; i += 1) await new Promise(resolve => setImmediate(resolve));
+    h.state.account = '9999999999999999';
+    session.revalidate();
+    answer(Object.assign(new Error('x'), { code: 'DAEMON_AUTH_BAD_CODE' }));
+    await running;
+    assert.equal(session.getState().status, 'failed');
+});
+
+test('declining during the lookup is not overwritten by its answer', async () => {
+    const { publicKey } = await daemonKey();
+    const hash = await daemonPublicKeyHash(publicKey);
+    let answer;
+    const h = harness({ responses: { '/auth/daemon/lookup': () => new Promise(resolve => { answer = resolve; }) } });
+    const session = await h.build(publicKey);
+    const loading = session.load();
+    await session.decline();
+    answer({ expiresIn: 600, daemonPublicKeyHash: hash });
+    await loading;
+    assert.equal(session.getState().status, 'declined');
 });

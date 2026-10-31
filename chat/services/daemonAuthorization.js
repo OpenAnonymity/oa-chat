@@ -13,6 +13,7 @@ const text = new TextEncoder();
 export const DAEMON_ENVELOPE_VERSION = 1;
 export const DAEMON_FRAGMENT_KEY = 'oa-daemon';
 export const DAEMON_INTENT_STORAGE_KEY = 'oa-daemon-authorization';
+export const DAEMON_DEVICES_STORAGE_KEY = 'oa-daemon-devices';
 const INTENT_MAX_AGE_MS = 15 * 60 * 1000;
 const ENVELOPE_INFO = 'oa-daemon-auth/v1/browser->daemon';
 const ENVELOPE_AAD = 'oa-daemon-auth/v1/envelope';
@@ -94,15 +95,37 @@ export function consumeDaemonIntent({ locationImpl = globalThis.location, histor
     return null;
 }
 
-/** `#oa-daemon-devices` opens the list of authorized daemons for revocation. */
-export function consumeDevicesIntent({ locationImpl = globalThis.location, historyImpl = globalThis.history } = {}) {
-    if (locationImpl?.hash !== '#oa-daemon-devices') return false;
-    clearAddress(locationImpl, historyImpl);
-    return true;
+/**
+ * `#oa-daemon-devices` opens the list of authorized daemons for revocation. Like
+ * an authorization it has to survive a same-tab sign-in, so it is kept until
+ * the list is on screen or its time is up. Returns `{ savedAt }` or null.
+ */
+export function consumeDevicesIntent({ locationImpl = globalThis.location, historyImpl = globalThis.history, storage = globalThis.sessionStorage, now = Date.now() } = {}) {
+    if (locationImpl?.hash === '#oa-daemon-devices') {
+        clearAddress(locationImpl, historyImpl);
+        try {
+            storage?.setItem(DAEMON_DEVICES_STORAGE_KEY, JSON.stringify({ savedAt: now }));
+        } catch { /* The list can still open from memory in this tab. */ }
+        return { savedAt: now };
+    }
+    try {
+        const saved = JSON.parse(storage?.getItem(DAEMON_DEVICES_STORAGE_KEY) || 'null');
+        if (saved && isDaemonIntentFresh(saved, now)) return { savedAt: saved.savedAt };
+        storage?.removeItem(DAEMON_DEVICES_STORAGE_KEY);
+    } catch { /* Unavailable storage just means no saved intent. */ }
+    return null;
 }
 
-export function clearDaemonIntent(storage = globalThis.sessionStorage) {
-    try { storage?.removeItem(DAEMON_INTENT_STORAGE_KEY); } catch { /* best effort */ }
+export function clearDevicesIntent(storage = globalThis.sessionStorage) {
+    try { storage?.removeItem(DAEMON_DEVICES_STORAGE_KEY); } catch { /* best effort */ }
+}
+
+/** With a transaction, leaves alone a newer request saved over that one. */
+export function clearDaemonIntent(storage = globalThis.sessionStorage, transaction = null) {
+    try {
+        if (transaction && JSON.parse(storage?.getItem(DAEMON_INTENT_STORAGE_KEY) || 'null')?.transaction !== transaction) return;
+        storage?.removeItem(DAEMON_INTENT_STORAGE_KEY);
+    } catch { /* best effort */ }
 }
 
 /** The digest the org stored at start; a tampered link fails approval. */
@@ -173,16 +196,21 @@ function isCancelled(error) {
     return error?.name === 'AbortError' || error?.name === 'NotAllowedError';
 }
 
+const TERMINAL_STATES = Object.freeze(['done', 'declined', 'expired', 'failed']);
+
 /**
- * One authorization attempt, bound to the account that opened it. An account
- * change or expiry makes every later step refuse. Nothing is sent without
- * `approve`, which only a click reaches.
+ * One authorization attempt, bound to the sign-in that opened it: the account
+ * and its login generation, so leaving and coming back to the same account also
+ * ends it. Every await is followed by that check and the expiry, up to the
+ * moment the approval is sent. Nothing is sent without `approve`, which only a
+ * click reaches.
  */
-export function createDaemonAuthorization({ intent, request, revealMasterKey, accountId, accountSupported = () => true, origin, onChange = () => {}, now = () => Date.now() }) {
+export function createDaemonAuthorization({ intent, request, revealMasterKey, accountId, accountEpoch = () => 0, accountSupported = () => true, origin, onChange = () => {}, now = () => Date.now() }) {
     if (typeof request !== 'function' || typeof revealMasterKey !== 'function' || typeof accountId !== 'function') {
         throw new Error('request, revealMasterKey and accountId are required');
     }
     const boundAccount = accountId();
+    const boundEpoch = accountEpoch();
     let state = { status: 'loading', details: null, error: null, expiresAt: null };
     // Once the sealed key may have reached the org, "nothing was sent" is not true.
     let approveAttempted = false;
@@ -191,23 +219,32 @@ export function createDaemonAuthorization({ intent, request, revealMasterKey, ac
         try { onChange(state); } catch { /* presentation cannot change protocol state */ }
     };
     const assertCurrent = () => {
-        if (accountId() !== boundAccount) throw Object.assign(new Error('The account changed. Reopen the link from your terminal.'), { terminal: true });
+        if (accountId() !== boundAccount || accountEpoch() !== boundEpoch) {
+            throw Object.assign(new Error('The account changed. Reopen the link from your terminal.'), { terminal: true });
+        }
         if (state.expiresAt && now() >= state.expiresAt) throw Object.assign(new Error('expired'), { expired: true });
     };
     const fail = error => {
+        // A late answer cannot reopen an attempt that has already ended.
+        if (TERMINAL_STATES.includes(state.status)) return;
         const code = error?.code || error?.data?.code || error?.detail?.code;
-        if ((error?.expired || code === 'DAEMON_AUTH_EXPIRED') && !approveAttempted) {
-            set({ status: 'expired', error: null });
-        } else if (code === 'DAEMON_AUTH_BAD_CODE') {
-            set({ status: 'review', error: 'That code does not match your terminal. Check it and try again.' });
-        } else if (isCancelled(error)) {
-            set({ status: 'review', error: 'The passkey prompt was cancelled. Nothing was sent.' });
+        if (code === 'DAEMON_AUTH_ACCOUNT_MISMATCH') {
+            // The org refuses this before it changes anything.
+            set({ status: 'failed', error: 'This browser is now signed in to a different account, so nothing was approved. Run oa-clientd login in your terminal to start again.' });
         } else if (code === 'DAEMON_AUTH_UNSUPPORTED') {
             set({ status: 'failed', error: 'This account cannot authorize a computer yet. Finish setting up its encryption passkey, then try again.' });
-        } else if (error?.terminal) {
-            set({ status: 'failed', error: error.message });
+        } else if (code === 'DAEMON_AUTH_BAD_CODE') {
+            // A refused code stores nothing, so a retry is a fresh attempt.
+            approveAttempted = false;
+            set({ status: 'review', error: 'That code does not match your terminal. Check it and try again.' });
         } else if (approveAttempted) {
             set({ status: 'failed', error: 'We could not confirm this approval. Check your terminal: if oa-clientd did not finish, run oa-clientd login and try again.' });
+        } else if (error?.expired || code === 'DAEMON_AUTH_EXPIRED') {
+            set({ status: 'expired', error: null });
+        } else if (isCancelled(error)) {
+            set({ status: 'review', error: 'The passkey prompt was cancelled. Nothing was sent.' });
+        } else if (error?.terminal) {
+            set({ status: 'failed', error: error.message });
         } else {
             set({ status: 'review', error: 'That did not work. Nothing was sent. Try again.' });
         }
@@ -219,6 +256,8 @@ export function createDaemonAuthorization({ intent, request, revealMasterKey, ac
                 const details = await request('/auth/daemon/lookup', { transaction: intent.transaction });
                 assertCurrent();
                 const expectedHash = await daemonPublicKeyHash(intent.daemonPublicKey);
+                assertCurrent();
+                if (state.status !== 'loading') return;
                 if (details.daemonPublicKeyHash !== expectedHash) {
                     throw Object.assign(new Error('This link does not match the request from your terminal. Run oa-clientd login again.'), { terminal: true });
                 }
@@ -228,9 +267,12 @@ export function createDaemonAuthorization({ intent, request, revealMasterKey, ac
                 fail(error);
             }
         },
-        /** Ends an idle review when the account changed or the request expired. */
+        /**
+         * Ends the attempt when the account changed or the request expired, also
+         * during an approval that has not been sent. A sent one waits for its answer.
+         */
         revalidate() {
-            if (state.status !== 'review') return;
+            if (TERMINAL_STATES.includes(state.status) || approveAttempted) return;
             try {
                 assertCurrent();
             } catch (error) {
@@ -245,6 +287,8 @@ export function createDaemonAuthorization({ intent, request, revealMasterKey, ac
                 assertCurrent();
                 await request('/auth/daemon/check-code', { transaction: intent.transaction, userCode });
                 assertCurrent();
+                const keyHash = await daemonPublicKeyHash(intent.daemonPublicKey);
+                assertCurrent();
                 masterKey = await revealMasterKey({ transaction: intent.transaction, userCode });
                 assertCurrent();
                 const sealed = await sealForDaemon({
@@ -254,11 +298,14 @@ export function createDaemonAuthorization({ intent, request, revealMasterKey, ac
                     origin,
                     masterKey
                 });
+                masterKey.fill(0);
+                assertCurrent();
                 approveAttempted = true;
                 await request('/auth/daemon/approve', {
                     transaction: intent.transaction,
+                    expectedAccountId: boundAccount,
                     userCode,
-                    daemonPublicKeyHash: await daemonPublicKeyHash(intent.daemonPublicKey),
+                    daemonPublicKeyHash: keyHash,
                     sealed
                 });
                 set({ status: 'done', error: null });

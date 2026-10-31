@@ -8,6 +8,9 @@ import {
  * Asks the signed-in person to authorize a local oa-clientd daemon. Approval is
  * always a click plus the code from the terminal, then a passkey prompt. No link
  * alone can approve anything.
+ *
+ * Each open has an owner token. Everything asynchronous checks it, so a response,
+ * timer or click left over from an earlier open cannot touch a newer dialog.
  */
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -16,13 +19,18 @@ function escapeHtml(value) {
 }
 
 const buttonBase = 'inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const TERMINAL_STATES = Object.freeze(['done', 'declined', 'expired', 'failed']);
 
 class DaemonAuthorizeModal {
-    constructor({ accountService, origin = globalThis.location?.origin } = {}) {
+    constructor({ accountService, origin = globalThis.location?.origin, setTimer = (handler, ms) => setTimeout(handler, ms), clearTimer = timer => clearTimeout(timer) } = {}) {
         this.accountService = accountService;
         this.origin = origin;
+        this.setTimer = setTimer;
+        this.clearTimer = clearTimer;
+        this.owner = null;
         this.overlay = null;
         this.session = null;
+        this.transaction = null;
         this.codeValue = '';
     }
 
@@ -30,75 +38,107 @@ class DaemonAuthorizeModal {
         return !!this.overlay;
     }
 
-    async open(intent) {
-        if (this.overlay) return;
-        const accountService = this.accountService;
+    mount(label) {
+        const owner = {};
+        this.owner = owner;
         this.overlay = document.createElement('div');
         this.overlay.className = 'daemon-authorize-modal fixed inset-0 z-[10001] flex items-center justify-center bg-black/50';
         this.overlay.setAttribute('role', 'dialog');
         this.overlay.setAttribute('aria-modal', 'true');
-        this.overlay.setAttribute('aria-label', 'Authorize oa-clientd');
+        this.overlay.setAttribute('aria-label', label);
         document.body.appendChild(this.overlay);
         showSurface(this.overlay);
+        return owner;
+    }
+
+    /**
+     * Returns whether this request is now on screen. A newer request replaces an
+     * idle dialog; while an approval runs it stays with the caller, who asks again.
+     */
+    open(intent) {
+        if (this.overlay) {
+            if (this.transaction === intent.transaction) return true;
+            if (this.session?.getState().status === 'approving') return false;
+            this.dismiss();
+        }
+        const accountService = this.accountService;
+        const owner = this.mount('Authorize oa-clientd');
+        const transaction = intent.transaction;
+        this.transaction = transaction;
         this.escapeHandler = event => {
-            if (event.key === 'Escape' && this.session?.getState().status !== 'approving') this.dismiss();
+            if (this.owner === owner && event.key === 'Escape' && this.session?.getState().status !== 'approving') this.dismiss();
         };
         document.addEventListener('keydown', this.escapeHandler);
-        this.session = createDaemonAuthorization({
+        const session = createDaemonAuthorization({
             intent,
             origin: this.origin,
             accountId: () => accountService.getState().accountId,
+            accountEpoch: () => accountService.loginGeneration,
             accountSupported: () => ['PRF', 'LEGACY_PASSKEY'].includes(accountService.getState().encryptionMode),
             request: (path, body) => accountService.daemonAuthRequest(path, body),
             revealMasterKey: options => accountService.revealMasterKeyForDaemon(options),
-            onChange: state => this.render(state)
+            onChange: state => {
+                // A finished request must not come back after a reload.
+                if (TERMINAL_STATES.includes(state.status)) clearDaemonIntent(undefined, transaction);
+                if (this.owner === owner) this.render(state, owner);
+            }
         });
-        this.render(this.session.getState());
+        this.session = session;
+        this.render(session.getState(), owner);
         // Account changes and expiry end an idle dialog, not only the next click.
-        this.accountUnsubscribe = accountService.subscribe(() => this.session?.revalidate());
-        await this.session?.load();
-        const expiresAt = this.session?.getState().expiresAt;
-        if (expiresAt) {
-            this.expiryTimer = setTimeout(() => this.session?.revalidate(), Math.max(0, expiresAt - Date.now()));
-        }
+        this.accountUnsubscribe = accountService.subscribe(() => {
+            if (this.owner === owner) session.revalidate();
+        });
+        void session.load().then(() => {
+            const expiresAt = session.getState().expiresAt;
+            if (this.owner !== owner || !expiresAt) return;
+            this.expiryTimer = this.setTimer(() => {
+                if (this.owner === owner) session.revalidate();
+            }, Math.max(0, expiresAt - Date.now()));
+        });
+        return true;
     }
 
     close() {
         if (!this.overlay) return;
+        const overlay = this.overlay;
+        const transaction = this.transaction;
+        this.owner = null;
+        this.overlay = null;
+        this.session = null;
+        this.transaction = null;
+        this.codeValue = '';
         document.removeEventListener('keydown', this.escapeHandler);
         this.accountUnsubscribe?.();
         this.accountUnsubscribe = null;
-        clearTimeout(this.expiryTimer);
-        hideSurface(this.overlay, { remove: true });
-        this.overlay = null;
-        this.session = null;
-        this.codeValue = '';
-        clearDaemonIntent();
+        if (this.expiryTimer !== undefined) this.clearTimer(this.expiryTimer);
+        this.expiryTimer = undefined;
+        hideSurface(overlay, { remove: true });
+        if (transaction) clearDaemonIntent(undefined, transaction);
     }
 
-    /** Lists this account's authorized daemons, each with a Revoke button. */
-    async openDevices() {
-        if (this.overlay) return;
-        this.overlay = document.createElement('div');
-        this.overlay.className = 'daemon-authorize-modal fixed inset-0 z-[10001] flex items-center justify-center bg-black/50';
-        this.overlay.setAttribute('role', 'dialog');
-        this.overlay.setAttribute('aria-modal', 'true');
-        this.overlay.setAttribute('aria-label', 'Authorized computers');
-        document.body.appendChild(this.overlay);
-        showSurface(this.overlay);
+    /**
+     * Lists this account's authorized daemons, each with a Revoke button. Waits
+     * for an authorization dialog: replacing it would decline or hide that request.
+     */
+    openDevices() {
+        if (this.overlay) return !this.transaction;
+        const owner = this.mount('Authorized computers');
         // The list is this account's; another account must not act on it.
         const listedFor = this.accountService.getState().accountId;
         this.accountUnsubscribe = this.accountService.subscribe(state => {
-            if (state.accountId !== listedFor) this.close();
+            if (this.owner === owner && state.accountId !== listedFor) this.close();
         });
         this.escapeHandler = event => {
-            if (event.key === 'Escape') this.close();
+            if (this.owner === owner && event.key === 'Escape') this.close();
         };
         document.addEventListener('keydown', this.escapeHandler);
-        await this.renderDevices();
+        void this.renderDevices(owner);
+        return true;
     }
 
-    async renderDevices(error = null) {
+    async renderDevices(owner, error = null) {
+        const attempt = owner.listAttempt = (owner.listAttempt || 0) + 1;
         let devices = [];
         let loadFailed = false;
         try {
@@ -106,7 +146,7 @@ class DaemonAuthorizeModal {
         } catch {
             loadFailed = true;
         }
-        if (!this.overlay) return;
+        if (this.owner !== owner || owner.listAttempt !== attempt) return;
         const rows = devices.map(device => `
             <li class="flex items-center justify-between gap-3">
                 <span class="text-sm text-foreground">oa-clientd ${escapeHtml(device.clientVersion)}${device.platform ? ` on ${escapeHtml(device.platform)}` : ''}<span class="block text-xs text-muted-foreground">Authorized ${escapeHtml(new Date(device.authorizedAt * 1000).toLocaleString())}</span></span>
@@ -121,9 +161,12 @@ class DaemonAuthorizeModal {
                 ${error ? `<p class="text-sm text-red-600 dark:text-red-400" role="alert">${escapeHtml(error)}</p>` : ''}
                 <div class="flex justify-end"><button class="daemon-authorize-close ${buttonBase} bg-muted/60 text-foreground hover:bg-muted">Close</button></div>
             </div>`;
-        this.overlay.querySelector('.daemon-authorize-close').addEventListener('click', () => this.close());
+        this.overlay.querySelector('.daemon-authorize-close').addEventListener('click', () => {
+            if (this.owner === owner) this.close();
+        });
         this.overlay.querySelectorAll('.daemon-device-revoke').forEach(button => {
             button.addEventListener('click', async () => {
+                if (this.owner !== owner) return;
                 button.disabled = true;
                 let failure = null;
                 try {
@@ -131,7 +174,7 @@ class DaemonAuthorizeModal {
                 } catch {
                     failure = 'That computer could not be revoked. Try again.';
                 }
-                await this.renderDevices(failure);
+                if (this.owner === owner) await this.renderDevices(owner, failure);
             });
         });
     }
@@ -150,15 +193,16 @@ class DaemonAuthorizeModal {
         case 'declined':
             return ['Authorization declined', 'Nothing was sent. You can close this tab.'];
         case 'expired':
-            return ['This request expired', 'Nothing was sent. Run oa-clientd login in your terminal to start again.'];
+            return ['This request is no longer active', 'Run oa-clientd login in your terminal to start again.'];
         case 'failed':
-            return ['Authorization failed', state.error || 'Nothing was sent. Run oa-clientd login in your terminal to start again.'];
+            return ['Authorization failed', state.error || 'Run oa-clientd login in your terminal to start again.'];
         }
         return null;
     }
 
-    render(state) {
-        if (!this.overlay) return;
+    render(state, owner) {
+        if (this.owner !== owner || !this.overlay) return;
+        const session = this.session;
         const input = this.overlay.querySelector('#daemon-authorize-code');
         if (input) this.codeValue = input.value;
         const terminal = this.terminalMessage(state);
@@ -172,7 +216,9 @@ class DaemonAuthorizeModal {
                         <button class="daemon-authorize-close ${buttonBase} bg-muted/60 text-foreground hover:bg-muted">Close</button>
                     </div>
                 </div>`;
-            this.overlay.querySelector('.daemon-authorize-close').addEventListener('click', () => this.close());
+            this.overlay.querySelector('.daemon-authorize-close').addEventListener('click', () => {
+                if (this.owner === owner) this.close();
+            });
             return;
         }
         if (state.status === 'loading') {
@@ -202,11 +248,14 @@ class DaemonAuthorizeModal {
             </div>`;
         const field = this.overlay.querySelector('#daemon-authorize-code');
         const approve = () => {
+            if (this.owner !== owner) return;
             const code = field.value.trim();
-            if (code.length >= 8) void this.session?.approve(code);
+            if (code.length >= 8) void session?.approve(code);
         };
         this.overlay.querySelector('.daemon-authorize-approve').addEventListener('click', approve);
-        this.overlay.querySelector('.daemon-authorize-decline').addEventListener('click', () => this.dismiss());
+        this.overlay.querySelector('.daemon-authorize-decline').addEventListener('click', () => {
+            if (this.owner === owner) this.dismiss();
+        });
         if (!busy) field.focus();
     }
 }
