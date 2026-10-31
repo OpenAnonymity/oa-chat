@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createDaemonAuthorizationFlow } from '../../chat/application/daemonAuthorizationFlow.js';
 import DaemonAuthorizeModal from '../../chat/components/DaemonAuthorizeModal.js';
 import {
     bytesToBase64Url,
@@ -263,5 +264,55 @@ test('a finished request leaves the saved intent, so a reload cannot reopen it',
         await until(() => !['approving', 'review'].includes(modal.session.getState().status), 'approval finished');
         assert.equal(modal.session.getState().status, 'done');
         assert.equal(values.has(DAEMON_INTENT_STORAGE_KEY), false);
+    });
+});
+
+test('with the real flow, each accepted request loads once however often the flow checks', async () => {
+    await withDialog(async ({ modal, accountService, overlays, calls, hold, release }) => {
+        accountService.state = { ...accountService.state, sessionVerified: true, status: 'unlocked', accountScopeReady: true, busy: false };
+        let tick = null;
+        let arriving = null;
+        let hashChanged;
+        const flow = createDaemonAuthorizationFlow({
+            accountService,
+            accountModal: () => null,
+            openAuthorization: value => modal.open(value),
+            openDevices: () => modal.openDevices(),
+            windowImpl: { addEventListener: (_name, handler) => { hashChanged = handler; } },
+            consumeIntent: () => { const value = arriving; arriving = null; return value; },
+            consumeDevices: () => null,
+            clearIntent: () => {},
+            clearDevices: () => {},
+            now: () => 0,
+            setIntervalImpl: handler => { tick = handler; return 1; },
+            clearIntervalImpl: () => { tick = null; }
+        });
+        flow.start();
+        const lookups = letter => calls.filter(call => call.route === '/auth/daemon/lookup' && call.body.transaction === letter.repeat(43)).length;
+
+        arriving = intent('A');
+        hashChanged();
+        await settle();
+        const first = overlays[0];
+        first.querySelector('#daemon-authorize-code').value = 'ABCD-EFGH';
+        const approve = hold('/auth/daemon/approve');
+        first.querySelector('.daemon-authorize-approve').listeners.click();
+        await until(() => calls.some(call => call.route === '/auth/daemon/approve'), 'approval sent');
+
+        arriving = intent('B');
+        hashChanged();
+        for (let i = 0; i < 10; i += 1) tick();
+        assert.equal(lookups('B'), 0, 'waits while the approval runs');
+        assert.equal(modal.transaction, 'A'.repeat(43));
+
+        release('/auth/daemon/approve');
+        approve.resolve({ success: true });
+        await until(() => modal.session.getState().status !== 'approving', 'approval answered');
+        tick();
+        await settle();
+        assert.equal(tick, null, 'the flow stops once the dialog took it');
+        assert.equal(modal.transaction, 'B'.repeat(43));
+        assert.equal(modal.session.getState().status, 'review');
+        assert.deepEqual([lookups('A'), lookups('B')], [1, 1]);
     });
 });

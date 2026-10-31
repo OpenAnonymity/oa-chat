@@ -97,7 +97,7 @@ async function orgRoutes(request, response) {
     const raw = Buffer.concat(chunks).toString();
     const body = raw ? JSON.parse(raw) : {};
     const pathname = new URL(request.url, 'http://x').pathname;
-    org.calls.push({ method: request.method, path: pathname, origin: request.headers.origin || null });
+    org.calls.push({ method: request.method, path: pathname, origin: request.headers.origin || null, transaction: body.transaction || null });
     const reply = (status, data) => {
         response.writeHead(status, { 'content-type': 'application/json' });
         response.end(JSON.stringify(data));
@@ -273,6 +273,12 @@ const holdSealing = page => page.evaluate(() => {
 });
 
 const approvals = () => org.calls.filter(call => call.path === '/auth/daemon/approve').length;
+const lookupsOf = request => org.calls.filter(call => call.path === '/auth/daemon/lookup' && call.transaction === request.transaction).length;
+// The live dialog's own session. The heading cannot tell: an approving dialog keeps "Authorize this computer".
+const active = page => page.evaluate(() => {
+    const modal = window.app?.ui?.daemonAuthorizeModal;
+    return { transaction: modal?.transaction ?? null, status: modal?.session?.getState().status ?? null };
+});
 const setHash = (page, hash) => page.evaluate(value => { location.hash = value; }, hash);
 
 // --- Scenarios ------------------------------------------------------------------
@@ -443,14 +449,24 @@ const scenarios = {
         await setHash(s.page, third.fragment);
         await s.page.waitForTimeout(1200);
         check('F a link during an approval does not take the screen', /Waiting for passkey/.test(await dialogText(s.page)));
+        const during = await active(s.page);
+        check('F the running approval still owns the dialog', during.transaction === second.transaction && during.status === 'approving', JSON.stringify(during));
+        check('F the waiting link has not been loaded', lookupsOf(third) === 0, String(lookupsOf(third)));
         const saved = await s.page.evaluate(() => JSON.parse(sessionStorage.getItem('oa-daemon-authorization')).transaction);
         check('F the newest request is what is saved', saved === third.transaction);
         releaseApprove();
-        check('F the waiting link then opens', await dialogShows(s, /Authorize this computer/, 'third review'));
+        check('F the waiting link then opens', await s.wait(transaction => {
+            const modal = window.app?.ui?.daemonAuthorizeModal;
+            return modal?.transaction === transaction && modal.session?.getState().status === 'review';
+        }, third.transaction, 'the third request in review'));
+        check('F its review is on screen, ready for a code', /Approve with passkey/.test(await dialogText(s.page)), (await dialogText(s.page)).slice(0, 80));
         check('F the approval was not lost or mixed', org.approved.has(second.transaction) && !org.approved.has(third.transaction));
-        const lookups = org.calls.filter(call => call.path === '/auth/daemon/lookup').length;
-        await s.page.waitForTimeout(1200);
-        check('F it opened once', org.calls.filter(call => call.path === '/auth/daemon/lookup').length === lookups);
+        // Three poll intervals: a retry loop in the flow would load again in this time.
+        await s.page.waitForTimeout(1600);
+        const counts = [first, second, third].map(lookupsOf);
+        check('F each accepted request loaded exactly once', counts.every(count => count === 1), counts.join(','));
+        const settled = await active(s.page);
+        check('F the third request still owns the dialog', settled.transaction === third.transaction && settled.status === 'review', JSON.stringify(settled));
         await s.context.close();
     },
 
