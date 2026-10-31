@@ -1,3 +1,21 @@
+## October 30, 2026 — Quick Ask excludes raw PDF attachments
+
+- `buildQuickAskMessages` replaces PDF file parts in its outgoing context with
+  a short omission marker. Existing conversation text, selected text, images,
+  other file types and any already available document text are retained.
+  Filename and data-URL MIME checks cover stored PDF attachments. The marker
+  keeps PDF-only turns nonempty and tells the model the source was omitted.
+- This is an in-memory Quick Ask transformation after normal file processing;
+  stored messages and the normal send/regenerate file path remain unchanged.
+  PDF-only context no longer activates the API's Mistral OCR plugin for Quick
+  Ask. Quick Ask relies on the visible explanation, so questions needing the
+  original PDF should use normal chat. This does not add a PDF-text cache,
+  change key budgets, or address balance errors for other attachment types.
+- Regression coverage in `test/domain/quickAsk.test.js` checks earlier PDFs,
+  attachment-only turns, mixed content, and unchanged stored/normal messages.
+- This branch inherits the staging timing restriction below; production must
+  receive only the isolated fix, never a blanket promotion of this source.
+
 ## 2026-10-30 — Ticket expiry notice
 
 The `ticket-key-invalidated` listener now shows the neutral, text-only

@@ -1,5 +1,7 @@
 import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { buildQuickAskMessages } from '../../chat/domain/quickAsk.js';
+import { processMessagesForApi } from '../../chat/domain/messageContent.js';
 
 const browserKeys = ['window', 'location', 'localStorage', 'sessionStorage', 'document'];
 function installBrowser() {
@@ -112,6 +114,35 @@ test('ordinary OpenRouter requests retain direct provider URL and bearer key', a
     assert.equal(transport.calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
     assert.equal(transport.calls[0].init.headers.Authorization, 'Bearer ephemeral');
     assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, 30000);
+});
+
+test('Quick Ask streams without PDF parsing while normal chat still sends the PDF', async () => {
+    const history = [{ role: 'user', content: '', files: [{
+        name: 'paper.pdf', type: 'application/pdf', detectedType: 'pdf',
+        dataUrl: 'data:application/pdf;base64,cGRm'
+    }] }, { role: 'assistant', content: 'The variable u describes velocity.' }];
+    const normalMessages = processMessagesForApi(history, 'model');
+    const quickMessages = buildQuickAskMessages(normalMessages, 'u');
+    const bodies = [];
+    const api = new OpenRouterAPI({ networkTransport: {
+        async fetchWithRetry(_url, init) {
+            bodies.push(JSON.parse(init.body));
+            return transportWithSseEvents([
+                { choices: [{ delta: { content: 'A velocity field.' }, finish_reason: 'stop' }] }
+            ]).fetchWithRetry();
+        }
+    } });
+    const chunks = [];
+    await api.streamCompletion(quickMessages, 'model', 'test-key', chunk => chunks.push(chunk));
+    await api.streamCompletion(normalMessages, 'model', 'test-key', () => {});
+
+    assert.deepEqual(chunks, ['A velocity field.']);
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0].plugins, undefined);
+    assert.equal(bodies[0].messages.flatMap(message => message.content).some(part => part?.type === 'file'), false);
+    assert.equal(bodies[0].messages.at(-1).content, 'Briefly explain "u" in context.');
+    assert.deepEqual(bodies[1].plugins, [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }]);
+    assert.ok(bodies[1].messages.flatMap(message => message.content).some(part => part?.file?.filename === 'paper.pdf'));
 });
 
 test('OpenRouter completions, titles and streams use one app label across deployment origins', async () => {
