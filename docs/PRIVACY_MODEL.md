@@ -19,9 +19,9 @@ what they asked. The user obtains an ephemeral API key through blind signatures
 and uses it to talk directly to the inference provider.
 
 These protocol guarantees do not hide network metadata. The command-line
-client defaults to direct HTTPS, which reveals the source IP to destination
-services and can let them correlate otherwise unlinkable requests. Its optional
-Wisp relay provides network-layer separation; see [Local API clients](#local-api-clients).
+clients (`oa-clientd` and `zkapi-clientd`) default to direct HTTPS, which reveals
+the source IP to destination services and can let them correlate otherwise
+unlinkable requests. Their optional Wisp relay or Tor routing (`relay_url`) provides network-layer separation; see [Local API clients](#local-api-clients).
 
 Optional Google or username ticket-wallet sync adds a stable account metadata
 surface that is not covered by the strongest form of this claim. The org still
@@ -32,8 +32,8 @@ for username accounts it knows the chosen stable pseudonym. Users requiring
 strict identity-unlinkability at the metadata layer must use the anonymous or
 random account-number flow.
 
-The command-line daemon also deliberately groups nearby requests onto one
-OpenRouter credential: its default fixed reuse window is 60 seconds. Calls using
+Outside Tor, the command-line daemons also deliberately group nearby requests onto one
+OpenRouter credential: the default fixed reuse window is 60 seconds. Calls using
 the same key are linkable by the provider, including calls from unrelated chats
 or different local clients. The CLI therefore does not claim cross-request or
 cross-chat unlinkability within that window. The configurable
@@ -63,8 +63,9 @@ link them across sessions. See blog post
 
 ### Local API clients
 
-The command-line client has moved to
-[zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd) in `OpenAnonymity/zkapi` and now supports only zkAPI private
+Two local OpenAI-compatible clients exist. `oa-clientd`, described below, is paid
+with an OA account's inference tickets. The zkAPI client is
+[zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd) in `OpenAnonymity/zkapi` and supports only zkAPI private
 ETH balances. Its [privacy and recovery boundaries](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd/docs/PRIVACY.md)
 describe local authentication, direct HTTPS and optional relay metadata,
 bounded ephemeral-key reuse, financial activity logs, and transaction consent.
@@ -77,9 +78,66 @@ within the reuse window linkable by the provider. Wallet funding and withdrawal
 remain public Ethereum activity. No deployed endpoint or protocol is changed by
 the repository move.
 
+`oa-clientd` is this repository's local OpenAI-compatible API, paid with an OA
+account's inference tickets. Its source, build and full guide are in
+[`oa-clientd/`](../oa-clientd/README.md); the guide's Privacy, revocation and Files
+sections are the user-facing statement of the limits summarized here. It defaults
+to a loopback-only, key-free inference API, prompts go directly from it to the
+inference provider, direct HTTPS reveals this computer's IP, and outside Tor, calls
+within its key reuse window can share a provider key and are linkable by the provider.
+
 The historical dual-mode OA Chat daemon and its ticket privacy analysis remain
 in [the pre-migration source](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md). This web app's ticket
 privacy model below continues to apply to the browser.
+
+#### Account tickets on a local daemon
+
+Authorizing `oa-clientd` needs a browser approval and backend routes that are
+deployed only on OA staging; this branch's web app does not implement them, and
+against a deployment without them the daemon's setup stops before sending any
+account credential. The protocol and rollout are in
+[Authorizing oa-clientd](DAEMON_AUTHORIZATION.md). Where it is available:
+
+`oa-clientd` is another device on an account's encrypted wallet. The org receives
+only ciphertext it cannot open: the approving browser seals the sync key to a public
+key from the URL fragment, never from the org, and the wallet stays opaque blobs.
+Approval needs the code shown in the terminal, a click and a passkey; a link alone
+approves nothing.
+
+Account traffic and anonymous traffic use separate HTTP clients. Finalized tickets, keys
+and prompts carry no account credential, and prompts go directly to the provider.
+Redemption never triggers a sync, and sync never redeems. A daemon redeems only on the
+dedicated `/api/request_key/nonce`, with no fallback, under a random `X-OA-Redemption-Nonce`
+that scopes the org's replay; it is not derived from the account or wallet, so a browser that
+selects the same ticket cannot receive that key. Browsers stay on `/api/request_key`, send
+no nonce and keep their exact-batch replay recovery. Encrypted ticket leases only make
+clients avoid each other: they are not custody or a security boundary. A browser with lease
+support (staging) spends leased tickets last; a browser without it, including this branch's
+web app, ignores them, and the org's single-spend check decides either way.
+
+**What this adds.** A daemon syncs in the background whether or not a browser is open, so
+the org sees authenticated sync timing and ciphertext sizes more continuously than from
+an occasional browser session, and can attempt to correlate them with redemption. This is
+the Google and username tradeoff in section 5, applied to a long-running client; it is not
+the identity-free flow.
+
+**Visible as a class.** Daemon redemptions carry a fixed User-Agent and a nonce header that
+browsers do not send, and daemon sessions are marked, so while few people use oa-clientd a
+daemon redemption narrows to those accounts, even over Tor. This does not link a specific
+ticket to its issuance.
+
+**Keys on disk, revocation and recovery.** The sync key, session tokens and ticket replica
+are on that computer, protected by owner-only file permissions, not by a passphrase or the
+OS keychain: anyone who can read the profile can spend its tickets. The daemon's session is
+limited to the encrypted sync store; it cannot reach billing, the keyring or account
+settings. `oa-clientd logout` syncs, releases its lease, revokes the session and erases the
+local secrets, and refuses to erase unsynced spends unless forced. Revoking it from a
+signed-in browser (staging) stops its sync and makes it erase its sync key and tokens on its
+next sync, keeping its wallet file so unsynced spends are not lost. The wallet key does not
+rotate, so a revoked or lost computer keeps the key and any tickets it already copied; revoke
+it and spend or move those tickets. An interrupted redemption is recovered exactly: tickets
+and the nonce are reserved on disk before the first send, and only a later request at that
+price resends them.
 
 ### 1. Ticket issuance (blind signatures)
 

@@ -1,3 +1,29 @@
+## 2026-11-02: oa-clientd source on main (web app unchanged)
+
+- `oa-clientd/` is the canonical source of the local ticket daemon, a Go module
+  `github.com/OpenAnonymity/oa-chat/oa-clientd`, byte-identical to staging revision
+  `23e7444` (`cmd/oa-clientd`, `internal/oa/*`, `pkg/*`, packaging, build script, guide
+  and `DEVELOPMENT.md`). It was ported alone: no staging web, build, lock or deployment
+  file came with it, and `chat/` is unchanged. `.vercelignore` already keeps it out of
+  the web deployment.
+- The browser approval (`#oa-daemon=`, `#oa-daemon-devices`, ticket leases) and its
+  backend routes exist only on staging. [DAEMON_AUTHORIZATION.md](DAEMON_AUTHORIZATION.md)
+  is the protocol and rollout reference and links that revision's browser source. Do not
+  describe this branch's web app or production as approving daemons until the browser
+  side is ported on its own and the backend runbook has been followed in production.
+  Against a deployment without `/auth/daemon/start`, setup stops with a clear error.
+- The six `pkg/` packages (`activity`, `cover`, `delegatemcp`, `relay`, `rewriter`,
+  `server`) are a public API: `zkapi-clientd` imports them by an immutable pseudo-version
+  pin of a commit on this branch. `TestModuleCannotReachAPaymentWallet` fails if this module
+  names `github.com/ethereum/` or `OpenAnonymity/zkapi`. Keep `pkg/` defaults (labels,
+  `/v1/zkapi/delegate`, wording): its other importer relies on them.
+- `test/fixtures/daemon-auth-v1.json` is present only so
+  `TestBrowserVectorMatchesTheWebAppFixture` compares it with the Go copy
+  `internal/oa/account/testdata/daemon-auth-v1.json`; no browser code here reads it.
+  Regenerate both together.
+- `npm test` does not run Go. Run `go vet ./...` and `go test -race ./...` in `oa-clientd/`
+  where loopback listening is allowed (tests fail at `httptest.NewServer` otherwise).
+
 ## 2026-10-15: One version pill, in balance details only
 
 - The System Panel no longer shows the version pill, its `?` or any help panel;
