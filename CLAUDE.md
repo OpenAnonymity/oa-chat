@@ -75,6 +75,8 @@ npm run fonts:sync
 - `chat/vendor/`: Marked, KaTeX (+ fonts), Highlight.js, libcurl.js, hash-wasm, html2pdf
 - `chat/fonts/`: self-hosted Google Fonts (`fonts.css` + WOFF2 files, managed via `scripts/sync-fonts.mjs`)
 
+**Local daemon (`oa-clientd/`):** a separate Go module, `github.com/OpenAnonymity/oa-chat/oa-clientd`, paid with account tickets and authorized from this app (`docs/DAEMON_AUTHORIZATION.md`). `cmd/oa-clientd` and `internal/oa/` are its own; `pkg/` (activity, cover, delegatemcp, relay, rewriter, server) is a public API other modules import by pinned pseudo-version. It must not import a payment client or Ethereum library (a test pins this). Guide: `oa-clientd/README.md`; rules: `oa-clientd/DEVELOPMENT.md`; tests: `cd oa-clientd && go test -race ./...` (not part of `npm test`).
+
 **Additional Modules (in development):**
 - `embeddings/`: Text embedding service with pluggable backends
 - `vector/`: Vector store with IndexedDB backend and Orama integration

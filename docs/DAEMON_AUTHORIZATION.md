@@ -1,8 +1,9 @@
 # Authorizing oa-clientd
 
 `oa-clientd` is a local daemon that spends an OA account's inference tickets. This
-page is the browser side of authorizing one. The daemon's own guide is
-`zkapi-clientd/docs/CLI_OA.md` in `OpenAnonymity/zkapi`.
+page is the browser side of authorizing one. The daemon's source and its own guide
+are in this repository: [oa-clientd/README.md](../oa-clientd/README.md), with source
+layout in [oa-clientd/DEVELOPMENT.md](../oa-clientd/DEVELOPMENT.md).
 
 ## Flow
 
@@ -40,7 +41,8 @@ page is the browser side of authorizing one. The daemon's own guide is
 
 Envelope: P-256 ECDH, HKDF-SHA256 (salt: SHA-256 of the transaction; info: label plus
 both public keys), AES-256-GCM with the transaction in the additional data.
-`test/fixtures/daemon-auth-v1.json` pins the bytes, and the Go tests open it.
+`test/fixtures/daemon-auth-v1.json` pins the bytes. The Go tests open their copy,
+`oa-clientd/internal/oa/account/testdata/daemon-auth-v1.json`, and fail when the two differ.
 
 ## Boundaries
 

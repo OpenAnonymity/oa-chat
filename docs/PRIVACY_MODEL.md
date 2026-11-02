@@ -35,9 +35,9 @@ what they asked. The user obtains an ephemeral API key through blind signatures
 and uses it to talk directly to the inference provider.
 
 These protocol guarantees do not hide network metadata. The command-line
-client defaults to direct HTTPS, which reveals the source IP to destination
+client, `oa-clientd`, defaults to direct HTTPS, which reveals the source IP to destination
 services and can let them correlate otherwise unlinkable requests. Its optional
-Wisp relay provides network-layer separation; see [Local API clients](#local-api-clients).
+Wisp relay or Tor routing (`relay_url`) provides network-layer separation; see [Local API clients](#local-api-clients).
 
 Optional Google or username ticket-wallet sync adds a stable account metadata
 surface that is not covered by the strongest form of this claim. The org still
@@ -48,7 +48,7 @@ for username accounts it knows the chosen stable pseudonym. Users requiring
 strict identity-unlinkability at the metadata layer must use the anonymous or
 random account-number flow.
 
-The command-line daemon also deliberately groups nearby requests onto one
+Outside Tor, the command-line daemon also deliberately groups nearby requests onto one
 OpenRouter credential: its default fixed reuse window is 60 seconds. Calls using
 the same key are linkable by the provider, including calls from unrelated chats
 or different local clients. The CLI therefore does not claim cross-request or
@@ -79,25 +79,19 @@ link them across sessions. See blog post
 
 ### Local API clients
 
-The command-line client has moved to
-[zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd) in `OpenAnonymity/zkapi` and now supports only zkAPI private
-ETH balances. Its [privacy and recovery boundaries](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd/docs/PRIVACY.md)
-describe local authentication, direct HTTPS and optional relay metadata,
-bounded ephemeral-key reuse, financial activity logs, and transaction consent.
-
-The local client defaults to a loopback-only, key-free inference API. Admin and
-wallet routes remain separately authenticated. Prompts go directly from the
-client to the inference provider, never through the wallet/prover helper or OA
-backend. Direct HTTPS reveals source IP; key reuse intentionally makes requests
-within the reuse window linkable by the provider. Wallet funding and withdrawal
-remain public Ethereum activity. No deployed endpoint or protocol is changed by
-the repository move.
+`oa-clientd` is this repository's local OpenAI-compatible API, paid with an OA
+account's inference tickets. Its source, build and full guide are in
+[`oa-clientd/`](../oa-clientd/README.md); the guide's Privacy, revocation and Files
+sections are the user-facing statement of the limits summarized here. It defaults
+to a loopback-only, key-free inference API, prompts go directly from it to the
+inference provider, direct HTTPS reveals this computer's IP, and calls within its
+key reuse window can share a provider key and are linkable by the provider.
 
 The historical dual-mode OA Chat daemon and its ticket privacy analysis remain
 in [the pre-migration source](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md). This web app's ticket
 privacy model below continues to apply to the browser.
 
-### oa-clientd: account tickets on a local daemon
+#### Account tickets on a local daemon
 
 `oa-clientd` is another device on an account's encrypted wallet, authorized in the
 browser as described in [Authorizing oa-clientd](DAEMON_AUTHORIZATION.md). The org

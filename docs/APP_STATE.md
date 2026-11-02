@@ -1,3 +1,31 @@
+## 2026-11-02: oa-clientd source lives in this repository
+
+- `oa-clientd/` is the canonical source of the daemon, a Go module
+  `github.com/OpenAnonymity/oa-chat/oa-clientd`: `cmd/oa-clientd`, `internal/oa/*`,
+  `packaging/systemd/oa-clientd.service`, `scripts/build-oa-clientd.sh`, `LICENSE`, the
+  user guide `README.md` and `DEVELOPMENT.md`. It came from `zkapi-clientd/` in
+  `OpenAnonymity/zkapi` (staging base `84f7f61`) as a move with import-path changes; no
+  daemon behavior changed. The only user-visible string change is the help text's pointer,
+  now `README.md` instead of `docs/CLI_OA.md`.
+- The six payment-independent packages (`activity`, `cover`, `delegatemcp`, `relay`,
+  `rewriter`, `server`) moved with their tests to `oa-clientd/pkg/` and are imported from
+  there by the zkAPI client too, through an immutable pseudo-version pin. The dependency
+  points into this module only: `TestModuleCannotReachAPaymentWallet` fails if any source,
+  `go.mod` or `go.sum` here names `github.com/ethereum/` or `OpenAnonymity/zkapi`, and Go's
+  `internal/` rule keeps `internal/oa` out of other modules. A change to `pkg/` reaches the
+  other module only when it moves its pin.
+- `pkg/` keeps its existing defaults (labels, `/v1/zkapi/delegate`, wording) because its
+  other caller relies on them; `cmd/oa-clientd` sets its own. Do not "clean up" those
+  defaults without moving the other module's pin and running its tests.
+- The Go copy of the envelope vector, `internal/oa/account/testdata/daemon-auth-v1.json`,
+  must equal `test/fixtures/daemon-auth-v1.json`; a Go test compares them in a checkout.
+- `npm test` does not run Go. `.vercelignore` admits only web-app paths, so `oa-clientd/` is
+  never deployed. The module's tests start loopback servers, so a sandbox that forbids
+  listening fails them at `httptest.NewServer`; run them where loopback binding works.
+- The guide states daemon authorization is being introduced on OA staging first; setup
+  against a deployment without `/auth/daemon/start` stops with a clear error. Do not
+  describe production as supporting it until the backend runbook has been followed there.
+
 ## 2026-10-31: Authorizing oa-clientd (staging)
 
 - `#oa-daemon=` opens an approval dialog after ordinary sign-in; see

@@ -4,10 +4,10 @@ A ChatGPT-like AI chat app that implements [unlinkable inference](https://openan
 
 The web app runs entirely in the browser. Each session uses a fresh ephemeral access key obtained via blind signatures, so no party — including the OA system and the inference provider — can link your identity to your inference activity or link sessions to each other.
 
-For Open WebUI and other OpenAI-compatible clients, the command-line daemon
-has moved to [zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd) in `OpenAnonymity/zkapi`.
-It provides a local streaming API funded with private ETH, with a short mainnet
-quick start. Ticket support remains in this web app; the new daemon is zkAPI-only.
+For Open WebUI and other OpenAI-compatible clients, [`oa-clientd`](oa-clientd/README.md)
+is a local streaming API paid with your OA account's inference tickets. It is a
+Go module in [`oa-clientd/`](oa-clientd/), authorized from this web app; its guide
+covers setup, commands, privacy limits and building.
 
 ### Highlights
 - **Unlinkable inference**: Every session uses an ephemeral, blind-signature-backed access key. The inference provider sees anonymous requests with no way to identify the user behind them or link them across sessions.

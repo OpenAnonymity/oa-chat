@@ -95,6 +95,7 @@ The app runs entirely in the browser and is organized as ES modules:
 - `fonts/`: Self-hosted Google Fonts (`fonts.css` + WOFF2 files). Managed by `scripts/sync-fonts.mjs`.
 - `img/`: Provider and app icons.
 - `README.md`: Project overview and quick-start guide.
+- `oa-clientd/`: The local OpenAI-compatible daemon paid with account tickets, a separate Go module (`github.com/OpenAnonymity/oa-chat/oa-clientd`) with its own guide ([oa-clientd/README.md](oa-clientd/README.md)) and maintenance rules ([oa-clientd/DEVELOPMENT.md](oa-clientd/DEVELOPMENT.md)). Its `pkg/` packages are a public API imported by other modules by pinned pseudo-version, and nothing in the module may import a payment client or Ethereum library. Not deployed with the web app.
 
 ## Build, Test, and Development Commands
 The app is still HTML-first for development, but production builds are bundled with esbuild and minified with terser.
@@ -131,7 +132,7 @@ npm run fonts:sync       # sync Google Fonts into chat/fonts (optional URL arg)
 - Keep code small and modular; avoid duplicating functionality already encapsulated in components/services.
 
 ## Testing Guidelines
-`npm test` runs the automated unit suites (`scripts/run-unit-tests.mjs`; `pretest` applies the zkAPI SDK patches). There is no automated UI or end-to-end harness, and this repository has no CI configuration, so nothing runs `npm test` or any check for you: run them before merging. Manually verify:
+`npm test` runs the automated unit suites (`scripts/run-unit-tests.mjs`; `pretest` applies the zkAPI SDK patches). It does not run the Go module: for `oa-clientd/` run `go vet ./...` and `go test -race ./...` there (the tests need loopback listening). There is no automated UI or end-to-end harness, and this repository has no CI configuration, so nothing runs `npm test` or any check for you: run them before merging. Manually verify:
 - Sessions: create/switch/delete; titles auto-generate on first user message; `updatedAt` ordering in `Sidebar`; delete history modal.
 - Messages: Markdown + LaTeX rendering (block/inline); streaming updates; token counts finalize; reasoning trace streaming/final rendering; citations + inline link previews; reliable auto-scroll.
 - Model selection: modal open/close, fuzzy search, pinned/disabled section, selection for both pending (no session yet) and active session.
