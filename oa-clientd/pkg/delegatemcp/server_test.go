@@ -57,7 +57,12 @@ func (f *fakeDaemon) count() int {
 
 func connect(t *testing.T, daemon http.RoundTripper, defaultModel string) *mcp.ClientSession {
 	t.Helper()
-	s, err := NewServer(Options{Listen: "127.0.0.1:43133", APIKey: testAPIKey, DefaultModel: defaultModel, Version: "test", Transport: daemon})
+	return connectProduct(t, daemon, defaultModel, nil)
+}
+
+func connectProduct(t *testing.T, daemon http.RoundTripper, defaultModel string, product *Product) *mcp.ClientSession {
+	t.Helper()
+	s, err := NewServer(Options{Listen: "127.0.0.1:43133", APIKey: testAPIKey, DefaultModel: defaultModel, Version: "test", Transport: daemon, Product: product})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +119,45 @@ func TestToolsAreListedWithAccurateAnnotationsAndClosedSchemas(t *testing.T) {
 		if strings.Contains(string(schema), `"`+field+`"`) {
 			t.Fatalf("schema exposes %s", field)
 		}
+	}
+}
+
+func listedModelDescription(t *testing.T, session *mcp.ClientSession, delegateTool string) string {
+	t.Helper()
+	tools, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name != delegateTool {
+			continue
+		}
+		data, _ := json.Marshal(tool.InputSchema)
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(data, &schema); err != nil {
+			t.Fatal(err)
+		}
+		return schema.Properties["model"].Description
+	}
+	t.Fatalf("%s is not listed", delegateTool)
+	return ""
+}
+
+// The model argument names the list tool of the product being served; the
+// default product keeps its original wording exactly.
+func TestDelegateSchemaNamesTheProductsListTool(t *testing.T) {
+	const legacy = "Optional model ID from zkapi_list_models (for example a provider/model ID). Omit to use the daemon's default model."
+	if got := listedModelDescription(t, connect(t, &fakeDaemon{}, ""), DelegateTool); got != legacy {
+		t.Fatalf("default model description = %q", got)
+	}
+	product := &Product{Label: "x", Binary: "x-clientd", ServerName: "x-clientd", ServerTitle: "X", DelegateTool: "x_delegate", ListModelsTool: "x_list_models", DelegatePath: server.OADelegatePath}
+	got := listedModelDescription(t, connectProduct(t, &fakeDaemon{}, "", product), "x_delegate")
+	if got != "Optional model ID from x_list_models (for example a provider/model ID). Omit to use the daemon's default model." {
+		t.Fatalf("product model description = %q", got)
 	}
 }
 

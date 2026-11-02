@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"go/parser"
 	"go/token"
@@ -17,7 +18,9 @@ import (
 	"github.com/OpenAnonymity/oa-chat/oa-clientd/internal/oa/oatest"
 	"github.com/OpenAnonymity/oa-chat/oa-clientd/internal/oa/profile"
 	"github.com/OpenAnonymity/oa-chat/oa-clientd/internal/oa/wallet"
+	"github.com/OpenAnonymity/oa-chat/oa-clientd/pkg/delegatemcp"
 	"github.com/OpenAnonymity/oa-chat/oa-clientd/pkg/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func imports(t *testing.T, root string) map[string][]string {
@@ -255,6 +258,35 @@ func TestMCPUsesTheOARouteAndTools(t *testing.T) {
 		if strings.Contains(strings.ToLower(text), "zkapi") {
 			t.Fatalf("zkAPI wording: %s", text)
 		}
+	}
+	// Everything an MCP host is shown: instructions and each listed tool's
+	// name, title, description, annotations and input schema.
+	mcpServer, err := delegatemcp.NewServer(delegatemcp.Options{Listen: "127.0.0.1:8797", APIKey: "k", Version: "test", Product: product})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = mcpServer.Run(ctx, serverTransport) }()
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-host", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	tools, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, _ := json.Marshal(tools.Tools)
+	initialized, _ := json.Marshal(session.InitializeResult())
+	for _, text := range []string{string(listed), string(initialized)} {
+		if strings.Contains(strings.ToLower(text), "zkapi") {
+			t.Fatalf("zkAPI wording in MCP metadata: %s", text)
+		}
+	}
+	if len(tools.Tools) != 2 || !strings.Contains(string(listed), "Optional model ID from oa_list_models") {
+		t.Fatalf("tools = %s", listed)
 	}
 	var help bytes.Buffer
 	if err := runMCP(context.Background(), t.TempDir(), []string{"--help"}, nil, &help); err != nil || !strings.Contains(help.String(), "oa_delegate") {

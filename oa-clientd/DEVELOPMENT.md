@@ -26,20 +26,21 @@ inside the `OpenAnonymity/oa-chat` repository. The user guide is
 
 ## `pkg/` is a public API
 
-The six `pkg/` packages are payment-independent and are imported by other
-modules as well as by this command; the zkAPI client in `OpenAnonymity/zkapi` is
-one. Rules:
+The six `pkg/` packages are payment-independent. This command imports them, and
+other modules import them too. Rules:
 
 - Dependencies point into this module only. Nothing here imports another
-  OpenAnonymity client, an Ethereum library or a payment wallet:
-  `TestModuleCannotReachAPaymentWallet` (`cmd/oa-clientd`) fails if any source,
-  `go.mod` or `go.sum` names `github.com/ethereum/` or `OpenAnonymity/zkapi`.
+  client, an Ethereum library or a payment wallet:
+  `TestModuleCannotReachAPaymentWallet` in
+  [cmd/oa-clientd/main_test.go](cmd/oa-clientd/main_test.go) fails if any source,
+  `go.mod` or `go.sum` names one of the module prefixes it lists.
 - Account, ticket and wallet code stays in `internal/oa`, which the Go toolchain
   keeps out of other modules' reach.
-- `pkg/` keeps the defaults its existing callers rely on (product labels, the
-  default delegation route, error wording); a caller sets its own, as
-  `cmd/oa-clientd` does for the `oa` label, `/v1/oa/delegate` and its MCP tools.
-  Changing a default changes every importer.
+- `pkg/` keeps the defaults its existing importers rely on (product labels, the
+  default delegation route and MCP tool names, error wording). A caller sets its
+  own through options, as `cmd/oa-clientd` does for the `oa` label,
+  `/v1/oa/delegate`, its MCP tools and their wording. Changing a default changes
+  every importer.
 - Importers pin this module by an immutable pseudo-version of a pushed commit
   (`go get github.com/OpenAnonymity/oa-chat/oa-clientd@<commit>`). There is no
   `replace` directive or `go.work` in shipped source. A change to `pkg/` reaches an
@@ -54,10 +55,12 @@ go test -race ./...
 ```
 
 Most packages start loopback `httptest` servers, so the tests need permission to
-listen on `127.0.0.1`/`::1`. Opt-in live tests stay off unless their variables are
-set: `OA_LIVE_RELAY_TEST` and `OA_LIVE_RELAY_URL` (`pkg/relay`), and
-`ZKAPI_TEST_REWRITER`, `ZKAPI_EVAL_REWRITER` and `ZKAPI_EVAL_DEFAULT`
-(`pkg/rewriter`; the names are kept from the packages' history).
+listen on `127.0.0.1`/`::1`. Opt-in live tests stay off unless their environment
+variables are set; the variables are read in
+[pkg/relay/relay_test.go](pkg/relay/relay_test.go),
+[pkg/rewriter/rewriter_test.go](pkg/rewriter/rewriter_test.go),
+[pkg/rewriter/transcript_live_test.go](pkg/rewriter/transcript_live_test.go) and
+[pkg/rewriter/instruction_eval_test.go](pkg/rewriter/instruction_eval_test.go).
 
 `internal/oa/account/testdata/daemon-auth-v1.json` is a copy of the web app's
 `test/fixtures/daemon-auth-v1.json`, so the module tests stand alone;
@@ -70,5 +73,10 @@ two differ. Regenerate both together.
 OA_CLIENTD_ENV=staging scripts/build-oa-clientd.sh 0.1.0-staging.1 /path/outside/the/repository
 ```
 
-Write artifacts outside the repository; nothing under `oa-clientd/` is deployed
+Each tarball ships `README.md` and `DEVELOPMENT.md`. Links between them stay
+relative; links to source files and to the web app's `docs/` are rewritten to
+`https://github.com/OpenAnonymity/oa-chat/blob/<commit>/...`, where `<commit>` is
+`OA_CLIENTD_SOURCE_REV` or, by default, this checkout's `HEAD`. Build from a
+committed tree and push that commit before publishing, or those links will not
+open. Write artifacts outside the repository; nothing under `oa-clientd/` is deployed
 with the web app (`.vercelignore` admits only the web app's paths).

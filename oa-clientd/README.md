@@ -252,9 +252,11 @@ OA_CLIENTD_ENV=staging scripts/build-oa-clientd.sh 0.1.0-staging.1 /path/to/arti
 
 The script cross-compiles `darwin/{arm64,amd64}` and `linux/{amd64,arm64}` with
 `CGO_ENABLED=0` and writes one tarball per target plus a `.sha256` file to the
-output directory. Each tarball holds `oa-clientd`, `LICENSE` and this `README.md`;
-Linux tarballs also hold `oa-clientd.service`, a systemd user unit that runs
-`/usr/bin/oa-clientd serve` (edit `ExecStart` if you install elsewhere). Without
+output directory. Each tarball holds `oa-clientd`, `LICENSE`, this `README.md` and
+`DEVELOPMENT.md`; in the tarball, links to other repository files point at the
+source commit the archive was built from. Linux tarballs also hold
+`oa-clientd.service`, a systemd user unit that runs `/usr/bin/oa-clientd serve`
+(edit `ExecStart` if you install elsewhere). Without
 `OA_CLIENTD_ENV`, setup defaults to OA production. Package-manager formulas are not
 part of this source tree.
 

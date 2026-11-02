@@ -5,8 +5,16 @@
   `packaging/systemd/oa-clientd.service`, `scripts/build-oa-clientd.sh`, `LICENSE`, the
   user guide `README.md` and `DEVELOPMENT.md`. It came from `zkapi-clientd/` in
   `OpenAnonymity/zkapi` (staging base `84f7f61`) as a move with import-path changes; no
-  daemon behavior changed. The only user-visible string change is the help text's pointer,
-  now `README.md` instead of `docs/CLI_OA.md`.
+  daemon behavior changed. User-visible wording changes: the help text's pointer, now
+  `README.md` instead of `docs/CLI_OA.md`; and the `model` description in the MCP delegate
+  tool's input schema, which named the other client's list tool for every product. It now
+  names the served product's own (`oa_list_models` for OA); the default product's text is
+  unchanged. `TestMCPUsesTheOARouteAndTools` lists the real MCP metadata and fails on any
+  zkAPI wording.
+- Release tarballs ship `README.md` and `DEVELOPMENT.md`; `build-oa-clientd.sh` rewrites their
+  `../docs/...` and source-file links to `github.com/OpenAnonymity/oa-chat/blob/<commit>/...`
+  (`OA_CLIENTD_SOURCE_REV`, default `HEAD`), so build from a pushed commit. Public `oa-clientd/*.md`
+  names no other product; keep it that way and record source history here instead.
 - The six payment-independent packages (`activity`, `cover`, `delegatemcp`, `relay`,
   `rewriter`, `server`) moved with their tests to `oa-clientd/pkg/` and are imported from
   there by the zkAPI client too, through an immutable pseudo-version pin. The dependency
