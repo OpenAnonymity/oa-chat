@@ -2485,7 +2485,6 @@ export default class ChatInput {
 
             const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
             const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
-            const tooltipBeta = memoryButton.querySelector('[data-memory-tooltip-beta]');
             if (tooltipText) {
                 tooltipText.textContent = memoryFeatureEnabled
                     ? 'Use memories in replies'
@@ -2493,9 +2492,6 @@ export default class ChatInput {
             }
             if (tooltipDetail) {
                 tooltipDetail.classList.toggle('hidden', !memoryFeatureEnabled);
-            }
-            if (tooltipBeta) {
-                tooltipBeta.classList.toggle('hidden', !memoryFeatureEnabled);
             }
         }
     }

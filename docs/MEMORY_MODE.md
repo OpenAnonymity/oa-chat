@@ -8,7 +8,8 @@ This document describes the root `oa-chat` memory-mode integration that reuses
 “Save memories” is the existing global feature switch, default off. Turning
 it on permits background extraction independently of the book toggle. Turning
 it off disables both extraction and retrieval, without deleting saved memories.
-The book tooltip is “Use memories in replies”; turning the book off alone does
+The book tooltip is “Use memories in replies”, with “Double-click to open memory”
+and no Beta badge. Turning the book off alone does
 not stop saving while Save memories is enabled. “Use memories without asking” skips per-message approval only when retrieval is active.
 These labels do not change stored preferences, defaults, or runtime behavior.
 
