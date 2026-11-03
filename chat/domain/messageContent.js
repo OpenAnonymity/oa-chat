@@ -1,3 +1,5 @@
+import { createChartArtifactTranscript, getMessageChartArtifact } from './chartArtifacts.js';
+
 const DEFAULT_MAX_ATTACHED_IMAGES = 2;
 
 function decodeBase64(base64Data) {
@@ -65,6 +67,15 @@ export function processMessagesForApi(messages, currentModelId, options = {}) {
         const isLastUserMessage = i === lastUserIndex;
 
         if (msg.role === 'assistant') {
+            const chart = getMessageChartArtifact(msg);
+            if (chart) {
+                // Replay the rendered chart as the tool call it was, so the
+                // provider sees valid tool ordering and does not re-describe it.
+                const [assistantToolCall, toolResult] = createChartArtifactTranscript(chart, i);
+                assistantToolCall.content = msg.content || null;
+                result.push(assistantToolCall, toolResult);
+                continue;
+            }
             result.push({
                 role: 'assistant',
                 content: msg.content || (msg.images?.length ? '[Generated image]' : '')

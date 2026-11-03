@@ -98,6 +98,10 @@ export const TICKET_RETRY_RATIO = 0.5;
 // does not change behavior unless a session is deliberately configured for it.
 export const COUNCIL_MODE_FEATURE_FLAG = true;
 
+// Client-rendered charts (generative UI, first increment). Off means the
+// request is text-only and stored chart artifacts still render.
+export const CLIENT_CHARTS_FEATURE_FLAG = true;
+
 // Debug logging -- enabled in development (localhost), disabled in production builds.
 // The build script (scripts/build.mjs) replaces __DEV__ with false at build time.
 const __DEV_DEFAULT__ = typeof window !== 'undefined' &&

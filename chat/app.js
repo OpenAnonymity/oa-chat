@@ -97,6 +97,12 @@ import {
 } from './domain/quickAsk.js';
 import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
 import { buildTurnTicketBudget } from './domain/turnTicketBudget.js';
+import {
+    CHART_TOOL_SYSTEM_INSTRUCTIONS,
+    RENDER_CHART_TOOL,
+    extractChartArtifactFromToolCalls,
+    modelSupportsClientTools
+} from './domain/chartArtifacts.js';
 import { toExtensionTicketSnapshot } from './extensions/extensionTicketSnapshot.js';
 import { toExtensionTicketShortage } from './extensions/extensionTicketShortage.js';
 import {
@@ -133,7 +139,7 @@ import {
     hasUsableVerifierApprovalForAccessInfo,
     isVerifierResultApproved
 } from './services/inference/verifiedAccess.js';
-import { COUNCIL_MODE_FEATURE_FLAG, ORG_API_BASE } from './config.js';
+import { CLIENT_CHARTS_FEATURE_FLAG, COUNCIL_MODE_FEATURE_FLAG, ORG_API_BASE } from './config.js';
 import {
     RESPONSE_MODE_SINGLE,
     RESPONSE_MODE_COUNCIL,
@@ -1378,7 +1384,7 @@ class ChatApp {
 
     async streamCompletionWithRuntime(messages, modelId, session, onChunk, onTokenUpdate,
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
-        reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
+        reasoningEnabled, reasoningEffort, requestId = null, kind = 'response', clientToolOptions = null) {
         const id = requestId || this.generateId();
         const timing = kind === 'response' ? requestTiming(controller?.signal, 'single', modelId) : null;
         timing?.setVisible(() => !controller?.signal?.aborted && timingTextVisible(this, session.id, requestId));
@@ -1414,7 +1420,9 @@ class ChatApp {
                 attemptOutput = false;
                 return this.inferenceService.streamCompletion(messages, modelId, session,
                 async (chunk, imageData) => {
-                    if (chunk || imageData?.images?.length) {
+                    // A started tool call is output too: the model is
+                    // generating (and billing), so a later failure is shown, not resent.
+                    if (chunk || imageData?.images?.length || imageData?.toolCallPending) {
                         receivedOutput = true;
                         attemptOutput = true;
                     }
@@ -1449,7 +1457,7 @@ class ChatApp {
                 },
                 reasoningEnabled, reasoningEffort,
                 progress => this.setSessionPendingProgress(session.id, progress),
-                health => this.setInferenceHealth(session.id, id, health), timing);
+                health => this.setInferenceHealth(session.id, id, health), timing, clientToolOptions);
             }, {
                 signal: controller?.signal || null,
                 outputSeen: () => attemptOutput
@@ -7313,6 +7321,35 @@ class ChatApp {
         });
     }
 
+    // Client-rendered tools (charts). Offered only when the feature is on and
+    // the selected catalog entry declares tool support; otherwise the request
+    // is exactly the text-only request it was before.
+    getClientToolOptions(modelEntry) {
+        if (!CLIENT_CHARTS_FEATURE_FLAG || !modelSupportsClientTools(modelEntry)) return null;
+        return { tools: [RENDER_CHART_TOOL], systemInstructions: CHART_TOOL_SYSTEM_INSTRUCTIONS };
+    }
+
+    // Folds a finished response's tool calls into the message: a valid chart
+    // becomes its artifact; an invalid one becomes a visible note, never markup.
+    applyClientToolResult(message, tokenData) {
+        delete message.pendingArtifact;
+        const { artifact, error } = extractChartArtifactFromToolCalls(tokenData?.toolCalls);
+        if (artifact) {
+            message.artifacts = [artifact];
+            delete message.clientToolError;
+            return { hasVisibleOutput: true, error: null };
+        }
+        delete message.artifacts;
+        if (error) {
+            const prefix = message.content?.trim() ? `${message.content.trim()}\n\n` : '';
+            message.content = `${prefix}*The chart could not be shown: ${error}*`;
+            message.clientToolError = error;
+            return { hasVisibleOutput: true, error };
+        }
+        delete message.clientToolError;
+        return { hasVisibleOutput: false, error: null };
+    }
+
     refreshProcessedMessagesIfMemoryOverrideChanged(processedMessages, sourceMessages, modelIdForRequest, memoryGenerationAtProcess, sessionId = this.state?.currentSessionId) {
         const currentGeneration = this.getMemoryApiOverrideRevision(sessionId);
         const shouldRebuild = currentGeneration !== memoryGenerationAtProcess;
@@ -7742,6 +7779,14 @@ class ChatApp {
                     async (chunk, imageData) => {
                         if (turnStopped()) return;
                         if (chunk) stillWorking.arm();
+                        if (imageData?.toolCallPending) {
+                            // The model started a chart; its data streams for a
+                            // while, so the card shows a placeholder meanwhile.
+                            streamingMessage.pendingArtifact = 'chart';
+                            if (firstChunkReceived && this.chatArea && this.isViewingSession(session.id)) {
+                                this.chatArea.showPendingArtifact(streamingMessageId, 'chart');
+                            }
+                        }
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -7770,7 +7815,7 @@ class ChatApp {
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
+                            if (chunk || (imageData && imageData.images) || imageData?.toolCallPending) {
                                 await chatDB.saveMessage(streamingMessage);
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
@@ -7897,15 +7942,26 @@ class ChatApp {
                     },
                     retryReasoningEnabled,
                     retryReasoningEffort,
-                    streamingMessageId
+                    streamingMessageId,
+                    'response',
+                    this.getClientToolOptions(selectedModelEntry)
                 );
 
                 // Save the final message content with token data, reasoning, and citations
                 stillWorking.dispose();
                 this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
+                const clientToolResult = this.applyClientToolResult(streamingMessage, tokenData);
+                if (clientToolResult.hasVisibleOutput && !firstChunkReceived) {
+                    firstChunkReceived = true;
+                    streamingMessage.streamingPending = false;
+                    streamingMessage.streamingPhase = null;
+                    if (this.chatArea && this.isViewingSession(session.id)) {
+                        await this.chatArea.appendMessage(streamingMessage);
+                    }
+                }
                 if (streamingMessage.scrubber) {
-                    streamingMessage.scrubber.redactedResponse = streamedContent;
+                    streamingMessage.scrubber.redactedResponse = streamingMessage.content;
                 }
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
@@ -7957,7 +8013,7 @@ class ChatApp {
                 }
 
                 this.triggerPostTurnMemoryExtraction(session);
-                return { completed: Boolean(streamingMessage.content?.trim() || streamingMessage.images?.length) };
+                return { completed: Boolean(streamingMessage.content?.trim() || streamingMessage.images?.length || streamingMessage.artifacts?.length) };
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
@@ -8690,6 +8746,14 @@ class ChatApp {
                     async (chunk, imageData) => {
                         if (turnStopped()) return;
                         if (chunk) stillWorking.arm();
+                        if (imageData?.toolCallPending) {
+                            // The model started a chart; its data streams for a
+                            // while, so the card shows a placeholder meanwhile.
+                            streamingMessage.pendingArtifact = 'chart';
+                            if (firstChunkReceived && this.chatArea && this.isViewingSession(session.id)) {
+                                this.chatArea.showPendingArtifact(streamingMessageId, 'chart');
+                            }
+                        }
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -8736,7 +8800,7 @@ class ChatApp {
                             }
 
                             // Save message to DB (always) and append to UI (only if viewing this session)
-                            if (chunk || (imageData && imageData.images)) {
+                            if (chunk || (imageData && imageData.images) || imageData?.toolCallPending) {
                                 await chatDB.saveMessage(streamingMessage);
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     await this.chatArea.appendMessage(streamingMessage);
@@ -8868,15 +8932,26 @@ class ChatApp {
                     },
                     submission.reasoningEnabled,
                     submission.reasoningEffort,
-                    streamingMessageId
+                    streamingMessageId,
+                    'response',
+                    this.getClientToolOptions(selectedModelEntry)
                 );
 
                 // Save the final message content with token data, reasoning, and citations
                 stillWorking.dispose();
                 this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
+                const clientToolResult = this.applyClientToolResult(streamingMessage, tokenData);
+                if (clientToolResult.hasVisibleOutput && !firstChunkReceived) {
+                    firstChunkReceived = true;
+                    streamingMessage.streamingPending = false;
+                    streamingMessage.streamingPhase = null;
+                    if (this.chatArea && this.isViewingSession(session.id)) {
+                        await this.chatArea.appendMessage(streamingMessage);
+                    }
+                }
                 if (streamingMessage.scrubber) {
-                    streamingMessage.scrubber.redactedResponse = streamedContent;
+                    streamingMessage.scrubber.redactedResponse = streamingMessage.content;
                 }
                 const rawReasoning = tokenData.reasoning || streamedReasoning || null;
                 // Parse and save the cleaned reasoning
@@ -9764,9 +9839,10 @@ class ChatApp {
         const hasText = typeof snapshot.content === 'string' && snapshot.content.trim().length > 0;
         const hasReasoning = typeof snapshot.reasoning === 'string' && snapshot.reasoning.trim().length > 0;
         const hasImages = Array.isArray(snapshot.images) && snapshot.images.length > 0;
+        const hasArtifacts = Array.isArray(snapshot.artifacts) && snapshot.artifacts.length > 0;
 
         // Ignore empty pending placeholders; they have no user-visible content yet.
-        if (snapshot.streamingPending && !hasText && !hasReasoning && !hasImages) {
+        if (snapshot.streamingPending && !hasText && !hasReasoning && !hasImages && !hasArtifacts) {
             return null;
         }
 
