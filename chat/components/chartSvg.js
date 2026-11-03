@@ -125,7 +125,7 @@ function axes(spec, ticks, scaleY, plotLeft, plotRight, plotTop, plotBottom, ban
     return grid + zero + labels + xTitle + yTitle;
 }
 
-function renderBars(spec) {
+export function chartCartesianLayout(spec) {
     const plotLeft = MARGIN.left;
     const plotRight = WIDTH - MARGIN.right;
     const plotTop = MARGIN.top;
@@ -135,6 +135,15 @@ function renderBars(spec) {
     const lo = ticks[0];
     const hi = ticks[ticks.length - 1];
     const scaleY = value => plotBottom - scaledFraction(value, lo, hi) * (plotBottom - plotTop);
+    return { plotLeft, plotRight, plotTop, plotBottom, scaleY };
+}
+
+function renderBars(spec) {
+    const { plotLeft, plotRight, plotTop, plotBottom, scaleY } = chartCartesianLayout(spec);
+    const { min, max } = valueRange(spec);
+    const ticks = niceTicks(min, max);
+    const lo = ticks[0];
+    const hi = ticks[ticks.length - 1];
     const groups = spec.xLabels.length;
     const groupWidth = (plotRight - plotLeft) / groups;
     const seriesCount = spec.series.length;
@@ -158,19 +167,13 @@ function renderBars(spec) {
         return `<path class="oa-chart-bar" d="${path}" fill="${seriesColor(s)}"><title>${escapeText(title)}</title></path>`;
     }).join('')).join('');
     return `<svg class="oa-chart-svg" viewBox="0 0 ${WIDTH} ${PLOT_HEIGHT}" role="img" aria-label="${escapeText(spec.title)}">` +
-        axes(spec, ticks, scaleY, plotLeft, plotRight, plotTop, plotBottom, bandX) + marks + '</svg>';
+        axes(spec, ticks, scaleY, plotLeft, plotRight, plotTop, plotBottom, bandX) + marks + '<g class="oa-chart-inspection" aria-hidden="true"></g><rect class="oa-chart-hit-area" x="56" y="16" width="568" height="240" fill="transparent"/></svg>';
 }
 
 function renderLines(spec) {
-    const plotLeft = MARGIN.left;
-    const plotRight = WIDTH - MARGIN.right;
-    const plotTop = MARGIN.top;
-    const plotBottom = PLOT_HEIGHT - MARGIN.bottom;
+    const { plotLeft, plotRight, plotTop, plotBottom, scaleY } = chartCartesianLayout(spec);
     const { min, max } = valueRange(spec);
     const ticks = niceTicks(min, max);
-    const lo = ticks[0];
-    const hi = ticks[ticks.length - 1];
-    const scaleY = value => plotBottom - scaledFraction(value, lo, hi) * (plotBottom - plotTop);
     const points = spec.xLabels.length;
     const bandX = i => points === 1 ? (plotLeft + plotRight) / 2 : plotLeft + ((plotRight - plotLeft) * i) / (points - 1);
     const showMarkers = points <= MAX_MARKERS;
@@ -183,7 +186,7 @@ function renderLines(spec) {
         return line + markers;
     }).join('');
     return `<svg class="oa-chart-svg" viewBox="0 0 ${WIDTH} ${PLOT_HEIGHT}" role="img" aria-label="${escapeText(spec.title)}">` +
-        axes(spec, ticks, scaleY, plotLeft, plotRight, plotTop, plotBottom, bandX) + marks + '</svg>';
+        axes(spec, ticks, scaleY, plotLeft, plotRight, plotTop, plotBottom, bandX) + marks + '<g class="oa-chart-inspection" aria-hidden="true"></g><rect class="oa-chart-hit-area" x="56" y="16" width="568" height="240" fill="transparent"/></svg>';
 }
 
 function renderPie(spec) {
@@ -220,7 +223,7 @@ function renderPie(spec) {
             ? `<text class="oa-chart-slice-label" x="${round(cx + labelRadius * Math.cos(mid), 1)}" y="${round(cy + labelRadius * Math.sin(mid), 1)}" text-anchor="middle" dominant-baseline="middle">${Math.round(share * 100)}%</text>`
             : '';
         const title = `${spec.xLabels[i]}: ${value} (${Math.round(share * 1000) / 10}%)`;
-        return `<path class="oa-chart-slice" d="${path}" fill="${seriesColor(i)}"><title>${escapeText(title)}</title></path>${label}`;
+        return `<path class="oa-chart-slice" data-chart-index="${i}" d="${path}" fill="${seriesColor(i)}"><title>${escapeText(title)}</title></path>${label}`;
     }).join('');
     return `<svg class="oa-chart-svg" viewBox="0 0 ${WIDTH} ${height}" role="img" aria-label="${escapeText(spec.title)}">${slices}</svg>`;
 }
@@ -257,7 +260,8 @@ export function renderChartArtifact(artifact, options = {}) {
     const messageId = typeof options.messageId === 'string' ? options.messageId : '';
     return `<figure class="oa-chart-card" data-chart-type="${spec.chartType}"${messageId ? ` data-chart-message-id="${escapeText(messageId)}"` : ''}>` +
         `<figcaption class="oa-chart-title">${escapeText(spec.title)}</figcaption>` +
-        plot + renderLegend(spec) + renderTable(spec) +
+        `<div class="oa-chart-plot" tabindex="0" role="group" aria-label="${escapeText(spec.title)}. Use Left and Right arrow keys to explore values; Escape to dismiss." data-chart-spec="${escapeText(JSON.stringify(spec))}">` +
+        plot + '<div class="oa-chart-tooltip" role="status" aria-live="polite" aria-atomic="true" hidden></div></div>' + renderLegend(spec) + renderTable(spec) +
         `<span hidden data-chart-copy-text="${escapeText(formatChartArtifactText(artifact))}"></span></figure>`;
 }
 

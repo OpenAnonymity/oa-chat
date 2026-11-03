@@ -81,7 +81,7 @@ test('every string from the spec is escaped and nothing from it reaches an attri
     assert.doesNotMatch(html, /<script>/);
     assert.doesNotMatch(html, /<img /);
     // Every '<' in the output opens one of our own tags; none comes from the spec.
-    for (const tag of html.match(/<\/?[a-zA-Z][^\s>\/]*/g)) assert.ok(/^<\/?(figure|figcaption|svg|line|text|path|title|ul|li|span|details|summary|div|table|thead|tbody|tr|th|td)$/.test(tag), tag);
+    for (const tag of html.match(/<\/?[a-zA-Z][^\s>\/]*/g)) assert.ok(/^<\/?(figure|figcaption|svg|g|rect|line|text|path|title|ul|li|span|details|summary|div|table|thead|tbody|tr|th|td)$/.test(tag), tag);
     assert.ok(html.includes('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;'));
 });
 

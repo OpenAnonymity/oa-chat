@@ -19,6 +19,7 @@ import { resolveProvider, resolveProviderFromModelReference } from '../services/
 import { renderMathContent } from '../services/mathRendering.js';
 import { getProviderIcon } from '../services/providerIcons.js';
 import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
+import { installChartInteractions } from './chartInteractions.js';
 import { getMessageChartArtifact, getMessageCopyText } from '../domain/chartArtifacts.js';
 
 export default class ChatArea {
@@ -73,6 +74,7 @@ export default class ChatArea {
             activeRequestId: 0,
             requestInFlight: false
         };
+        if (typeof document !== 'undefined') installChartInteractions(document);
         this.setupEventListeners();
     }
 

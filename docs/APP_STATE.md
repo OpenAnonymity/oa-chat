@@ -1,3 +1,11 @@
+## 2026-11-03 — Interactive chart values
+
+Line/bar charts now inspect the nearest category with exact values for all series,
+a dashed guide and active line points. Pie slices, touch taps and keyboard navigation
+share the same inspector. One document delegate covers dynamic charts and Quick Ask;
+responsive narrow cards place the tooltip below the plot. Nothing is persisted or
+sent. See [CLIENT_CHARTS.md](CLIENT_CHARTS.md).
+
 ## 2026-11-03 — Chart Copy and request-path parity
 
 Copy on chart-only replies now includes title/units/exact table values. Ticket and

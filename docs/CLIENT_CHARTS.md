@@ -70,7 +70,7 @@ own chart; Council sees the chart data when comparing the lane responses.
 
 `chat/components/chartSvg.js` is dependency-free: the validated spec in, a
 `<figure class="oa-chart-card">` out with the SVG, a legend for two or more
-series, native `<title>` hover text per mark and a "Show data" table. Every
+series, an interactive exact-value tooltip and a "Show data" table. Every
 string is escaped there. Colors are CSS custom properties
 `--oa-chart-1..8` in `styles.css`, stepped separately for `.dark`. The
 template (`MessageTemplates.js`) puts the chart after the text bubble and
@@ -123,3 +123,18 @@ existing temporary answer panel; it does not add them to the saved transcript.
 
 A chart tool fragment counts as visible output for retry safety. An interrupted
 chart request is never silently resent merely because it has no prose yet.
+
+## Interactive inspection (2026-11-03)
+
+Hover anywhere in a line/bar plot to select the nearest category. A dashed guide
+and line markers accompany an HTML tooltip with every series name and exact value,
+plus the y-axis unit label. Dense lines work even when static markers are omitted.
+Pie slices expose their category and value. Tab focuses one chart; Left/Right and
+Home/End explore categories, Escape dismisses. Touch taps select without capturing
+scroll gestures. Narrow cards put the tooltip below the plot so values stay readable.
+
+`chartInteractions.js` delegates once per document, including restored, streamed,
+Parallel/Council and Quick Ask charts. Data is validated again on first interaction;
+text is inserted with textContent, never HTML. The feature adds no dependency,
+network call, persistence, or telemetry. Tooltips are hidden in print; Show data
+and chart copying remain available independently.
