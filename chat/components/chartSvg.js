@@ -48,16 +48,33 @@ export function niceTicks(min, max, count = 5) {
         const base = Number.isFinite(min) ? min : 0;
         return base === 0 ? [0, 1] : [Math.min(0, base), Math.max(0, base)];
     }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
     const span = max - min;
-    const rough = span / Math.max(1, count - 1);
+    const target = Number.isFinite(count) ? Math.max(2, Math.min(10, count)) : 5;
+    const rough = span / (target - 1);
     const power = 10 ** Math.floor(Math.log10(rough));
     const candidates = [1, 2, 2.5, 5, 10].map(step => step * power);
-    const step = candidates.find(candidate => span / candidate <= count) || candidates[candidates.length - 1];
-    const start = Math.floor(min / step) * step;
-    const end = Math.ceil(max / step) * step;
+    const step = candidates.find(candidate => span / candidate <= target);
+    // Finite inputs can still overflow their range or underflow the step.
+    if (!Number.isFinite(step) || !(step > 0)) return [min, max];
+    const start = Math.floor(min / step);
+    const end = Math.ceil(max / step);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end - start > 20) return [min, max];
     const ticks = [];
-    for (let tick = start; tick <= end + step / 2; tick += step) ticks.push(round(tick, 10));
-    return ticks;
+    // Index arithmetic plus a hard bound avoids a sub-ULP increment loop.
+    for (let i = 0; i <= end - start; i++) {
+        const tick = Number(((start + i) * step).toPrecision(15));
+        if (!Number.isFinite(tick) || (ticks.length && tick <= ticks.at(-1))) return [min, max];
+        ticks.push(tick);
+    }
+    return ticks.length >= 2 && ticks[0] <= min && ticks.at(-1) >= max ? ticks : [min, max];
+}
+
+function scaledFraction(value, lo, hi) {
+    const span = hi - lo;
+    if (Number.isFinite(span)) return (value - lo) / (span || 1);
+    // Halving before subtraction handles ranges spanning both finite extremes.
+    return (value / 2 - lo / 2) / (hi / 2 - lo / 2);
 }
 
 function valueRange(spec) {
@@ -117,7 +134,7 @@ function renderBars(spec) {
     const ticks = niceTicks(min, max);
     const lo = ticks[0];
     const hi = ticks[ticks.length - 1];
-    const scaleY = value => plotBottom - ((value - lo) / (hi - lo || 1)) * (plotBottom - plotTop);
+    const scaleY = value => plotBottom - scaledFraction(value, lo, hi) * (plotBottom - plotTop);
     const groups = spec.xLabels.length;
     const groupWidth = (plotRight - plotLeft) / groups;
     const seriesCount = spec.series.length;
@@ -132,7 +149,7 @@ function renderBars(spec) {
         const y = scaleY(value);
         const top = Math.min(y, zeroY);
         const height = Math.abs(zeroY - y);
-        const title = `${series.name} · ${spec.xLabels[i]}: ${formatChartNumber(value)}`;
+        const title = `${series.name} · ${spec.xLabels[i]}: ${value}`;
         // Rounded end on the data side only; the baseline side stays square.
         const r = Math.min(radius, height);
         const path = value >= 0
@@ -153,7 +170,7 @@ function renderLines(spec) {
     const ticks = niceTicks(min, max);
     const lo = ticks[0];
     const hi = ticks[ticks.length - 1];
-    const scaleY = value => plotBottom - ((value - lo) / (hi - lo || 1)) * (plotBottom - plotTop);
+    const scaleY = value => plotBottom - scaledFraction(value, lo, hi) * (plotBottom - plotTop);
     const points = spec.xLabels.length;
     const bandX = i => points === 1 ? (plotLeft + plotRight) / 2 : plotLeft + ((plotRight - plotLeft) * i) / (points - 1);
     const showMarkers = points <= MAX_MARKERS;
@@ -161,7 +178,7 @@ function renderLines(spec) {
         const d = series.values.map((value, i) => `${i === 0 ? 'M' : 'L'}${round(bandX(i), 1)} ${round(scaleY(value), 1)}`).join(' ');
         const line = `<path class="oa-chart-line" d="${d}" stroke="${seriesColor(s)}"><title>${escapeText(series.name)}</title></path>`;
         const markers = showMarkers ? series.values.map((value, i) =>
-            `<circle class="oa-chart-marker" cx="${round(bandX(i), 1)}" cy="${round(scaleY(value), 1)}" r="3.5" fill="${seriesColor(s)}"><title>${escapeText(`${series.name} · ${spec.xLabels[i]}: ${formatChartNumber(value)}`)}</title></circle>`
+            `<circle class="oa-chart-marker" cx="${round(bandX(i), 1)}" cy="${round(scaleY(value), 1)}" r="3.5" fill="${seriesColor(s)}"><title>${escapeText(`${series.name} · ${spec.xLabels[i]}: ${value}`)}</title></circle>`
         ).join('') : '';
         return line + markers;
     }).join('');
@@ -171,7 +188,9 @@ function renderLines(spec) {
 
 function renderPie(spec) {
     const [series] = spec.series;
-    const total = series.values.reduce((sum, value) => sum + value, 0);
+    const maximum = Math.max(...series.values);
+    const weights = series.values.map(value => maximum > 0 ? value / maximum : 0);
+    const total = weights.reduce((sum, value) => sum + value, 0);
     const cx = WIDTH / 2;
     const cy = PIE_RADIUS + 16;
     const height = cy + PIE_RADIUS + 16;
@@ -182,7 +201,7 @@ function renderPie(spec) {
     let angle = -Math.PI / 2;
     const slices = series.values.map((value, i) => {
         if (value <= 0) return '';
-        const share = value / total;
+        const share = weights[i] / total;
         const sweep = share * Math.PI * 2;
         const start = angle;
         const end = angle + sweep;
@@ -200,7 +219,7 @@ function renderPie(spec) {
         const label = share >= 0.06
             ? `<text class="oa-chart-slice-label" x="${round(cx + labelRadius * Math.cos(mid), 1)}" y="${round(cy + labelRadius * Math.sin(mid), 1)}" text-anchor="middle" dominant-baseline="middle">${Math.round(share * 100)}%</text>`
             : '';
-        const title = `${spec.xLabels[i]}: ${formatChartNumber(value)} (${Math.round(share * 1000) / 10}%)`;
+        const title = `${spec.xLabels[i]}: ${value} (${Math.round(share * 1000) / 10}%)`;
         return `<path class="oa-chart-slice" d="${path}" fill="${seriesColor(i)}"><title>${escapeText(title)}</title></path>${label}`;
     }).join('');
     return `<svg class="oa-chart-svg" viewBox="0 0 ${WIDTH} ${height}" role="img" aria-label="${escapeText(spec.title)}">${slices}</svg>`;
@@ -219,7 +238,7 @@ function renderLegend(spec) {
 function renderTable(spec) {
     const head = `<tr><th scope="col">${escapeText(spec.xAxisTitle || '')}</th>${spec.series.map(series => `<th scope="col">${escapeText(series.name)}</th>`).join('')}</tr>`;
     const rows = spec.xLabels.map((label, i) =>
-        `<tr><th scope="row">${escapeText(label)}</th>${spec.series.map(series => `<td>${escapeText(formatChartNumber(series.values[i]))}</td>`).join('')}</tr>`
+        `<tr><th scope="row">${escapeText(label)}</th>${spec.series.map(series => `<td>${escapeText(series.values[i])}</td>`).join('')}</tr>`
     ).join('');
     return `<details class="oa-chart-data"><summary>Show data</summary><div class="oa-chart-table-wrap"><table><thead>${head}</thead><tbody>${rows}</tbody></table></div></details>`;
 }

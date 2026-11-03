@@ -1,5 +1,9 @@
 ## 2026-11-03 — Client-rendered charts (generative UI, first increment)
 
+- Release review: bounded numeric axes and overflow-safe scales; exact values
+  in data tables/tooltips; pending chart placeholders clear on Stop/failure.
+  Integrated on current staging to preserve daemon authorization.
+
 - A tool-capable model may call the client-side `render_chart` function; the
   browser validates the spec, stores it as `message.artifacts[0]` (`version: 1,
   type: "chart"`) and draws it as inline SVG. See `docs/CLIENT_CHARTS.md`.

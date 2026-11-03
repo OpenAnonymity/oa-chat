@@ -97,3 +97,36 @@ test('the placeholder is a busy figure with no data', () => {
     assert.match(html, /oa-chart-card-pending/);
     assert.doesNotMatch(html, /<svg/);
 });
+
+
+test('finite extreme and adjacent values render bounded axes and finite geometry', () => {
+    for (const values of [[1, 1 + Number.EPSILON], [1e-12, 2e-12],
+        [-1e308, 1e308], [1e308, 1.1e308], [Number.MIN_VALUE, Number.MIN_VALUE * 2]]) {
+        const ticks = niceTicks(...values);
+        assert.ok(ticks.length >= 2 && ticks.length <= 21);
+        assert.ok(ticks.every(Number.isFinite));
+        assert.ok(ticks[0] <= values[0] && ticks.at(-1) >= values[1]);
+        for (const chartType of ['bar', 'line']) {
+            const html = renderChartArtifact(artifact({ chartType, title: 'Range', xLabels: ['A', 'B'],
+                series: [{ name: 'S', values }] }));
+            assert.doesNotMatch(html, /NaN|Infinity/);
+            if (chartType === 'line') {
+                const ys = [...html.matchAll(/cy="([^"]+)"/g)].map(match => Number(match[1]));
+                assert.equal(ys.length, 2);
+                assert.ok(ys[0] > ys[1], 'distinct values keep their vertical ordering');
+            }
+        }
+    }
+});
+
+test('pie weights do not overflow and the data table retains exact values', () => {
+    const pie = renderChartArtifact(artifact({ chartType: 'pie', title: 'Large', xLabels: ['A', 'B'],
+        series: [{ name: 'S', values: [1e308, 1e308] }] }));
+    assert.equal((pie.match(/>50%<\/text>/g) || []).length, 2);
+    assert.doesNotMatch(pie, /NaN|Infinity/);
+    const bar = renderChartArtifact(artifact({ chartType: 'bar', title: 'Exact', xLabels: ['A', 'B'],
+        series: [{ name: 'S', values: [412.49, 0.004] }] }));
+    assert.match(bar, /<td>412\.49<\/td>/);
+    assert.match(bar, /<td>0\.004<\/td>/);
+    assert.match(bar, /<title>S · B: 0\.004<\/title>/);
+});

@@ -94,3 +94,11 @@ artifacts that re-validate.
 
 Cards (`render_cards`), Quick Ask / Council lanes, widget → chat postback,
 multi-model eval of when the model chooses a chart, and usage counters.
+
+## Staging release review (2026-11-03)
+
+The release integrates the feature into the current staging client so daemon
+authorization remains present. Axis generation is bounded and handles adjacent,
+subnormal and extreme finite values; chart scaling and pie weights avoid
+overflow. The data table and mark tooltips retain exact numeric values. Terminal
+Stop/error cleanup clears a pending chart placeholder before persisting it.

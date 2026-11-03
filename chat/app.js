@@ -1232,6 +1232,7 @@ class ChatApp {
     }
 
     preserveInterruptedResponse(message, content, reasoning, fallback = '') {
+        delete message.pendingArtifact;
         const hasPartialOutput = Boolean(content?.trim() || reasoning?.trim() || message.images?.length);
         message.content = hasPartialOutput ? (content || '') : fallback;
         message.reasoning = reasoning ? parseReasoningContent(reasoning) : null;

@@ -1965,6 +1965,30 @@ describe('production ChatApp runtime ownership', () => {
     });
 
     for (const action of ['send', 'regenerate']) {
+        for (const stopped of [false, true]) {
+            test(`${action} clears the chart placeholder after ${stopped ? 'Stop' : 'transport failure'}`, async () => {
+                const { app, records } = streamHarness(async (...args) => {
+                    await args[3]('Partial answer');
+                    await args[3](null, { toolCallPending: true });
+                    throw Object.assign(new Error('Interrupted'), stopped ? { isCancelled: true } : {});
+                });
+                app.chatArea = { appendMessage() {}, updateStreamingMessage() {},
+                    finalizeStreamingMessage() {}, showPendingArtifact() {} };
+                if (action === 'regenerate') {
+                    records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt',
+                        model: 'Accepted model', memoryMode: false });
+                    await app.regenerateResponse();
+                } else await app.sendMessage();
+                const assistant = [...records.values()].find(message => message.role === 'assistant');
+                assert.ok(assistant);
+                assert.equal(assistant.content, 'Partial answer');
+                assert.equal(assistant.pendingArtifact, undefined);
+                assert.equal(assistant.streamingPending, false);
+            });
+        }
+    }
+
+    for (const action of ['send', 'regenerate']) {
         for (const interrupted of [false, true]) {
             test(`${action} preserves the routed model on ${interrupted ? 'stopped partial output' : 'completed output'}`, async () => {
                 const headerUpdates = [];
