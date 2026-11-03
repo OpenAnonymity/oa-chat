@@ -56,6 +56,15 @@ function sanitizeModel(model) {
         normalized.top_provider = model.top_provider;
     }
 
+    if (Array.isArray(model.supported_parameters)) {
+        normalized.supported_parameters = Array.from(new Set(
+            model.supported_parameters
+                .filter(parameter => typeof parameter === 'string')
+                .map(parameter => parameter.trim())
+                .filter(Boolean)
+        ));
+    }
+
     return normalized;
 }
 

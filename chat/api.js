@@ -30,12 +30,33 @@ import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
+import {
+    appendStreamingToolCallDeltas,
+    createStreamingToolCallAccumulator,
+    finalizeStreamingToolCalls,
+    hasStreamingToolCalls
+} from './domain/streamingToolCalls.js';
 import { hasWithheldReasoning, reasoningTextFromDetails } from './services/reasoningParser.js';
 import { paragraphBreakBefore } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
 const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 const TITLE_SUMMARY_MAX_INPUT_CHARS = 4000;
+
+// Wire shape for one chat-completion message. Assistant tool calls and
+// tool results from earlier turns must round-trip so a provider can see
+// what the client rendered locally; everything else is role + content.
+function formatChatCompletionMessage(message) {
+    const formatted = { role: message.role, content: message.content };
+    if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        formatted.tool_calls = message.tool_calls;
+    }
+    if (message.role === 'tool' && typeof message.tool_call_id === 'string') {
+        formatted.tool_call_id = message.tool_call_id;
+    }
+    if (typeof message.name === 'string') formatted.name = message.name;
+    return formatted;
+}
 
 function hasPdfContent(messages = []) {
     return messages.some((message) => {
@@ -190,7 +211,7 @@ export class OpenRouterAPI {
             request._generateSessionTitle(prompt, token, requestOptions));
     }
 
-    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null, requestTiming = null) {
+    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null, requestTiming = null, clientToolOptions = null) {
         try { validateConversationInput(messages, this.getModelBudgetMetadata(modelId), files, modelId); }
         catch (error) { return Promise.reject(error); }
         return this.withRequestAccess(token, {
@@ -208,7 +229,7 @@ export class OpenRouterAPI {
             requestTiming?.end('verification_ms');
             return request._streamCompletion(messages, modelId, token, onChunk,
                 onTokenUpdate, files, searchEnabled, abortController, onStreamOpen,
-                onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth, requestTiming);
+                onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth, requestTiming, clientToolOptions);
         }).finally(() => { requestTiming?.end('access_ms'); requestTiming?.end('verification_ms'); });
     }
 
@@ -337,7 +358,10 @@ export class OpenRouterAPI {
                 provider: providerName,
                 context_length: model.context_length,
                 pricing: model.pricing,
-                top_provider: model.top_provider
+                top_provider: model.top_provider,
+                supported_parameters: Array.isArray(model.supported_parameters)
+                    ? model.supported_parameters.filter(parameter => typeof parameter === 'string')
+                    : []
             };
         }).filter(Boolean);
 
@@ -665,7 +689,7 @@ export class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null, requestTiming = null) {
+    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null, requestTiming = null, clientToolOptions = null) {
 
         // Handle web search - append :online suffix if enabled
         let effectiveModelId = modelId;
@@ -745,6 +769,16 @@ export class OpenRouterAPI {
         let reasoningWithheld = false;
         let completionFinishReason = null;
         let hasReceivedFirstToken = false;
+        // Client-rendered tools (charts, cards): advertised only when the
+        // caller passes them; streamed call fragments are folded here.
+        const clientTools = Array.isArray(clientToolOptions?.tools)
+            ? clientToolOptions.tools.filter(tool => tool && typeof tool === 'object')
+            : [];
+        const clientToolInstructions = typeof clientToolOptions?.systemInstructions === 'string'
+            ? clientToolOptions.systemInstructions.trim()
+            : '';
+        const toolCallAccumulator = createStreamingToolCallAccumulator(clientToolOptions || {});
+        let announcedToolCall = false;
         // Which stream the last delta belonged to. When a model interleaves
         // (think, answer a line, call a tool, think again, answer), each
         // resumed segment starts on a new paragraph, so a heading that
@@ -990,7 +1024,8 @@ export class OpenRouterAPI {
             if (parsed.type === 'response.completed') sawTerminal = true;
             const progressDelta = parsed.choices?.[0]?.delta;
             if (progressDelta?.content || progressDelta?.reasoning || progressDelta?.reasoning_details?.length
-                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) {
+                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length
+                || progressDelta?.tool_calls?.length) {
                 watchdog?.output();
                 // Resumed output invalidates an earlier finish. EOF alone must
                 // not use that stale finish to mark a truncated reply complete.
@@ -1210,6 +1245,19 @@ export class OpenRouterAPI {
                 const delta = parsed.choices?.[0]?.delta;
                 let content = delta?.content;
 
+                if (appendStreamingToolCallDeltas(toolCallAccumulator, delta?.tool_calls)) {
+                    // A tool call is the answer for this turn even when no
+                    // text arrives; validation of its arguments is the caller's.
+                    sawAnswer = true;
+                    hasReceivedFirstToken = true;
+                    if (!announcedToolCall) {
+                        announcedToolCall = true;
+                        await flushReasoningBuffer();
+                        await onChunk(null, { toolCallPending: true });
+                        throwIfStreamAborted();
+                    }
+                }
+
                 if (content) {
                     await flushReasoningBuffer();
                     if (typeof content !== 'string') throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent invalid answer content. Please retry.');
@@ -1355,13 +1403,17 @@ export class OpenRouterAPI {
                 reasoning: accumulatedReasoning || null,
                 // True when the provider reported reasoning it did not share.
                 reasoningWithheld: reasoningWithheld && !accumulatedReasoning,
-                citations: citations.length > 0 ? citations : null
+                citations: citations.length > 0 ? citations : null,
+                toolCalls: hasStreamingToolCalls(toolCallAccumulator) ? finalizeStreamingToolCalls(toolCallAccumulator) : []
             };
         };
 
         try {
             // Prepend system prompt if it exists
-            const systemPrompt = getSystemPrompt(effectiveModelId);
+            const basePrompt = getSystemPrompt(effectiveModelId);
+            const systemPrompt = clientTools.length > 0 && clientToolInstructions
+                ? `${basePrompt}\n\n${clientToolInstructions}`
+                : basePrompt;
             const messagesWithSystem = systemPrompt
                 ? [{ role: 'system', content: systemPrompt }, ...processedMessages]
                 : processedMessages;
@@ -1384,14 +1436,16 @@ export class OpenRouterAPI {
             // OpenRouter might handle reasoning internally with the same endpoint
             const requestBody = {
                 model: effectiveModelId,
-                messages: messagesWithSystem.map(msg => ({
-                    role: msg.role,
-                    content: msg.content
-                })),
+                messages: messagesWithSystem.map(formatChatCompletionMessage),
                 stream: true,
                 // Request usage information in stream
                 stream_options: { include_usage: true }
             };
+
+            if (clientTools.length > 0) {
+                requestBody.tools = clientTools;
+                requestBody.tool_choice = 'auto';
+            }
 
             // prepareRequestBody applies the 30,000-token generation ceiling.
             // The HTTP transport can retry a budget rejection with a smaller
