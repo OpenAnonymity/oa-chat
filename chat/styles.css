@@ -10714,6 +10714,47 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
 @keyframes oa-chart-skeleton-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .oa-chart-skeleton span { animation: none; } }
 
+/* Inspect exact chart values without a library or external requests. */
+.oa-chart-card { container-type: inline-size; container-name: oa-chart; }
+.oa-chart-plot { position: relative; border-radius: 0.375rem; }
+html[data-keyboard-nav] .oa-chart-plot:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 3px; }
+.oa-chart-hit-area { cursor: crosshair; }
+.oa-chart-inspection, .oa-chart-slice-label { pointer-events: none; }
+.oa-chart-guide { stroke: hsl(var(--color-muted-foreground) / 0.65); stroke-width: 1; stroke-dasharray: 4 4; }
+.oa-chart-active-point { stroke: hsl(var(--color-card, var(--color-background))); stroke-width: 2; }
+.oa-chart-slice.is-inspected { opacity: 1 !important; stroke-width: 4; }
+.oa-chart-tooltip {
+    position: absolute;
+    z-index: 2;
+    width: max-content;
+    max-width: min(360px, 100%);
+    max-height: min(280px, 60vh);
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.625rem;
+    background: hsl(var(--color-card, var(--color-background)));
+    color: hsl(var(--color-foreground));
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+.oa-chart-tooltip[hidden] { display: none; }
+.oa-chart-tooltip-title, .oa-chart-tooltip-unit { color: hsl(var(--color-muted-foreground)); }
+.oa-chart-tooltip-title { margin-bottom: 0.375rem; }
+.oa-chart-tooltip-unit { margin-top: 0.375rem; font-size: 0.75rem; }
+.oa-chart-tooltip-row { display: grid; grid-template-columns: 10px auto minmax(0, 1fr); align-items: baseline; gap: 0.5rem; margin-top: 0.25rem; }
+.oa-chart-tooltip-swatch { width: 10px; height: 3px; align-self: center; border-radius: 2px; }
+.oa-chart-tooltip-value { font-variant-numeric: tabular-nums; font-weight: 500; }
+.oa-chart-tooltip-name { color: hsl(var(--color-muted-foreground)); }
+/* Narrow Parallel lanes and phones put values below the plot, never over it. */
+@container oa-chart (max-width: 420px) {
+    .oa-chart-tooltip { position: relative; left: 0 !important; top: 0 !important; width: 100%; max-width: 100%; margin-top: 0.5rem; }
+}
+@media print { .oa-chart-tooltip, .oa-chart-inspection { display: none !important; } }
+
 /* Phone touch-layout follow-up; laptop and Electron layouts are unchanged. */
 @media (max-width: 767px) {
     /* The sheet slides; its width is fixed by the host, and its border
@@ -10756,44 +10797,3 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
         transition: none;
     }
 }
-
-/* Inspect exact chart values without a library or external requests. */
-.oa-chart-card { container-type: inline-size; container-name: oa-chart; }
-.oa-chart-plot { position: relative; border-radius: 0.375rem; }
-.oa-chart-plot:focus-visible { outline: 2px solid var(--oa-chart-1); outline-offset: 3px; }
-.oa-chart-hit-area { cursor: crosshair; }
-.oa-chart-inspection, .oa-chart-slice-label { pointer-events: none; }
-.oa-chart-guide { stroke: hsl(var(--color-muted-foreground) / 0.65); stroke-width: 1; stroke-dasharray: 4 4; }
-.oa-chart-active-point { stroke: hsl(var(--color-card, var(--color-background))); stroke-width: 2; }
-.oa-chart-slice.is-inspected { opacity: 1 !important; stroke-width: 4; }
-.oa-chart-tooltip {
-    position: absolute;
-    z-index: 2;
-    width: max-content;
-    max-width: min(360px, 100%);
-    max-height: min(280px, 60vh);
-    overflow: auto;
-    box-sizing: border-box;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid hsl(var(--color-border));
-    border-radius: 0.625rem;
-    background: hsl(var(--color-card, var(--color-background)));
-    color: hsl(var(--color-foreground));
-    box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
-    font-size: 0.8125rem;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-}
-.oa-chart-tooltip[hidden] { display: none; }
-.oa-chart-tooltip-title, .oa-chart-tooltip-unit { color: hsl(var(--color-muted-foreground)); }
-.oa-chart-tooltip-title { margin-bottom: 0.375rem; }
-.oa-chart-tooltip-unit { margin-top: 0.375rem; font-size: 0.75rem; }
-.oa-chart-tooltip-row { display: grid; grid-template-columns: 10px auto minmax(0, 1fr); align-items: baseline; gap: 0.5rem; margin-top: 0.25rem; }
-.oa-chart-tooltip-swatch { width: 10px; height: 3px; align-self: center; border-radius: 2px; }
-.oa-chart-tooltip-value { font-variant-numeric: tabular-nums; font-weight: 500; }
-.oa-chart-tooltip-name { color: hsl(var(--color-muted-foreground)); }
-/* Narrow Parallel lanes and phones put values below the plot, never over it. */
-@container oa-chart (max-width: 420px) {
-    .oa-chart-tooltip { position: relative; left: 0 !important; top: 0 !important; width: 100%; max-width: 100%; margin-top: 0.5rem; }
-}
-@media print { .oa-chart-tooltip, .oa-chart-inspection { display: none !important; } }
