@@ -1,3 +1,12 @@
+## 2026-11-03 — Chart actions stay below live charts
+
+The streaming chart slot is inserted inside the assistant content group before
+generated images or the action-row anchor. Previously a chart arriving after
+reasoning (or text) could be appended after the whole group, leaving Copy,
+Regenerate and Fork above it until reload. The restored-message template already
+had the correct ordering. `test-browser/chart-layout.mjs` exercises both live
+arrival paths, targeted completion and restored rendering with the real DOM.
+
 ## 2026-11-03 — Client-rendered charts (generative UI, first increment)
 
 - Release review: bounded numeric axes and overflow-safe scales; exact values

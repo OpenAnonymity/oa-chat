@@ -3494,11 +3494,13 @@ export default class ChatArea {
             host = document.createElement('div');
             host.className = 'font-normal message-assistant-chart w-full';
             host.dataset.messageChart = messageEl.dataset.messageId || '';
-            const images = messageEl.querySelector('.message-assistant-images');
-            const textBubble = messageEl.querySelector('.message-content')?.closest('[data-message-id] > *');
-            if (images) images.insertAdjacentElement('beforebegin', host);
+            // Both anchors live inside the content group. Appending to the
+            // outer row (or after the whole group) puts charts below actions.
+            const following = messageEl.querySelector('.message-assistant-images, .assistant-actions-anchor');
+            const textBubble = messageEl.querySelector('.message-content')?.closest('.message-assistant');
+            if (following) following.insertAdjacentElement('beforebegin', host);
             else if (textBubble) textBubble.insertAdjacentElement('afterend', host);
-            else messageEl.appendChild(host);
+            else (messageEl.querySelector('[data-assistant-header]')?.parentElement || messageEl).appendChild(host);
         }
         host.innerHTML = html;
     }

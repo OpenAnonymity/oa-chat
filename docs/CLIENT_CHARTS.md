@@ -102,3 +102,7 @@ authorization remains present. Axis generation is bounded and handles adjacent,
 subnormal and extreme finite values; chart scaling and pie weights avoid
 overflow. The data table and mark tooltips retain exact numeric values. Terminal
 Stop/error cleanup clears a pending chart placeholder before persisting it.
+
+Copy, Regenerate and Fork remain below the entire chart, including its Show data
+disclosure, both during live completion and after reload. The browser fixture
+`test-browser/chart-layout.mjs` covers reasoning-only and text-first arrival.
