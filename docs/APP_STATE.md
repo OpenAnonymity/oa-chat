@@ -8,6 +8,11 @@ in the picker. Quick Ask charts stay in its temporary panel. Tool fragments coun
 as output before retry decisions; no acquisition/payment policy changes.
 See [CLIENT_CHARTS.md](CLIENT_CHARTS.md) for contracts and tests.
 
+The provider-fault fixture now waits for startup proxy requests to settle before
+selecting its local direct mock connection, replacing an unreliable 800 ms delay.
+It preserves the real active-request guard, retries only that specific setup race,
+and fails after 30 seconds. No live proxy or fallback policy changed.
+
 ## 2026-11-03 — Chart actions stay below live charts
 
 The streaming chart slot is inserted inside the assistant content group before

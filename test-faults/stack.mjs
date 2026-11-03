@@ -111,13 +111,26 @@ export async function openChat(browser, { model = 'google/gemini-3.8-flash' } = 
     }, { model });
     await page.reload();
     await page.waitForFunction(() => window.chatInputReady && window.app?.state?.models?.length > 0, null, { timeout: 30000 });
-    await page.waitForTimeout(800);
     await page.evaluate(async () => {
         window.app.signInPolicy = { ...window.app.signInPolicy, required: false };
         window.app.accountModal?.close?.();
-        // The relay is a separate fault surface; these scenarios go direct.
-        await window.networkProxy?.updateSettings?.({ enabled: false }, { silent: true });
     });
+    // These local provider scenarios go direct. Startup catalog/verifier traffic
+    // can outlast a fixed delay; honor the production guard against disconnecting
+    // an active request. Retry only that race, with a bounded setup deadline.
+    await page.waitForFunction(async () => {
+        const proxy = window.networkProxy;
+        if (!proxy || proxy.getStatus().hasActiveRequests) return false;
+        try {
+            if (proxy.getSettings().enabled) {
+                await proxy.updateSettings({ enabled: false }, { silent: true });
+            }
+            return !proxy.getSettings().enabled;
+        } catch (error) {
+            if (error.message === 'Cannot disable proxy while requests are in progress') return false;
+            throw error;
+        }
+    }, null, { timeout: 30000, polling: 100 });
     return { context, page, events };
 }
 
