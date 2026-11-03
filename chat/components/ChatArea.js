@@ -19,7 +19,7 @@ import { resolveProvider, resolveProviderFromModelReference } from '../services/
 import { renderMathContent } from '../services/mathRendering.js';
 import { getProviderIcon } from '../services/providerIcons.js';
 import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
-import { getMessageChartArtifact } from '../domain/chartArtifacts.js';
+import { getMessageChartArtifact, getMessageCopyText } from '../domain/chartArtifacts.js';
 
 export default class ChatArea {
     /**
@@ -732,7 +732,7 @@ export default class ChatArea {
                 onDone: (result) => {
                     if (requestId !== this.quickAsk.activeRequestId) return;
                     this.updateQuickAskReasoning(result.reasoning || '');
-                    this.updateQuickAskAnswer(result.content || '[Model provider returned no response.]');
+                    this.updateQuickAskAnswer(result.content || (getMessageChartArtifact(result) ? '' : '[Model provider returned no response.]'), { artifacts: result.artifacts });
                     this.updateQuickAskCitations(result.citations || null);
                 }
             });
@@ -802,6 +802,8 @@ export default class ChatArea {
         answerEl.innerHTML = globalThis.window?.MessageTemplates?.enhanceInlineLinks?.(
             html, `quick-ask-${this.quickAsk.activeRequestId}`
         ) ?? html;
+        const chart = getMessageChartArtifact(options);
+        if (chart) answerEl.insertAdjacentHTML('beforeend', renderChartArtifact(chart));
         renderMathContent(answerEl);
         if (followAnswer) miniChat.scrollTop = miniChat.scrollHeight;
     }
@@ -969,12 +971,19 @@ export default class ChatArea {
             textarea.select();
             const success = document.execCommand('copy');
             document.body.removeChild(textarea);
-            return success;
-        } catch (e) {
-            // Fallback to async Clipboard API
-            navigator.clipboard.writeText(text).catch(() => {});
-            return true;
-        }
+            if (success) return true;
+        } catch { /* Try the Clipboard API when the legacy path is unavailable. */ }
+        try {
+            return navigator.clipboard?.writeText(text).then(() => true, () => false) || false;
+        } catch { return false; }
+    }
+
+    async copyTextWithFeedback(text, onSuccess) {
+        // Invoke the clipboard operation before yielding the click gesture.
+        const success = await this.copyToClipboard(text);
+        if (success) onSuccess();
+        else this.app.showToast?.('Could not copy to the clipboard.', 'error');
+        return success;
     }
 
     handleCouncilTabSwitch(button) {
@@ -999,6 +1008,11 @@ export default class ChatArea {
      * @param {string} messageId - The message ID
      * @returns {string|null} The text content or null
      */
+    getChartCopyTextFromDOM(messageEl) {
+        const scope = messageEl.querySelector('.council-synthesis-block') || messageEl;
+        return scope.querySelector('[data-chart-copy-text]')?.getAttribute('data-chart-copy-text') || '';
+    }
+
     getMessageTextFromDOM(messageId) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return null;
@@ -1007,9 +1021,9 @@ export default class ChatArea {
         if (contentEl) {
             const contentClone = contentEl.cloneNode(true);
             contentClone.querySelectorAll('.code-block-copy-btn').forEach(el => el.remove());
-            return contentClone.innerText || contentClone.textContent;
+            return [contentClone.innerText || contentClone.textContent, this.getChartCopyTextFromDOM(messageEl)].filter(Boolean).join('\n\n');
         }
-        return null;
+        return this.getChartCopyTextFromDOM(messageEl) || null;
     }
 
     /**
@@ -1037,7 +1051,7 @@ export default class ChatArea {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return null;
 
-        const rawContent = messageEl.dataset.rawContent;
+        const rawContent = [messageEl.dataset.rawContent || '', this.getChartCopyTextFromDOM(messageEl)].filter(Boolean).join('\n\n');
         if (rawContent && rawContent.trim()) {
             return rawContent;
         }
@@ -1161,16 +1175,12 @@ export default class ChatArea {
         if (isLiveStreamingMessage) {
             const rawContent = this.getMessageRawFromDOM(messageId);
             if (rawContent && rawContent.trim()) {
-                this.copyToClipboard(rawContent);
-                this.showCopySuccess(messageId);
-                return;
+                return this.copyTextWithFeedback(rawContent, () => this.showCopySuccess(messageId));
             }
 
             const domContent = this.getMessageTextFromDOM(messageId);
             if (domContent && domContent.trim()) {
-                this.copyToClipboard(domContent);
-                this.showCopySuccess(messageId);
-                return;
+                return this.copyTextWithFeedback(domContent, () => this.showCopySuccess(messageId));
             }
         }
 
@@ -1178,17 +1188,13 @@ export default class ChatArea {
             // Try raw content from DOM data attributes (sync, preserves Safari user activation).
             const rawContent = this.getMessageRawFromDOM(messageId);
             if (rawContent) {
-                this.copyToClipboard(rawContent);
-                this.showCopySuccess(messageId);
-                return;
+                return this.copyTextWithFeedback(rawContent, () => this.showCopySuccess(messageId));
             }
 
             // Fallback to visible DOM content if raw data is missing.
             const domContent = this.getMessageTextFromDOM(messageId);
             if (domContent && domContent.trim()) {
-                this.copyToClipboard(domContent);
-                this.showCopySuccess(messageId);
-                return;
+                return this.copyTextWithFeedback(domContent, () => this.showCopySuccess(messageId));
             }
         }
 
@@ -1196,17 +1202,15 @@ export default class ChatArea {
         const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find(m => m.id === messageId);
 
-        if (message && message.content && message.content.trim()) {
-            this.copyToClipboard(message.content);
-            this.showCopySuccess(messageId);
-            return;
+        const copyText = getMessageCopyText(message);
+        if (copyText.trim()) {
+            return this.copyTextWithFeedback(copyText, () => this.showCopySuccess(messageId));
         }
 
         // Final fallback to visible DOM content.
         const domContent = this.getMessageTextFromDOM(messageId);
         if (domContent && domContent.trim()) {
-            this.copyToClipboard(domContent);
-            this.showCopySuccess(messageId);
+            return this.copyTextWithFeedback(domContent, () => this.showCopySuccess(messageId));
         }
     }
 
@@ -1221,20 +1225,22 @@ export default class ChatArea {
     }
 
     async handleCopyCouncilLane(messageId, laneId, button = null) {
+        // Chart lanes can copy synchronously, preserving Safari's user gesture.
+        const renderedCopy = button?.getAttribute?.('data-chart-response-copy');
+        if (renderedCopy) {
+            return this.copyTextWithFeedback(renderedCopy, () => this.animateCopyButton(button));
+        }
         const session = this.app.getCurrentSession();
         if (!session || !messageId || !laneId) return;
 
         const messages = await this.app.data.getSessionMessages(session.id);
         const message = messages.find((entry) => entry.id === messageId);
         const laneEntry = this.findCouncilLaneEntry(message, laneId);
-        const response = typeof laneEntry?.response === 'string'
-            ? laneEntry.response
-            : '';
+        const response = getMessageCopyText({ content: laneEntry?.response, artifacts: laneEntry?.artifacts });
 
         if (!response.trim()) return;
 
-        this.copyToClipboard(response);
-        this.animateCopyButton(button || document.querySelector(`.copy-council-lane-btn[data-message-id="${messageId}"][data-council-lane-id="${laneId}"]`));
+        return this.copyTextWithFeedback(response, () => this.animateCopyButton(button || document.querySelector(`.copy-council-lane-btn[data-message-id="${messageId}"][data-council-lane-id="${laneId}"]`)));
     }
 
     /**

@@ -1,3 +1,13 @@
+## 2026-11-03 — Chart Copy and request-path parity
+
+Copy on chart-only replies now includes title/units/exact table values. Ticket and
+zkAPI requests, Parallel lanes, Council synthesis and Quick Ask share chart tools.
+Lane charts stay lane-scoped through history, regeneration, synthesis and sharing.
+Models without catalog-declared tools receive text chart history and are marked
+in the picker. Quick Ask charts stay in its temporary panel. Tool fragments count
+as output before retry decisions; no acquisition/payment policy changes.
+See [CLIENT_CHARTS.md](CLIENT_CHARTS.md) for contracts and tests.
+
 ## 2026-11-03 — Chart actions stay below live charts
 
 The streaming chart slot is inserted inside the assistant content group before

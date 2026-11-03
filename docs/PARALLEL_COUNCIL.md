@@ -128,3 +128,11 @@ to an operational error, trigger credit recovery, replay requests, spend tickets
 or change cancellation. Sibling lanes keep their results. The original live
 Haiku failure's cause cannot be recovered from the old generic record.
 Reference: [OpenRouter streaming error format](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/streaming.mdx).
+
+## Client-rendered charts
+
+Each tool-capable lane can return a chart, including chart-only responses. Lane
+history, Copy and regeneration use that lane's validated artifact. Council review
+receives the exact chart data alongside response prose and can render its own
+chart. The canonical response copies the selected lane or synthesis artifact;
+failed synthesis falls back to the same canonical lane as its text.

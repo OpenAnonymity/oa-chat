@@ -41,7 +41,8 @@ export function createZkapiBackend(api = zkapiAPI) {
             reasoningEffort,
             onAccessProgress,
             onStreamHealth,
-            requestTiming
+            requestTiming,
+            clientToolOptions
         ) => api.streamCompletion(
             messages,
             modelId,
@@ -57,7 +58,8 @@ export function createZkapiBackend(api = zkapiAPI) {
             reasoningEffort,
             onAccessProgress,
             onStreamHealth,
-            requestTiming
+            requestTiming,
+            clientToolOptions
         ),
 
         getAccessInfo(session) {

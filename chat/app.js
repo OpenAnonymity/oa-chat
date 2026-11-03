@@ -98,9 +98,9 @@ import {
 import { normalizePendingPhase as normalizeStreamingPendingPhase } from './domain/streamingState.js';
 import { buildTurnTicketBudget } from './domain/turnTicketBudget.js';
 import {
+    applyChartToolResult,
     CHART_TOOL_SYSTEM_INSTRUCTIONS,
     RENDER_CHART_TOOL,
-    extractChartArtifactFromToolCalls,
     modelSupportsClientTools
 } from './domain/chartArtifacts.js';
 import { toExtensionTicketSnapshot } from './extensions/extensionTicketSnapshot.js';
@@ -7326,8 +7326,11 @@ class ChatApp {
      */
     processMessagesWithFiles(messages, currentModelId, sessionId = this.state?.currentSessionId) {
         const apiOverrideContent = this.getMemoryApiOverrideContent(sessionId);
+        const session = this.state?.sessionsById?.get(sessionId);
+        const model = (this.getModelsForSession(session) || []).find(entry => entry.id === currentModelId);
         return processMessagesForApi(messages, currentModelId, {
             apiOverrideContent,
+            supportsClientTools: modelSupportsClientTools(model),
             onTextFileDecodeError: (error, file) => {
                 console.error('Failed to decode text file:', file.name, error);
             }
@@ -7345,22 +7348,7 @@ class ChatApp {
     // Folds a finished response's tool calls into the message: a valid chart
     // becomes its artifact; an invalid one becomes a visible note, never markup.
     applyClientToolResult(message, tokenData) {
-        delete message.pendingArtifact;
-        const { artifact, error } = extractChartArtifactFromToolCalls(tokenData?.toolCalls);
-        if (artifact) {
-            message.artifacts = [artifact];
-            delete message.clientToolError;
-            return { hasVisibleOutput: true, error: null };
-        }
-        delete message.artifacts;
-        if (error) {
-            const prefix = message.content?.trim() ? `${message.content.trim()}\n\n` : '';
-            message.content = `${prefix}*The chart could not be shown: ${error}*`;
-            message.clientToolError = error;
-            return { hasVisibleOutput: true, error };
-        }
-        delete message.clientToolError;
-        return { hasVisibleOutput: false, error: null };
+        return applyChartToolResult(message, tokenData?.toolCalls);
     }
 
     refreshProcessedMessagesIfMemoryOverrideChanged(processedMessages, sourceMessages, modelIdForRequest, memoryGenerationAtProcess, sessionId = this.state?.currentSessionId) {
@@ -9530,7 +9518,8 @@ class ChatApp {
             this.reasoningEnabled,
             this.reasoningEffort,
             this.generateId(),
-            'quick-ask'
+            'quick-ask',
+            this.getClientToolOptions(this.getModelsForSession(session).find(model => model.id === modelId))
         );
 
         let tokenData;
@@ -9577,6 +9566,7 @@ class ChatApp {
             ) || modelName,
             citations: tokenData.citations || null
         };
+        this.applyClientToolResult(result, tokenData);
         options.onDone?.(result);
         return result;
     }

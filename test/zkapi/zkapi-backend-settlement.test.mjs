@@ -141,3 +141,13 @@ test('the actual client and browser owner check leave a newer chat lease intact 
     assert.deepEqual(walletRuntime.runtime, durable);
     assert.equal(walletRuntime.activeLease.sessionId, 'chat-b');
 });
+
+test('private inference forwards chart tools through the shared stream parser', async () => {
+    const tools = { tools: [{ type: 'function', function: { name: 'render_chart' } }], systemInstructions: 'Synthetic chart guidance' };
+    let received;
+    const chartBackend = createZkapiBackend({ streamCompletion: async (...args) => { received = args; return { toolCalls: [] }; } });
+    const args = [[], 'model', 'session', () => {}, () => {}, [], false, new AbortController(), null, null, false, 'low', null, null, null, tools];
+    await chartBackend.streamCompletion(...args);
+    assert.deepEqual(received, args);
+    assert.equal(received[15], tools);
+});

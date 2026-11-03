@@ -1,3 +1,4 @@
+import { applyChartToolResult, getMessageChartArtifact, getMessageCopyText, normalizeChartArtifacts } from '../domain/chartArtifacts.js';
 import { requestTiming, timingTextVisible, startRequestTiming, finishRequestTiming } from '../services/stagingRequestTiming.js';
 import { trackFeatureUsage } from '../services/featureUsage.js';
 import { STILL_WORKING_DELAY_MS } from '../services/streamSegments.js';
@@ -89,7 +90,7 @@ function extractImages(result) {
 function hasLaneOutput(entry) {
     const hasText = typeof entry?.response === 'string' && entry.response.trim().length > 0;
     const hasImages = Array.isArray(entry?.images) && entry.images.length > 0;
-    return hasText || hasImages;
+    return hasText || hasImages || !!getMessageChartArtifact(entry);
 }
 
 // What a lane had already shown when it was stopped: text, an image, or
@@ -125,7 +126,7 @@ const STOPPED_LANE_TURN = '[This reply was stopped by the user before it began. 
 const FAILED_LANE_TURN = '[This reply failed before it began. That request is no longer open.]';
 
 function describeLaneForSynthesis(entry) {
-    const text = typeof entry?.response === 'string' ? entry.response.trim() : '';
+    const text = getMessageCopyText({ content: entry?.response, artifacts: entry?.artifacts }).trim();
     const imageCount = Array.isArray(entry?.images) ? entry.images.length : 0;
     if (imageCount === 0) return text;
     const imageNote = `[This response generated ${imageCount} image${imageCount === 1 ? '' : 's'}. The images are not shown in this review; treat them as delivered and judge the response on its text and on whether it did what was asked.]`;
@@ -259,6 +260,7 @@ export default class CouncilController {
 
         stageEntry.status = 'pending';
         stageEntry.response = '';
+        delete stageEntry.artifacts;
         stageEntry.images = null;
         delete stageEntry.responseModel;
         stageEntry.error = null;
@@ -301,6 +303,7 @@ export default class CouncilController {
             this.updateLaneResponseModel(stageEntry, result?.model || result?.data?.model, entry, session);
             stageEntry.response = extractResponseContent(result);
             stageEntry.images = extractImages(result);
+            stageEntry.artifacts = normalizeChartArtifacts(result.artifacts);
             stageEntry.reasoning = extractReasoning(result);
             stageEntry.reasoningDuration = result?.reasoningDuration || null;
             stageEntry.streamingReasoning = false;
@@ -940,7 +943,7 @@ export default class CouncilController {
         const priorMessages = sanitizedMessages.slice(0, -1);
         const transcript = priorMessages
             .map((message) => {
-                const text = getMessageTextContent(message?.content).trim();
+                const text = getMessageCopyText({ content: getMessageTextContent(message?.content), artifacts: message?.artifacts }).trim();
                 if (!text) return null;
                 const role = message.role === 'assistant'
                     ? 'Assistant'
@@ -1018,6 +1021,7 @@ export default class CouncilController {
         if (!canonical) {
             message.content = '';
             message.images = null;
+            delete message.artifacts;
             message.model = 'Parallel';
             message.citations = null;
             if (message.scrubber) {
@@ -1028,6 +1032,7 @@ export default class CouncilController {
 
         message.content = canonical.response;
         message.images = canonical.images || null;
+        message.artifacts = normalizeChartArtifacts(canonical.artifacts);
         message.model = canonical.responseModel || canonical.model;
         message.citations = canonical.citations || null;
         message.council.canonicalStage1Label = canonical.label;
@@ -1051,6 +1056,7 @@ export default class CouncilController {
                         ...message,
                         content: synthesis.response,
                         images: synthesis.images || null,
+                        artifacts: normalizeChartArtifacts(synthesis.artifacts),
                         model: synthesis.responseModel || 'Council'
                     };
                 }
@@ -1061,6 +1067,7 @@ export default class CouncilController {
                         ...message,
                         content: stageEntry.response,
                         images: stageEntry.images || null,
+                        artifacts: normalizeChartArtifacts(stageEntry.artifacts),
                         model: stageEntry.responseModel || stageEntry.model || entry.name
                     };
                 }
@@ -1075,6 +1082,7 @@ export default class CouncilController {
                             ? stageEntry.response
                             : (stageEntry.status === 'cancelled' ? STOPPED_LANE_TURN : FAILED_LANE_TURN),
                         images: spoke ? (stageEntry.images || null) : null,
+                        artifacts: spoke ? normalizeChartArtifacts(stageEntry.artifacts) : [],
                         model: stageEntry.responseModel || stageEntry.model || entry.name
                     };
                 }
@@ -1208,6 +1216,7 @@ export default class CouncilController {
                     this.updateLaneResponseModel(stageEntry, result?.model || result?.data?.model, entry, session);
                     stageEntry.response = extractResponseContent(result);
                     stageEntry.images = extractImages(result);
+                    stageEntry.artifacts = normalizeChartArtifacts(result.artifacts);
                     stageEntry.reasoning = extractReasoning(result);
                     stageEntry.reasoningDuration = result?.reasoningDuration || null;
                     stageEntry.streamingReasoning = false;
@@ -1217,6 +1226,7 @@ export default class CouncilController {
                     stageEntry.completedAt = Date.now();
                     if (index === 0) {
                         assistantMessage.content = stageEntry.response;
+                        assistantMessage.artifacts = normalizeChartArtifacts(stageEntry.artifacts);
                         assistantMessage.model = stageEntry.responseModel || entry.name;
                         assistantMessage.citations = stageEntry.citations || null;
                         if (assistantMessage.scrubber) {
@@ -1273,6 +1283,7 @@ export default class CouncilController {
                 const canonical = completed.find((entry) => typeof entry.response === 'string' && entry.response.trim())
                     || completed[0];
                 assistantMessage.content = canonical.response;
+                assistantMessage.artifacts = normalizeChartArtifacts(canonical.artifacts);
                 assistantMessage.images = canonical.images || null;
                 assistantMessage.model = canonical.responseModel || canonical.model;
                 assistantMessage.citations = canonical.citations || null;
@@ -1306,7 +1317,7 @@ export default class CouncilController {
                             }
                         });
                         const synthesisResponse = extractResponseContent(synthesisResult);
-                        if (!synthesisResponse) {
+                        if (!synthesisResponse && !getMessageChartArtifact(synthesisResult)) {
                             throw new Error('Council synthesis returned an empty response.');
                         }
                         if (!abortController?.signal?.aborted) trackFeatureUsage('council_completed');
@@ -1317,6 +1328,7 @@ export default class CouncilController {
                             synthesisResult?.model || synthesisResult?.data?.model, synthesisEntry, session);
                         const synthesisResponseModel = assistantMessage.council.synthesis.responseModel;
                         assistantMessage.content = synthesisResponse;
+                        assistantMessage.artifacts = normalizeChartArtifacts(synthesisResult.artifacts);
                         assistantMessage.images = extractImages(synthesisResult);
                         assistantMessage.model = synthesisResponseModel || 'Council';
                         assistantMessage.reasoning = synthesisReasoning;
@@ -1329,6 +1341,7 @@ export default class CouncilController {
                             ...(synthesisResponseModel ? { responseModel: synthesisResponseModel } : {}),
                             status: synthesisStatus,
                             response: synthesisResponse,
+                            artifacts: normalizeChartArtifacts(synthesisResult.artifacts),
                             images: extractImages(synthesisResult),
                             reasoning: synthesisReasoning,
                             reasoningWithheld: synthesisResult?.reasoningWithheld === true,
@@ -1357,6 +1370,7 @@ export default class CouncilController {
                                 'Council synthesis failed.'
                             );
                             assistantMessage.content = canonical.response;
+                            assistantMessage.artifacts = normalizeChartArtifacts(canonical.artifacts);
                             assistantMessage.images = canonical.images || null;
                             assistantMessage.model = canonical.responseModel || canonical.model;
                             assistantMessage.citations = canonical.citations || null;
@@ -1400,6 +1414,7 @@ export default class CouncilController {
                 const canonical = [...stopped].sort((a, b) =>
                     String(b.response || '').trim().length - String(a.response || '').trim().length)[0];
                 assistantMessage.content = canonical.response || '';
+                assistantMessage.artifacts = normalizeChartArtifacts(canonical.artifacts);
                 assistantMessage.images = canonical.images || null;
                 assistantMessage.model = canonical.responseModel || canonical.model;
                 assistantMessage.citations = canonical.citations || null;
@@ -1734,7 +1749,7 @@ export default class CouncilController {
                 (chunk, imageData) => {
                     markRunning();
                     const newImages = Array.isArray(imageData?.images) ? imageData.images : [];
-                    if (!chunk && newImages.length === 0) return;
+                    if (!chunk && newImages.length === 0 && !imageData?.toolCallPending) return;
                     attemptOutput = true;
                     if (chunk) {
                         content += chunk;
@@ -1833,7 +1848,8 @@ export default class CouncilController {
                 this.app.reasoningEffort,
                 null,
                 health => this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, health, entry.name),
-                requestTiming(abortController?.signal, laneId, entry.id)
+                requestTiming(abortController?.signal, laneId, entry.id),
+                this.app.getClientToolOptions?.(entry) || null
             );
             }, {
                 signal: abortController?.signal || null,
@@ -1861,6 +1877,10 @@ export default class CouncilController {
             this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, null);
         }
 
+        const chartResult = { content };
+        applyChartToolResult(chartResult, tokenData?.toolCalls);
+        content = chartResult.content;
+        if (laneState) laneState.artifacts = normalizeChartArtifacts(chartResult.artifacts);
         const reportedModel = typeof tokenData.model === 'string' && tokenData.model.trim()
             ? tokenData.model.trim() : lastReportedModel || entry.id;
         stopStillWorking();
@@ -1892,6 +1912,7 @@ export default class CouncilController {
 
         return {
             content,
+            artifacts: normalizeChartArtifacts(chartResult.artifacts),
             totalTokens: tokenData.totalTokens,
             promptTokens: tokenData.promptTokens,
             completionTokens: tokenData.completionTokens || streamingTokenCount || null,

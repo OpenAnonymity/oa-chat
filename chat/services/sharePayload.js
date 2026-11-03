@@ -1,4 +1,4 @@
-import { normalizeChartArtifacts } from '../domain/chartArtifacts.js';
+import { normalizeChartArtifacts, normalizeMessageChartArtifacts } from '../domain/chartArtifacts.js';
 import { normalizeMemoryRetrievalFailureReason } from './memoryRetrievalError.js';
 import {
     normalizeCouncilConfig,
@@ -66,7 +66,7 @@ export function buildBaseSharePayload(session, messages, options = {}) {
                 }
             }
 
-            return msg;
+            return normalizeMessageChartArtifacts(msg);
         })
     };
 }

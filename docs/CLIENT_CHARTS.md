@@ -17,8 +17,10 @@ is text-only; charts already stored on messages still render.
 system prompt) only when the selected catalog entry lists `tools` in
 `supported_parameters`. `api.js` keeps that field from the OpenRouter
 catalog; `modelCatalogCache.js` persists it. Other models receive exactly the
-request they received before. Quick Ask, Parallel lanes and Council stay
-text-only in this increment.
+request they received before. Single replies, Parallel lanes, Council synthesis, and Quick Ask all offer the
+same tool options. Both ticket and zkAPI adapters pass these to the shared parser.
+The model picker labels catalog-declared chart support; unsupported or unknown
+models receive no chart tools.
 
 The function takes:
 
@@ -58,7 +60,10 @@ become an italic note appended to the text (`clientToolError`), never markup.
 `processMessagesForApi` replays an assistant message that carries a chart as
 an assistant `tool_calls` message followed by a `tool` result
 ("Rendered a bar chart titled … in the chat."), so provider tool ordering
-stays valid and the next reply does not re-describe the chart.
+stays valid and the next reply does not re-describe the chart. For a model without
+catalog-declared tool support, chart history is sent as ordinary assistant text
+containing the title, units and exact data table. Each Parallel lane retains its
+own chart; Council sees the chart data when comparing the lane responses.
 `formatChatCompletionMessage` in `api.js` keeps those fields on the wire.
 
 ## Rendering
@@ -92,7 +97,7 @@ artifacts that re-validate.
 
 ## Not yet
 
-Cards (`render_cards`), Quick Ask / Council lanes, widget → chat postback,
+Cards (`render_cards`), widget → chat postback,
 multi-model eval of when the model chooses a chart, and usage counters.
 
 ## Staging release review (2026-11-03)
@@ -106,3 +111,15 @@ Stop/error cleanup clears a pending chart placeholder before persisting it.
 Copy, Regenerate and Fork remain below the entire chart, including its Show data
 disclosure, both during live completion and after reload. The browser fixture
 `test-browser/chart-layout.mjs` covers reasoning-only and text-first arrival.
+
+## Copy and multi-model charts (2026-11-03 follow-up)
+
+Copy includes response prose plus the chart title, units and exact values as a
+tab-separated table, including chart-only replies and individual Parallel lanes.
+The rendered card holds escaped copy text for synchronous Safari clipboard access.
+Chart specs remain bounded and validated at rendering and share/import boundaries,
+including each lane and the Council synthesis. Quick Ask renders charts in its
+existing temporary answer panel; it does not add them to the saved transcript.
+
+A chart tool fragment counts as visible output for retry safety. An interrupted
+chart request is never silently resent merely because it has no prose yet.

@@ -49,3 +49,20 @@ test('a lane stopped before it spoke says so and offers Try again', async () => 
     assert.match(html, /council-lane-retry-btn[^>]*regenerate-council-lane-btn[^>]*data-council-lane-id="primary"/s);
     assert.match(html, /OTHER_LANE_COMPLETE_XYZ/);
 });
+
+test('chart-only lanes and synthesis render their charts before their actions', async () => {
+    const artifact = title => ({ version: 1, type: 'chart', spec: { chartType: 'bar', title, xLabels: ['A'], series: [{ name: 'Count', values: [2] }] } });
+    const msg = message('complete', '');
+    msg.council.stage1[0].artifacts = [artifact('Lane chart')];
+    const laneHtml = await renderMessage(msg);
+    assert.match(laneHtml, /copy-council-lane-btn[^>]*data-council-lane-id="primary"/s);
+    assert.match(laneHtml, /regenerate-council-lane-btn[^>]*data-council-lane-id="primary"/s);
+    assert.ok(laneHtml.indexOf('Lane chart') < laneHtml.indexOf('copy-council-lane-btn'));
+    msg.council.synthesis = { status: 'complete', response: '', artifacts: [artifact('Review chart')], model: 'Review' };
+    msg.artifacts = msg.council.synthesis.artifacts;
+    const html = await renderMessage(msg);
+    assert.match(html, /Lane chart/);
+    assert.match(html, /Review chart/);
+    assert.match(html, /copy-message-btn/);
+    assert.ok(html.indexOf('Review chart') < html.indexOf('copy-message-btn'));
+});

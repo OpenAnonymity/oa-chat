@@ -21,7 +21,7 @@ import { keptAccessStages } from '../domain/accessTrace.js';
 import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
 import { HTTP_STATUS_NAMES, describeInferenceFailure } from '../domain/inferenceFailure.js';
 import { replyHasEnded } from '../domain/messageLifecycle.js';
-import { getMessageChartArtifact } from '../domain/chartArtifacts.js';
+import { getMessageChartArtifact, getMessageCopyText } from '../domain/chartArtifacts.js';
 import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
@@ -1461,7 +1461,7 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     // (text, an image, or reasoning), gets copy and regenerate.
     const settled = entry?.status === 'complete' || entry?.status === 'cancelled';
     const failed = entry?.status === 'error';
-    if (!failed && (!settled || !(entry.response || hasImages || (entry.status === 'cancelled' && hasReasoning)))) {
+    if (!failed && (!settled || !(entry.response || hasImages || getMessageChartArtifact(entry) || (entry.status === 'cancelled' && hasReasoning)))) {
         return '';
     }
 
@@ -1476,9 +1476,10 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     return `
         <div class="assistant-actions-anchor assistant-actions-row council-response-actions flex items-center justify-between gap-2 w-full -mt-1" aria-label="${escapeHtmlAttribute(`${label} actions`)}">
             <div class="flex items-center gap-1">
-                ${entry.response?.trim() ? `<button
+                ${entry.response?.trim() || getMessageChartArtifact(entry) ? `<button
                     class="message-action-btn council-lane-action-btn copy-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     ${laneAttributes}
+                    ${getMessageChartArtifact(entry) ? `data-chart-response-copy="${escapeHtmlAttribute(getMessageCopyText({ content: entry.response, artifacts: entry.artifacts }))}"` : ''}
                     data-tooltip="Copy response">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
@@ -1581,6 +1582,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
     const hasRenderableOutput = !!(
         entry?.response ||
         laneImages.length > 0 ||
+        getMessageChartArtifact(entry) ||
         entry?.reasoning ||
         entry?.streamingReasoning
     );
@@ -1639,6 +1641,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
             <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
                 ${reasoningHtml}
                 ${contentHtml}
+                ${renderChartArtifact(getMessageChartArtifact(entry), { messageId: `${messageId}-${entry.laneId || entry.label}` })}
                 ${imagesHtml}
                 ${isStillWorking ? buildCouncilLaneWorkingIndicator(entry.stillWorkingSince) : ''}
                 ${stoppedNote}
@@ -1713,6 +1716,7 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
 
     const hasRenderableOutput = !!(
         synthesis.response ||
+        getMessageChartArtifact(synthesis) ||
         synthesis.reasoning ||
         synthesis.streamingReasoning
     );
@@ -1759,6 +1763,7 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
             <div class="council-response-body" data-council-lane-body="synthesis">
                 ${reasoningHtml}
                 ${contentHtml}
+                ${renderChartArtifact(getMessageChartArtifact(synthesis), { messageId: `${messageId}-synthesis` })}
             </div>
             ${synthesisActionsRow}
             ${!synthesisActionsRow && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}

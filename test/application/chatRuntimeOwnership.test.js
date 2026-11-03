@@ -1702,6 +1702,26 @@ describe('production ChatApp runtime ownership', () => {
             [['one', 'quick-1', 'quick-ask'], ['one', 'quick-2', 'quick-ask']]);
     });
 
+    test('Quick Ask offers chart tools and returns a chart-only answer instead of an empty reply', async () => {
+        const app = appHarness();
+        app.state.models = [{ id: 'chart-model', name: 'Charts', supported_parameters: ['tools'] }];
+        app.resolveModelForQuickAsk = async () => ({ modelId: 'chart-model', modelName: 'Charts' });
+        app.ensureQuickAskAccess = async session => session;
+        app.getQuickAskConversationMessages = messages => messages;
+        app.sanitizeMessagesForApi = app.processMessagesWithFiles = messages => messages;
+        app.normalizeModelName = value => value;
+        chatDB.getSessionMessages = async () => [];
+        const spec = { chartType: 'bar', title: 'Quick data', xLabels: ['A'], series: [{ name: 'Count', values: [3] }] };
+        app.inferenceService = { getDisplayName: () => 'Charts', streamCompletion: async (...args) => {
+            assert.equal(args[15].tools[0].function.name, 'render_chart');
+            await args[3](null, { toolCallPending: true });
+            return { toolCalls: [{ id: 'call', function: { name: 'render_chart', arguments: JSON.stringify(spec) } }] };
+        } };
+        const result = await app.inlineQuickAsk('Chart A: 3');
+        assert.equal(result.content, '');
+        assert.deepEqual(result.artifacts[0].spec, spec);
+    });
+
     test('message render invokes captured-session recovery without blocking the visible transcript', async () => {
         const app = appHarness();
         const reading = deferred();

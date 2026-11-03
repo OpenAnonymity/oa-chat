@@ -184,6 +184,20 @@ export function normalizeChartArtifacts(value) {
 
 export function normalizeMessageChartArtifacts(message) {
     if (!isPlainObject(message)) return message;
+    if (isPlainObject(message.council)) {
+        const normalizeLane = lane => {
+            if (!isPlainObject(lane)) return lane;
+            const copy = { ...lane };
+            const charts = normalizeChartArtifacts(copy.artifacts);
+            if (charts.length) copy.artifacts = charts;
+            else delete copy.artifacts;
+            return copy;
+        };
+        message.council = { ...message.council,
+            ...(Array.isArray(message.council.stage1) ? { stage1: message.council.stage1.map(normalizeLane) } : {}),
+            ...(message.council.synthesis ? { synthesis: normalizeLane(message.council.synthesis) } : {})
+        };
+    }
     const artifacts = normalizeChartArtifacts(message.artifacts);
     if (artifacts.length > 0) message.artifacts = artifacts;
     else delete message.artifacts;
@@ -259,4 +273,44 @@ export function createChartArtifactTranscript(artifact, index = 0) {
             content: `Rendered a ${artifact.spec.chartType} chart titled "${artifact.spec.title}" in the chat.`
         }
     ];
+}
+
+/** Plain-text table for clipboard and models that cannot accept tool history. */
+export function formatChartArtifactText(value) {
+    const artifact = normalizeChartArtifact(value);
+    if (!artifact) return '';
+    const { spec } = artifact;
+    const cell = value => String(value).replace(/[\t\r\n]+/g, ' ');
+    const rows = [
+        [spec.xAxisTitle || 'Category', ...spec.series.map(series => series.name)],
+        ...spec.xLabels.map((label, index) => [label, ...spec.series.map(series => series.values[index])])
+    ];
+    return [spec.title, spec.yAxisTitle ? `Values: ${spec.yAxisTitle}` : '',
+        rows.map(row => row.map(cell).join('\t')).join('\n')].filter(Boolean).join('\n');
+}
+
+export function getMessageCopyText(message) {
+    const text = typeof message?.content === 'string' ? message.content : '';
+    const chart = formatChartArtifactText(getMessageChartArtifact(message));
+    return [text, chart].filter(part => part.trim()).join('\n\n');
+}
+
+/** Shared by single replies, multi-model lanes, and Quick Ask. */
+export function applyChartToolResult(message, toolCalls) {
+    delete message.pendingArtifact;
+    const { artifact, error } = extractChartArtifactFromToolCalls(toolCalls);
+    if (artifact) {
+        message.artifacts = [artifact];
+        delete message.clientToolError;
+        return { hasVisibleOutput: true, error: null };
+    }
+    delete message.artifacts;
+    if (error) {
+        const prefix = message.content?.trim() ? `${message.content.trim()}\n\n` : '';
+        message.content = `${prefix}*The chart could not be shown: ${error}*`;
+        message.clientToolError = error;
+        return { hasVisibleOutput: true, error };
+    }
+    delete message.clientToolError;
+    return { hasVisibleOutput: false, error: null };
 }

@@ -2517,3 +2517,48 @@ test('simultaneously quiet lanes restore their own clocks without a new saved sn
     controller.restoreStillWorkingDisplays('session-1');
     assert.equal(paints.length, 0);
 });
+
+test('chart-only streams complete in each lane and preserve lane-specific chart history', async () => {
+    const chartSpec = title => ({ chartType: 'bar', title, xLabels: ['A', 'B'], series: [{ name: 'Count', values: [1, 2] }] });
+    const tools = { tools: [{ type: 'function', function: { name: 'render_chart' } }] };
+    const controller = createController({ inferenceService: { streamCompletion: async (...args) => {
+        assert.equal(args[15], tools);
+        args[3](null, { toolCallPending: true });
+        return { toolCalls: [{ id: 'call', type: 'function', function: { name: 'render_chart', arguments: JSON.stringify(chartSpec(args[1])) } }] };
+    } } });
+    controller.app.getClientToolOptions = () => tools;
+    const lanes = [];
+    for (const laneId of ['primary', 'secondary', 'synthesis']) {
+        const laneState = { laneId, label: laneId, model: laneId, status: 'running' };
+        const result = await controller.streamLaneMessagesCompletion({
+            session: { id: 'chat' }, entry: { id: laneId, name: laneId, laneId }, laneSession: {}, messages: [],
+            abortController: new AbortController(), streamTarget: { laneState }
+        });
+        assert.equal(result.content, '');
+        assert.equal(result.artifacts[0].spec.title, laneId);
+        assert.deepEqual(laneState.artifacts, result.artifacts);
+        lanes.push({ ...laneState, status: 'complete' });
+    }
+    const message = { role: 'assistant', council: { stage1: lanes.slice(0, 2) } };
+    const canonical = controller.refreshStage1CanonicalResponse(message);
+    assert.equal(canonical.laneId, 'primary');
+    assert.equal(message.artifacts[0].spec.title, 'primary');
+    const secondary = controller.buildLaneConversationMessages([message], { laneId: 'secondary' }, [])[0];
+    assert.equal(secondary.artifacts[0].spec.title, 'secondary');
+    message.council.synthesis = lanes[2];
+    assert.equal(controller.buildLaneConversationMessages([message], { laneId: 'secondary' }, [])[0].artifacts[0].spec.title, 'synthesis');
+});
+
+test('a failed stream after chart output is not automatically resent', async () => {
+    let attempts = 0;
+    const controller = createController({ inferenceService: { streamCompletion: async (...args) => {
+        attempts++;
+        args[3](null, { toolCallPending: true });
+        throw Object.assign(new Error('Temporarily unavailable'), { status: 503 });
+    } } });
+    await assert.rejects(controller.streamLaneMessagesCompletion({
+        session: { id: 'chat' }, entry: { id: 'model', name: 'Model', laneId: 'primary' },
+        laneSession: {}, messages: [], abortController: new AbortController()
+    }));
+    assert.equal(attempts, 1);
+});

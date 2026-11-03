@@ -1,4 +1,4 @@
-import { createChartArtifactTranscript, getMessageChartArtifact } from './chartArtifacts.js';
+import { createChartArtifactTranscript, getMessageChartArtifact, getMessageCopyText } from './chartArtifacts.js';
 
 const DEFAULT_MAX_ATTACHED_IMAGES = 2;
 
@@ -68,6 +68,10 @@ export function processMessagesForApi(messages, currentModelId, options = {}) {
 
         if (msg.role === 'assistant') {
             const chart = getMessageChartArtifact(msg);
+            if (chart && options.supportsClientTools === false) {
+                result.push({ role: 'assistant', content: getMessageCopyText(msg) });
+                continue;
+            }
             if (chart) {
                 // Replay the rendered chart as the tool call it was, so the
                 // provider sees valid tool ordering and does not re-describe it.
