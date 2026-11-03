@@ -200,16 +200,34 @@ function openStream(timing = {}) {
     const api = apiFor(async () => new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }), timing);
     return { api, push, get canceled() { return canceled; }, close() { try { controller.close(); } catch { /* already canceled */ } } };
 }
-test('a confirmed finish followed only by heartbeats completes within the tail and keeps the usage that arrives in it', async () => {
+test('a confirmed finish followed only by heartbeats completes within the tail and keeps the usage that arrives in it', async t => {
+    // Drive provider cadence and watchdog time together. A loaded host must not
+    // turn a 3 ms heartbeat into a false silence or stretch the tail assertion.
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 0 });
+    const drain = async () => {
+        for (let i = 0; i < 25; i++) await new Promise(resolve => setImmediate(resolve));
+    };
     const feed = openStream({ tailMs: 40, outputMs: 400 });
     const health = [], chunks = [];
     const started = Date.now();
     const pending = stream(feed.api, { health: h => health.push(h), chunk: c => chunks.push(c) });
     feed.push(delta + 'data: {"choices":[{"delta":{"content":" done"},"finish_reason":"stop"}]}\n\n');
-    await new Promise(r => setTimeout(r, 5));
+    let settled = false;
+    pending.then(() => { settled = true; }, () => { settled = true; });
+    await drain();
+    assert.deepEqual(chunks, ['Partial answer', ' done'], 'the finish event has arrived before time advances');
+    t.mock.timers.tick(5);
     feed.push('data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n');
+    await drain();
     const heartbeat = setInterval(() => feed.push(': OPENROUTER PROCESSING\n\n'), 3);
     try {
+        for (let ticks = 0; ticks < 14 && !settled; ticks++) {
+            t.mock.timers.tick(3);
+            await drain();
+            if (Date.now() - started < 40) assert.equal(settled, false, 'the completion tail remains open for usage');
+        }
+        assert.equal(settled, true, 'the confirmed finish settles within one heartbeat of its tail');
+        assert.ok(Date.now() - started <= 43, 'the 40 ms tail ends before idle or output expiry');
         const result = await pending;
         assert.ok(Date.now() - started < 300, 'settles after the tail, not after the output deadline');
         assert.equal(result.finishReason, 'stop');

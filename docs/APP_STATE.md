@@ -12,6 +12,10 @@ The provider-fault fixture now waits for startup proxy requests to settle before
 selecting its local direct mock connection, replacing an unreliable 800 ms delay.
 It preserves the real active-request guard, retries only that specific setup race,
 and fails after 30 seconds. No live proxy or fallback policy changed.
+The heartbeat-tail and held-SDK-import ordering regressions use controlled clocks
+so host scheduling cannot create false silence or expire their tiny test budgets.
+The tail test still checks usage retention, exact output, cancellation and no
+silence, and now explicitly checks completion within 43 simulated milliseconds.
 
 ## 2026-11-03 — Chart actions stay below live charts
 

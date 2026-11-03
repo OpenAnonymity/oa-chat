@@ -494,6 +494,9 @@ test('a versioned build keeps its bounds: a code load that never answers is tick
 
 test('a versioned build starts the payment module only after the SDK is bound and the guard is on', async t => {
     quiet(t);
+    // This checks ordering, not elapsed time: host scheduling must not expire
+    // the intentionally held SDK import while runnable work drains.
+    manualClock(t);
     const sdkArrives = deferred();
     const h = setup(t, { importSdk: async sdk => { await sdkArrives.promise; return sdk; } });
     seedWallet(h.env);
