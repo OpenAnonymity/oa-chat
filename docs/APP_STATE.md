@@ -1,3 +1,23 @@
+## 2026-11-03 — Client-rendered charts (generative UI, first increment)
+
+- A tool-capable model may call the client-side `render_chart` function; the
+  browser validates the spec, stores it as `message.artifacts[0]` (`version: 1,
+  type: "chart"`) and draws it as inline SVG. See `docs/CLIENT_CHARTS.md`.
+- `api.js` now accumulates streamed `tool_calls`, sends `tools`/`tool_choice`
+  only when the caller passes client tools, round-trips assistant tool calls
+  and `tool` results, keeps `supported_parameters` on catalog entries, and
+  treats a tool-only reply as an answer. Without client tools the request body
+  is byte-identical to before.
+- The first tool fragment is output: it arms the watchdog, sets the first-token
+  flag, and reaches the resend policy through `onChunk(null, { toolCallPending: true })`,
+  so a failure after it is shown rather than silently resent.
+- `ChatArea.finalizeStreamingMessage` keeps its pinned targeted path; the chart
+  slot (outside `.message-content`) is settled by `syncChartSlot` inside it.
+- Flag `CLIENT_CHARTS_FEATURE_FLAG` (`config.js`). Quick Ask, Parallel and
+  Council remain text-only. Share export/import carry only re-validated charts.
+- Staging only until reviewed; this branch inherits the staging timing
+  restriction below and must not be promoted wholesale to production.
+
 ## 2026-10-31: Authorizing oa-clientd (staging)
 
 - `#oa-daemon=` opens an approval dialog after ordinary sign-in; see

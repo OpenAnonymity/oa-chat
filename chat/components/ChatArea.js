@@ -18,6 +18,8 @@ import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/qui
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { renderMathContent } from '../services/mathRendering.js';
 import { getProviderIcon } from '../services/providerIcons.js';
+import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
+import { getMessageChartArtifact } from '../domain/chartArtifacts.js';
 
 export default class ChatArea {
     /**
@@ -3480,6 +3482,46 @@ export default class ChatArea {
      * @param {Object} options
      * @param {boolean} options.forceFullRender - Rebuild all message chrome even if reasoning is finalized
      */
+    // Places `html` in the message's chart slot (after the text, before
+    // generated images), creating the slot if needed; empty html removes it.
+    setChartSlot(messageEl, html) {
+        let host = messageEl.querySelector('[data-message-chart]');
+        if (!html) {
+            host?.remove();
+            return;
+        }
+        if (!host) {
+            host = document.createElement('div');
+            host.className = 'font-normal message-assistant-chart w-full';
+            host.dataset.messageChart = messageEl.dataset.messageId || '';
+            const images = messageEl.querySelector('.message-assistant-images');
+            const textBubble = messageEl.querySelector('.message-content')?.closest('[data-message-id] > *');
+            if (images) images.insertAdjacentElement('beforebegin', host);
+            else if (textBubble) textBubble.insertAdjacentElement('afterend', host);
+            else messageEl.appendChild(host);
+        }
+        host.innerHTML = html;
+    }
+
+    // The model started a chart call after its text began: show the
+    // placeholder now, in the slot the finished chart will take.
+    showPendingArtifact(messageId, kind = 'chart') {
+        if (kind !== 'chart' || !messageId) return;
+        const messageEl = document.querySelector(`[data-message-id="${CSS.escape(String(messageId))}"]`);
+        if (!messageEl || messageEl.querySelector('[data-message-chart]')) return;
+        this.setChartSlot(messageEl, renderChartPlaceholder());
+    }
+
+    // Settles the chart slot for a finished message without re-rendering the
+    // rest of it: the chart, or nothing where a placeholder stood.
+    syncChartSlot(messageEl, message) {
+        const artifact = getMessageChartArtifact(message);
+        const html = artifact
+            ? renderChartArtifact(artifact, { messageId: message.id })
+            : (message.pendingArtifact === 'chart' ? renderChartPlaceholder() : '');
+        this.setChartSlot(messageEl, html);
+    }
+
     async finalizeStreamingMessage(message, options = {}) {
         if (message?.id) {
             for (const id of [...this.settledReasoningIds.keys()]) {
@@ -3511,6 +3553,8 @@ export default class ChatArea {
                 contentEl.innerHTML = this.renderCompletedAssistantContent(message, message.id);
                 renderMathContent(contentEl);
             }
+            // The chart slot lives outside .message-content: settle it in place.
+            this.syncChartSlot(messageEl, message);
 
             // The message was appended while it was still thinking, so its
             // action row is the empty placeholder. Swap in the real row

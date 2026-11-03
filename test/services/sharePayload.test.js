@@ -99,3 +99,17 @@ test('Council shares exclude lane credentials and wallet state', () => {
     assert.equal('councilAccess' in payload.session, false);
     assert.equal('inferenceTickets' in payload.session, false);
 });
+
+test('buildBaseSharePayload carries valid chart artifacts and drops anything else', () => {
+    const spec = { chartType: 'bar', title: 'Spend', xLabels: ['a', 'b'], series: [{ name: 's', values: [1, 2] }] };
+    const session = { title: 'Charts', model: 'm', createdAt: '2026-07-02T00:00:00.000Z', updatedAt: '2026-07-02T00:00:01.000Z' };
+    const payload = buildBaseSharePayload(session, [
+        { role: 'assistant', content: 'Here', timestamp: 't', model: 'm',
+            artifacts: [{ version: 1, type: 'html', source: '<script>' }, { version: 1, type: 'chart', spec, toolCallId: 'call_1', extra: 'x' }] },
+        { role: 'assistant', content: 'None', timestamp: 't', model: 'm', artifacts: [{ version: 1, type: 'chart', spec: { ...spec, chartType: 'nope' } }] },
+        { role: 'assistant', content: 'Plain', timestamp: 't', model: 'm' }
+    ]);
+    assert.deepEqual(payload.messages[0].artifacts, [{ version: 1, type: 'chart', spec, toolCallId: 'call_1' }]);
+    assert.equal('artifacts' in payload.messages[1], false);
+    assert.equal('artifacts' in payload.messages[2], false);
+});

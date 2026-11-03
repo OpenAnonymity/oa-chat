@@ -21,6 +21,8 @@ import { keptAccessStages } from '../domain/accessTrace.js';
 import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
 import { HTTP_STATUS_NAMES, describeInferenceFailure } from '../domain/inferenceFailure.js';
 import { replyHasEnded } from '../domain/messageLifecycle.js';
+import { getMessageChartArtifact } from '../domain/chartArtifacts.js';
+import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -2189,6 +2191,19 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Build imported thumbnails (small horizontal row before text)
     const thumbnailsBubble = buildImportedThumbnails(message.images);
 
+    // Client-rendered chart (after the text, before generated images). The
+    // spec is validated data rendered here as SVG; a chart whose data is
+    // still streaming shows a placeholder in the same slot.
+    const chartArtifact = getMessageChartArtifact(message);
+    const chartHtml = chartArtifact
+        ? renderChartArtifact(chartArtifact, { messageId: message.id })
+        : (message.pendingArtifact === 'chart' ? renderChartPlaceholder() : '');
+    const chartBubble = chartHtml ? `
+        <div class="font-normal message-assistant-chart w-full" data-message-chart="${escapeHtmlAttribute(message.id)}">
+            ${chartHtml}
+        </div>
+    ` : '';
+
     // Build image bubble for generated images (large, after text)
     const generatedImagesHtml = buildGeneratedImages(message.images);
     const imageBubble = generatedImagesHtml ? `
@@ -2200,8 +2215,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Check if message is complete but has no user-visible output (no text, no reasoning, no images).
     // Reasoning-only responses can happen when generation is manually interrupted.
     const hasReasoningOutput = typeof message.reasoning === 'string' && message.reasoning.trim().length > 0;
-    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace;
-    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
+    const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace && !chartHtml;
+    const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble || !!chartHtml;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
     // Painted from storage while another tab writes it (restoredResponse.js):
     // what has arrived so far, no actions yet, and where the rest comes from.
@@ -2382,6 +2397,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${agentTraceBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
+                ${chartBubble}
                 ${imageBubble}
                 ${message.inferenceError ? buildResponseErrorHtml(message.inferenceError) : ''}
                 ${isAnsweringElsewhere ? `<div class="px-2 py-1 answering-elsewhere" role="status" aria-live="polite">

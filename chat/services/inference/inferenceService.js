@@ -230,7 +230,7 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.verification || null;
     },
-    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth, requestTiming = null) {
+    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth, requestTiming = null, clientToolOptions = null) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
         const callbacks = timingCallbacks(requestTiming, onChunk, onStreamOpen, onReasoningChunk);
@@ -249,7 +249,8 @@ const inferenceService = {
             reasoningEffort,
             onAccessProgress,
             onStreamHealth,
-            requestTiming
+            requestTiming,
+            clientToolOptions
         ), abortController?.signal).then(result => { requestTiming?.outcome(abortController?.signal?.aborted ? 'cancelled' : 'complete'); return result; }, error => {
             requestTiming?.outcome(isStopError(error, abortController?.signal) ? 'cancelled' : 'error');
             throw error;

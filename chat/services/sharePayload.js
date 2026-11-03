@@ -1,3 +1,4 @@
+import { normalizeChartArtifacts } from '../domain/chartArtifacts.js';
 import { normalizeMemoryRetrievalFailureReason } from './memoryRetrievalError.js';
 import {
     normalizeCouncilConfig,
@@ -36,6 +37,9 @@ export function buildBaseSharePayload(session, messages, options = {}) {
             };
 
             if (m.turnId) msg.turnId = m.turnId;
+            // Client-rendered charts travel as their validated spec only.
+            const artifacts = normalizeChartArtifacts(m.artifacts);
+            if (artifacts.length > 0) msg.artifacts = artifacts;
             if (m.parentUserMessageId) msg.parentUserMessageId = m.parentUserMessageId;
             if (m.councilRequest) msg.councilRequest = m.councilRequest;
             if (m.council) msg.council = m.council;
