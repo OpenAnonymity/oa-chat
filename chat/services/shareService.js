@@ -4,6 +4,7 @@
  */
 
 import { encrypt, decrypt } from './shareEncryption.js';
+import { normalizeMessageChartArtifacts } from '../domain/chartArtifacts.js';
 import { getShareBaseUrl } from './appRoutes.js';
 import { conversationQuery } from './conversationLink.js';
 import { ORG_API_BASE } from './orgEndpoints.js';
@@ -413,7 +414,7 @@ export function createSessionFromPayload(payload, shareId, ciphertext, generateI
  * @returns {Array} Message objects ready for saving
  */
 export function createMessagesFromPayload(payloadMessages, sessionId, generateId) {
-    return payloadMessages.map(m => ({
+    return payloadMessages.map(m => normalizeMessageChartArtifacts({
         ...m,
         id: generateId(),
         sessionId
