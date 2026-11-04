@@ -18,11 +18,11 @@ test('imported share messages keep only valid chart artifacts', () => {
     const spec = { chartType: 'line', title: 'T', xLabels: ['a'], series: [{ name: 's', values: [1] }] };
     let n = 0;
     const [good, bad, none] = createMessagesFromPayload([
-        { role: 'assistant', content: 'x', artifacts: [{ version: 1, type: 'chart', spec }] },
+        { role: 'assistant', content: 'x', artifacts: [{ version: 1, type: 'chart', spec }, { version: 1, type: 'chart', spec: { ...spec, title: 'Second' } }] },
         { role: 'assistant', content: 'y', artifacts: [{ version: 1, type: 'html', source: '<p>' }, 'junk'] },
         { role: 'user', content: 'z' }
     ], 'session-1', () => `id-${++n}`);
-    assert.deepEqual(good.artifacts, [{ version: 1, type: 'chart', spec }]);
+    assert.deepEqual(good.artifacts, [{ version: 1, type: 'chart', spec }, { version: 1, type: 'chart', spec: { ...spec, title: 'Second' } }]);
     assert.equal(good.sessionId, 'session-1');
     assert.equal('artifacts' in bad, false);
     assert.equal('artifacts' in none, false);

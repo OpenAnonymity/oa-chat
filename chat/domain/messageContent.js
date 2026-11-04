@@ -1,4 +1,4 @@
-import { createChartArtifactTranscript, getMessageChartArtifact, getMessageCopyText } from './chartArtifacts.js';
+import { createChartArtifactTranscript, normalizeChartArtifacts, getMessageCopyText } from './chartArtifacts.js';
 
 const DEFAULT_MAX_ATTACHED_IMAGES = 2;
 
@@ -67,17 +67,21 @@ export function processMessagesForApi(messages, currentModelId, options = {}) {
         const isLastUserMessage = i === lastUserIndex;
 
         if (msg.role === 'assistant') {
-            const chart = getMessageChartArtifact(msg);
-            if (chart && options.supportsClientTools === false) {
+            const charts = normalizeChartArtifacts(msg.artifacts);
+            if (charts.length && options.supportsClientTools === false) {
                 result.push({ role: 'assistant', content: getMessageCopyText(msg) });
                 continue;
             }
-            if (chart) {
+            if (charts.length) {
                 // Replay the rendered chart as the tool call it was, so the
                 // provider sees valid tool ordering and does not re-describe it.
-                const [assistantToolCall, toolResult] = createChartArtifactTranscript(chart, i);
-                assistantToolCall.content = msg.content || null;
-                result.push(assistantToolCall, toolResult);
+                const transcripts = charts.map((chart, chartIndex) => createChartArtifactTranscript(
+                    // Locally scoped IDs also repair duplicate IDs in imported/provider artifacts.
+                    { ...chart, toolCallId: `chart_${i}_${chartIndex}` }
+                ));
+                result.push({ role: 'assistant', content: msg.content || null,
+                    tool_calls: transcripts.flatMap(([assistant]) => assistant.tool_calls) },
+                    ...transcripts.map(([, tool]) => tool));
                 continue;
             }
             result.push({

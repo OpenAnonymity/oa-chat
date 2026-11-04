@@ -87,3 +87,23 @@ test('a rejected clipboard write reports failure without a success checkmark', a
     assert.equal(confirmed, false);
     assert.match(toast, /Could not copy/);
 });
+
+
+test('multiple charts survive Copy, sharing and tool/text history with unique replay IDs', () => {
+    const artifacts = [chart('First'), chart('Second', 700)];
+    artifacts.forEach(a => { a.toolCallId = 'duplicate'; });
+    const message = { role: 'assistant', content: 'Both charts.', artifacts,
+        council: { stage1: [{ laneId: 'primary', artifacts }], synthesis: { artifacts } } };
+    const copy = getMessageCopyText(message);
+    assert.match(copy, /First[\s\S]*Second[\s\S]*700/);
+    const shared = buildBaseSharePayload({}, [message]).messages[0];
+    assert.equal(shared.artifacts.length, 2);
+    assert.equal(shared.council.stage1[0].artifacts.length, 2);
+    assert.equal(shared.council.synthesis.artifacts.length, 2);
+    const history = processMessagesForApi([message], 'tool-model');
+    assert.deepEqual(history.map(m => m.role), ['assistant', 'tool', 'tool']);
+    assert.equal(history[0].tool_calls.length, 2);
+    assert.notEqual(history[1].tool_call_id, history[2].tool_call_id);
+    assert.deepEqual(history[0].tool_calls.map(c => c.id), history.slice(1).map(m => m.tool_call_id));
+    assert.equal(processMessagesForApi([message], 'plain', { supportsClientTools: false })[0].content, copy);
+});

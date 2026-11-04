@@ -22,7 +22,7 @@ import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.
 import { HTTP_STATUS_NAMES, describeInferenceFailure } from '../domain/inferenceFailure.js';
 import { replyHasEnded } from '../domain/messageLifecycle.js';
 import { getMessageChartArtifact, getMessageCopyText } from '../domain/chartArtifacts.js';
-import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
+import { renderMessageCharts, renderChartPlaceholder } from './chartSvg.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -1641,7 +1641,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
             <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
                 ${reasoningHtml}
                 ${contentHtml}
-                ${renderChartArtifact(getMessageChartArtifact(entry), { messageId: `${messageId}-${entry.laneId || entry.label}` })}
+                ${renderMessageCharts(entry, { messageId: `${messageId}-${entry.laneId || entry.label}` })}
                 ${imagesHtml}
                 ${isStillWorking ? buildCouncilLaneWorkingIndicator(entry.stillWorkingSince) : ''}
                 ${stoppedNote}
@@ -1763,7 +1763,7 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
             <div class="council-response-body" data-council-lane-body="synthesis">
                 ${reasoningHtml}
                 ${contentHtml}
-                ${renderChartArtifact(getMessageChartArtifact(synthesis), { messageId: `${messageId}-synthesis` })}
+                ${renderMessageCharts(synthesis, { messageId: `${messageId}-synthesis` })}
             </div>
             ${synthesisActionsRow}
             ${!synthesisActionsRow && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
@@ -2199,10 +2199,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // Client-rendered chart (after the text, before generated images). The
     // spec is validated data rendered here as SVG; a chart whose data is
     // still streaming shows a placeholder in the same slot.
-    const chartArtifact = getMessageChartArtifact(message);
-    const chartHtml = chartArtifact
-        ? renderChartArtifact(chartArtifact, { messageId: message.id })
-        : (message.pendingArtifact === 'chart' ? renderChartPlaceholder() : '');
+    const chartHtml = renderMessageCharts(message, { messageId: message.id })
+        || (message.pendingArtifact === 'chart' ? renderChartPlaceholder() : '');
     const chartBubble = chartHtml ? `
         <div class="font-normal message-assistant-chart w-full" data-message-chart="${escapeHtmlAttribute(message.id)}">
             ${chartHtml}

@@ -831,7 +831,7 @@ test('completed assistant content uses shared markdown finalization path', () =>
 
     assert.equal(source.includes('renderCompletedAssistantContent(message, scopeId = message?.id)'), true);
     assert.equal(source.includes('async finalizeStreamingMessage(message, options = {})'), true);
-    assert.equal(source.includes('const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError);'), true,
+    assert.equal(source.includes('const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError)'), true,
         'interrupted partial answers must rebuild the failure notice even after reasoning finalization');
     assert.equal(source.includes('if (isReasoningFinalized && !forceFullRender)'), true);
     assert.equal(source.includes('window.MessageTemplates.insertRawCitationMarkers'), true);

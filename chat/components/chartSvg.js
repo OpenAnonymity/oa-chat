@@ -6,7 +6,7 @@
 // audited in one read and swapped for a library later without touching the
 // message templates.
 
-import { validateChartSpec, formatChartArtifactText } from '../domain/chartArtifacts.js';
+import { validateChartSpec, formatChartArtifactText, normalizeChartArtifacts } from '../domain/chartArtifacts.js';
 
 const WIDTH = 640;
 const PLOT_HEIGHT = 300;
@@ -270,4 +270,9 @@ export function renderChartPlaceholder() {
     return '<figure class="oa-chart-card oa-chart-card-pending" aria-busy="true" aria-label="Preparing a chart">' +
         '<figcaption class="oa-chart-title">Preparing a chart…</figcaption>' +
         '<div class="oa-chart-skeleton"><span></span><span></span><span></span><span></span><span></span></div></figure>';
+}
+
+/** Render every validated chart in a message/lane through the same card renderer. */
+export function renderMessageCharts(message, options = {}) {
+    return normalizeChartArtifacts(message?.artifacts).map(artifact => renderChartArtifact(artifact, options)).join('');
 }

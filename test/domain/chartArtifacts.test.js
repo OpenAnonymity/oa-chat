@@ -8,7 +8,9 @@ import {
     RENDER_CHART_TOOL,
     createChartArtifactFromToolCall,
     createChartArtifactTranscript,
-    extractChartArtifactFromToolCalls,
+    extractChartArtifactsFromToolCalls,
+    applyChartToolResult,
+    MAX_CHARTS_PER_MESSAGE,
     getMessageChartArtifact,
     modelSupportsClientTools,
     normalizeChartArtifacts,
@@ -87,16 +89,29 @@ test('a tool call becomes an artifact, and every failure is a readable error', (
     assert.match(createChartArtifactFromToolCall('nope').error, /malformed/);
 });
 
-test('one chart per response: none is silent, two is an error', () => {
-    assert.deepEqual(extractChartArtifactFromToolCalls([]), { artifact: null, error: null });
-    assert.deepEqual(extractChartArtifactFromToolCalls(undefined), { artifact: null, error: null });
-    assert.equal(extractChartArtifactFromToolCalls([call(JSON.stringify(GOOD))]).artifact.spec.chartType, 'bar');
-    assert.match(extractChartArtifactFromToolCalls([call('{}'), call('{}')]).error, /more than one chart/);
+test('multiple charts preserve valid siblings and report malformed and excess calls', () => {
+    assert.deepEqual(extractChartArtifactsFromToolCalls([]), { artifacts: [], error: null });
+    const calls = [call(JSON.stringify(GOOD)), call('bad JSON'), call(JSON.stringify({ ...GOOD, title: 'Second' }))];
+    const message = { content: '', pendingArtifact: 'chart' };
+    applyChartToolResult(message, calls);
+    assert.deepEqual(message.artifacts.map(a => a.spec.title), ['Monthly spend', 'Second']);
+    assert.match(message.content, /Some charts could not be shown: Chart 2:.*not valid JSON/);
+    assert.equal(message.pendingArtifact, undefined);
+    const allValid = extractChartArtifactsFromToolCalls([calls[0], calls[2]]);
+    assert.equal(allValid.artifacts.length, 2);
+    assert.equal(allValid.error, null);
+    const excess = extractChartArtifactsFromToolCalls(Array(MAX_CHARTS_PER_MESSAGE + 1).fill(calls[0]));
+    assert.equal(excess.artifacts.length, MAX_CHARTS_PER_MESSAGE);
+    assert.match(excess.error, /remaining charts/);
+    const invalid = { content: '' };
+    applyChartToolResult(invalid, [null, call('{}')]);
+    assert.match(invalid.content, /The chart could not be shown/);
+    assert.equal(invalid.artifacts, undefined);
 });
 
-test('stored artifacts are normalized, foreign types dropped, and the first valid chart kept', () => {
+test('stored artifacts are normalized, foreign types dropped, and valid charts kept in order', () => {
     const chart = { version: 1, type: 'chart', spec: GOOD, toolCallId: 'call_9' };
-    assert.deepEqual(normalizeChartArtifacts([{ version: 1, type: 'html', source: '<p>' }, { version: 2, type: 'chart', spec: GOOD }, chart, chart]).map(a => a.toolCallId), ['call_9']);
+    assert.deepEqual(normalizeChartArtifacts([{ version: 1, type: 'html', source: '<p>' }, { version: 2, type: 'chart', spec: GOOD }, chart, chart]).map(a => a.toolCallId), ['call_9', 'call_9']);
     assert.deepEqual(normalizeChartArtifacts('junk'), []);
     const message = { role: 'assistant', content: 'x', artifacts: [{ version: 1, type: 'chart', spec: { ...GOOD, chartType: 'nope' } }] };
     normalizeMessageChartArtifacts(message);

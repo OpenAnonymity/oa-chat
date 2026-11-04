@@ -101,3 +101,53 @@ test('the byte cap counts UTF-8 bytes, not code units', () => {
     assert.match(finalizeStreamingToolCalls(accumulator)[0].invalidReason, /exceeded/);
     assert.equal(createStreamingToolCallAccumulator().maxArgumentBytes, MAX_TOOL_ARGUMENT_BYTES);
 });
+
+
+test('many calls have bounded storage while retained calls still finish', () => {
+    const accumulator = createStreamingToolCallAccumulator();
+    appendStreamingToolCallDeltas(accumulator, Array.from({ length: 100 }, (_, index) => ({
+        index, id: `call_${index}`, function: { name: 'render_chart', arguments: '{' }
+    })));
+    appendStreamingToolCallDeltas(accumulator, [{ index: 0, function: { arguments: '}' } }]);
+    assert.equal(accumulator.entries.size, 8);
+    const calls = finalizeStreamingToolCalls(accumulator);
+    assert.equal(calls[0].function.arguments, '{}');
+    assert.equal(calls.length, 9);
+    assert.match(calls.at(-1).invalidReason, /more tool calls/);
+});
+
+
+test('sequential ID-only calls and interleaved continuations stay separate', () => {
+    const accumulator = createStreamingToolCallAccumulator();
+    for (const id of ['first', 'second']) appendStreamingToolCallDeltas(accumulator, [{
+        id, function: { name: 'render_chart', arguments: '{' }
+    }]);
+    for (const id of ['second', 'first']) appendStreamingToolCallDeltas(accumulator, [{
+        id, function: { arguments: '}' }
+    }]);
+    const calls = finalizeStreamingToolCalls(accumulator);
+    assert.deepEqual(calls.map(c => [c.id, c.function.name, c.function.arguments]), [
+        ['first', 'render_chart', '{}'], ['second', 'render_chart', '{}']
+    ]);
+});
+
+test('oversized IDs are rejected without colliding with a valid prefix ID', () => {
+    const accumulator = createStreamingToolCallAccumulator();
+    const id = 'x'.repeat(200);
+    appendStreamingToolCallDeltas(accumulator, [{ id, function: { name: 'render_chart', arguments: '{' } }]);
+    appendStreamingToolCallDeltas(accumulator, [{ id: id + 'invalid', function: { name: 'bad', arguments: 'bad' } }]);
+    appendStreamingToolCallDeltas(accumulator, [{ id, function: { arguments: '}' } }]);
+    assert.equal(accumulator.entries.size, 1);
+    const calls = finalizeStreamingToolCalls(accumulator);
+    assert.equal(calls[0].function.arguments, '{}');
+    assert.match(calls[1].invalidReason, /ID exceeded/);
+});
+
+
+test('an oversized-ID-only reply still reports calls so its visible error is delivered', () => {
+    const accumulator = createStreamingToolCallAccumulator();
+    assert.equal(appendStreamingToolCallDeltas(accumulator, [{ id: 'x'.repeat(201), function: { name: 'render_chart', arguments: '{}' } }]), true);
+    assert.equal(hasStreamingToolCalls(accumulator), true);
+    assert.equal(finalizeStreamingToolCalls(accumulator).length, 1);
+    assert.match(finalizeStreamingToolCalls(accumulator)[0].invalidReason, /ID exceeded/);
+});

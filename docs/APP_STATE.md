@@ -1,3 +1,12 @@
+## 2026-11-04 — Multiple charts and visible chart failures
+
+Replies retain up to four valid charts; each tool call validates independently.
+Copy, history, share/import and every chart surface use the full list. Replay IDs
+are unique by turn/chart. Streamed calls are bounded to eight plus bounded limit
+errors. Finalizing reasoning with new text and no existing text bubble uses a full
+render so validation errors cannot vanish when the placeholder clears. Source
+prompt guidance is not data verification. See [CLIENT_CHARTS.md](CLIENT_CHARTS.md).
+
 ## 2026-11-04 — Remove chart labels from model picker
 
 The picker omits “Charts” and “No charts” labels and their hover descriptions.

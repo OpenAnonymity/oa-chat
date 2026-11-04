@@ -1,6 +1,6 @@
 # Client-rendered charts (generative UI, first increment)
 
-oa-chat can show one chart inside an assistant response. The model never
+oa-chat can show up to four charts inside an assistant response. The model never
 produces markup: a tool-capable model calls the client-side `render_chart`
 function with a small typed spec, the browser validates it, stores it on the
 message as a versioned artifact, and draws it as inline SVG. Nothing in this
@@ -34,9 +34,9 @@ The function takes:
 }
 ```
 
-Limits (`chat/domain/chartArtifacts.js`): 8 series, 500 points, labels
+Limits (`chat/domain/chartArtifacts.js`): four charts per reply, 8 series per chart, 500 points, labels
 80 characters, title 120, spec 64 KiB, tool arguments 128 KiB while
-streaming (`chat/domain/streamingToolCalls.js`). Every series must match the
+streaming (`chat/domain/streamingToolCalls.js`), at most eight retained calls plus bounded overflow/invalid-ID errors. Every series must match the
 label count; values must be finite; a pie takes one non-negative series.
 Numeric strings are read as numbers; unknown fields are dropped.
 
@@ -52,15 +52,19 @@ tool-only reply is an answer, not `INFERENCE_EMPTY`.
 
 `applyClientToolResult` in `app.js` turns the calls into the message's
 `artifacts: [{ version: 1, type: "chart", spec, toolCallId }]`. Invalid JSON,
-an unknown tool, two calls, an over-limit payload or a failed validation
-become an italic note appended to the text (`clientToolError`), never markup.
+an unknown tool, an over-limit payload or a failed validation become a visible
+note appended to the text (`clientToolError`). Calls validate independently: valid
+charts stay visible when a sibling fails. More than four valid charts retains the
+first four and explains the limit. Prompt guidance asks for separate calls and
+sourced data, but this is not a guarantee that model-provided figures are verified.
 
 ## Later turns
 
 `processMessagesForApi` replays an assistant message that carries a chart as
-an assistant `tool_calls` message followed by a `tool` result
+one assistant `tool_calls` message followed by one `tool` result per chart
 ("Rendered a bar chart titled … in the chat."), so provider tool ordering
-stays valid and the next reply does not re-describe the chart. For a model without
+stays valid and the next reply does not re-describe the chart. Replay IDs are
+scoped by message and chart position to prevent collisions in provider/imported data. For a model without
 catalog-declared tool support, chart history is sent as ordinary assistant text
 containing the title, units and exact data table. Each Parallel lane retains its
 own chart; Council sees the chart data when comparing the lane responses.
@@ -138,3 +142,14 @@ Parallel/Council and Quick Ask charts. Data is validated again on first interact
 text is inserted with textContent, never HTML. The feature adds no dependency,
 network call, persistence, or telemetry. Tooltips are hidden in print; Show data
 and chart copying remain available independently.
+
+## Multiple charts and late validation text (2026-11-04)
+
+All charts survive rendering, Copy, history, share export/import, Parallel/Council
+lanes and Quick Ask. The card renderer and hover delegate work per chart. A completed
+reasoning-only row may lack a text bubble: finalization now rebuilds that row when
+new completion text (including validation errors) needs one. This fixes the blank
+reply caused by clearing a chart placeholder without inserting the error text.
+`test-browser/chart-layout.mjs` exercises two live/restored charts, exact DOM Copy,
+partial/all-invalid calls after reasoning and Quick Ask. Unit tests cover bounded
+accumulation, mixed-validity calls, copying, unique replay IDs and share/import.

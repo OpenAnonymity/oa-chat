@@ -18,7 +18,7 @@ import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/qui
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { renderMathContent } from '../services/mathRendering.js';
 import { getProviderIcon } from '../services/providerIcons.js';
-import { renderChartArtifact, renderChartPlaceholder } from './chartSvg.js';
+import { renderMessageCharts, renderChartPlaceholder } from './chartSvg.js';
 import { installChartInteractions } from './chartInteractions.js';
 import { getMessageChartArtifact, getMessageCopyText } from '../domain/chartArtifacts.js';
 
@@ -804,8 +804,8 @@ export default class ChatArea {
         answerEl.innerHTML = globalThis.window?.MessageTemplates?.enhanceInlineLinks?.(
             html, `quick-ask-${this.quickAsk.activeRequestId}`
         ) ?? html;
-        const chart = getMessageChartArtifact(options);
-        if (chart) answerEl.insertAdjacentHTML('beforeend', renderChartArtifact(chart));
+        const charts = renderMessageCharts(options);
+        if (charts) answerEl.insertAdjacentHTML('beforeend', charts);
         renderMathContent(answerEl);
         if (followAnswer) miniChat.scrollTop = miniChat.scrollHeight;
     }
@@ -1012,7 +1012,8 @@ export default class ChatArea {
      */
     getChartCopyTextFromDOM(messageEl) {
         const scope = messageEl.querySelector('.council-synthesis-block') || messageEl;
-        return scope.querySelector('[data-chart-copy-text]')?.getAttribute('data-chart-copy-text') || '';
+        return [...scope.querySelectorAll('[data-chart-copy-text]')]
+            .map(element => element.getAttribute('data-chart-copy-text')).filter(Boolean).join('\n\n');
     }
 
     getMessageTextFromDOM(messageId) {
@@ -3525,10 +3526,8 @@ export default class ChatArea {
     // Settles the chart slot for a finished message without re-rendering the
     // rest of it: the chart, or nothing where a placeholder stood.
     syncChartSlot(messageEl, message) {
-        const artifact = getMessageChartArtifact(message);
-        const html = artifact
-            ? renderChartArtifact(artifact, { messageId: message.id })
-            : (message.pendingArtifact === 'chart' ? renderChartPlaceholder() : '');
+        const html = renderMessageCharts(message, { messageId: message.id })
+            || (message.pendingArtifact === 'chart' ? renderChartPlaceholder() : '');
         this.setChartSlot(messageEl, html);
     }
 
@@ -3542,7 +3541,10 @@ export default class ChatArea {
         if (!messageEl) return;
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
-        const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError);
+        const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError)
+            // A reasoning-only row has no text bubble to update. Completion may
+            // add text (including a chart validation error), so build that bubble.
+            || (!!message.content?.trim() && !messageEl.querySelector('.message-content'));
         this.updateMessageModel(message);
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)

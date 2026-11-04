@@ -1,8 +1,7 @@
 // Client-rendered charts ("generative UI", first increment).
 //
 // A supported model calls the `render_chart` function with a small typed
-// spec; the browser validates it here and renders it with a vendored chart
-// library. The model never produces markup. The spec is stored on the
+// spec; the browser validates it here and renders it as inline SVG. The model never produces markup. The spec is stored on the
 // message as a versioned artifact and is replayed to later turns as an
 // assistant tool call plus a tool result, so the provider sees that the
 // chart was rendered locally. Nothing in this module touches the network.
@@ -12,6 +11,7 @@ export const CHART_ARTIFACT_VERSION = 1;
 export const CHART_ARTIFACT_TYPE = 'chart';
 
 export const CHART_TYPES = Object.freeze(['bar', 'line', 'pie']);
+export const MAX_CHARTS_PER_MESSAGE = 4;
 export const MAX_CHART_SERIES = 8;
 export const MAX_CHART_POINTS = 500;
 export const MAX_CHART_LABEL_LENGTH = 80;
@@ -21,8 +21,10 @@ const MAX_TOOL_CALL_ID_LENGTH = 200;
 
 export const CHART_TOOL_SYSTEM_INSTRUCTIONS =
     'When the answer is a set of numbers that a reader would compare or follow over time ' +
-    '(a trend, a breakdown, a comparison across categories), call render_chart once with the ' +
-    'data instead of describing every value in prose. Keep any accompanying text short. ' +
+    '(a trend, a breakdown, a comparison across categories), call render_chart with the ' +
+    'data instead of describing every value in prose. Use a separate call for each chart, up to four charts per reply. ' +
+    'Keep any accompanying text short. Use only data supplied by the user or supported by accessible sources; ' +
+    'cite sources for researched figures and never claim to have searched unless you actually did. ' +
     'Do not call render_chart for a single number, for data you would have to invent, or when ' +
     'a sentence or a short table already answers the question.';
 
@@ -172,14 +174,16 @@ export function normalizeChartArtifact(value, options = {}) {
     return artifact;
 }
 
-/** Normalizes a stored list, keeping at most the first valid chart. */
+/** Normalizes a stored list, retaining a bounded set of valid charts in order. */
 export function normalizeChartArtifacts(value) {
     if (!Array.isArray(value)) return [];
+    const artifacts = [];
     for (const entry of value) {
         const artifact = normalizeChartArtifact(entry);
-        if (artifact) return [artifact];
+        if (artifact) artifacts.push(artifact);
+        if (artifacts.length === MAX_CHARTS_PER_MESSAGE) break;
     }
-    return [];
+    return artifacts;
 }
 
 export function normalizeMessageChartArtifacts(message) {
@@ -237,16 +241,21 @@ export function createChartArtifactFromToolCall(toolCall) {
     return { artifact, error: null };
 }
 
-/**
- * Picks the chart from a response's tool calls. One chart per response:
- * a second call is reported as an error rather than silently dropped, so the
- * person sees that the model tried to do more than the client supports.
- */
-export function extractChartArtifactFromToolCalls(toolCalls) {
-    const calls = Array.isArray(toolCalls) ? toolCalls.filter(call => call && typeof call === 'object') : [];
-    if (calls.length === 0) return { artifact: null, error: null };
-    if (calls.length > 1) return { artifact: null, error: 'The model tried to render more than one chart in a single response.' };
-    return createChartArtifactFromToolCall(calls[0]);
+/** Validate calls independently so one malformed chart cannot hide its siblings. */
+export function extractChartArtifactsFromToolCalls(toolCalls) {
+    const calls = Array.isArray(toolCalls) ? toolCalls : [];
+    const artifacts = [];
+    const errors = [];
+    for (const [index, call] of calls.entries()) {
+        if (artifacts.length === MAX_CHARTS_PER_MESSAGE) {
+            errors.push(`Only ${MAX_CHARTS_PER_MESSAGE} charts can be shown in one reply. Ask for the remaining charts in another reply.`);
+            break;
+        }
+        const { artifact, error } = createChartArtifactFromToolCall(call);
+        if (artifact) artifacts.push(artifact);
+        else errors.push(`Chart ${index + 1}: ${error}`);
+    }
+    return { artifacts, error: errors.length ? errors.join(' ') : null };
 }
 
 /**
@@ -291,26 +300,20 @@ export function formatChartArtifactText(value) {
 
 export function getMessageCopyText(message) {
     const text = typeof message?.content === 'string' ? message.content : '';
-    const chart = formatChartArtifactText(getMessageChartArtifact(message));
-    return [text, chart].filter(part => part.trim()).join('\n\n');
+    const charts = normalizeChartArtifacts(message?.artifacts).map(formatChartArtifactText);
+    return [text, ...charts].filter(part => part.trim()).join('\n\n');
 }
 
 /** Shared by single replies, multi-model lanes, and Quick Ask. */
 export function applyChartToolResult(message, toolCalls) {
     delete message.pendingArtifact;
-    const { artifact, error } = extractChartArtifactFromToolCalls(toolCalls);
-    if (artifact) {
-        message.artifacts = [artifact];
-        delete message.clientToolError;
-        return { hasVisibleOutput: true, error: null };
-    }
-    delete message.artifacts;
+    const { artifacts, error } = extractChartArtifactsFromToolCalls(toolCalls);
+    if (artifacts.length) message.artifacts = artifacts;
+    else delete message.artifacts;
     if (error) {
         const prefix = message.content?.trim() ? `${message.content.trim()}\n\n` : '';
-        message.content = `${prefix}*The chart could not be shown: ${error}*`;
+        message.content = `${prefix}*${artifacts.length ? 'Some charts could not be shown' : 'The chart could not be shown'}: ${error}*`;
         message.clientToolError = error;
-        return { hasVisibleOutput: true, error };
-    }
-    delete message.clientToolError;
-    return { hasVisibleOutput: false, error: null };
+    } else delete message.clientToolError;
+    return { hasVisibleOutput: artifacts.length > 0 || !!error, error };
 }
