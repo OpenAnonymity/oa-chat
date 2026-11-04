@@ -9249,3 +9249,7 @@ behavior changes.
 The Account footer separator is always visible using the existing border color
 token, including empty/short histories and when scrolled to the bottom. It no
 longer depends on `has-more-below`. Footer placement and spacing are unchanged.
+
+## Staging tier-aware ticket access (2026-11-04)
+
+See [TICKET_TIER_ACCESS.md](TICKET_TIER_ACCESS.md). No picker/UI change. Fresh full-price keys on an uncovered upgrade; reuse equal/cheaper access and retained purchases, with cross-tab locking and verifier retirement. Activation is staging-only and requires the corresponding org/station policy rollout. Do not promote this staging source wholesale to production.

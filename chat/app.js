@@ -1,3 +1,4 @@
+import { ticketTierPolicyEnabled, findTierAccess, mergeTicketAccessHistory } from './services/inference/ticketTierAccess.js';
 import { startRequestTiming, requestTiming, finishRequestTiming, timingTextVisible, hasRequestTiming } from './services/stagingRequestTiming.js';
 import { STILL_WORKING_DELAY_MS } from './services/streamSegments.js';
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
@@ -5392,12 +5393,24 @@ class ChatApp {
         return getTicketCost(modelId, reasoningEnabled);
     }
 
+    hasEligibleModelAccess(session, modelName = null, modelId = null, restore = false) {
+        if (!ticketTierPolicyEnabled() || !this.usesTicketAccess(session)) return true;
+        const models = this.getModelsForSession(session);
+        const selected = modelId || modelName || session.model;
+        const entry = models.find(m => m.id === selected || m.name === selected);
+        const id = modelId || entry?.id;
+        const info = findTierAccess(session, id, id ? this.getTicketCost(id) : NaN, this.inferenceService);
+        if (info && restore && info.key !== session.apiKey) this.inferenceService.setAccessInfo(session, info);
+        return !!info;
+    }
+
     async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
         modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled, refreshPricing = false } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
         const councilActive = this.isCouncilModeActive(session) && this.councilController;
-        if (!councilActive && this.inferenceService.getAccessToken(session)
-            && !this.inferenceService.isAccessExpired(session)) {
+        if (!councilActive && (ticketTierPolicyEnabled() && this.usesTicketAccess(session)
+            ? this.hasEligibleModelAccess(session, requestedModelName)
+            : this.inferenceService.getAccessToken(session) && !this.inferenceService.isAccessExpired(session))) {
             return { tickets: 0, label: session.model || 'the selected model' };
         }
         let models = this.getModelsForSession(session);
@@ -5406,6 +5419,7 @@ class ChatApp {
         // ask the org again before the message is accepted. Key acquisition
         // refreshes immediately before spending; rejected counts retry once.
         const councilTicketRequirement = async entries => {
+            await this.councilController.refreshStoredTicketAccess?.(session);
             const fresh = this.councilController.getFreshEntriesForAccess(session, entries);
             if (fresh.length === 0) return 0;
             await ensureModelTiersReady({ signal, forceRefresh: true });
@@ -5469,6 +5483,13 @@ class ChatApp {
             || models.find(model => model.id === modelName)
             || this.getFallbackModelEntry(session);
 
+        if (ticketTierPolicyEnabled() && this.usesTicketAccess(session) && modelEntry) {
+            const stored = await chatDB.getSession(session.id);
+            if (stored) Object.assign(session, mergeTicketAccessHistory(session, stored));
+            if (this.hasEligibleModelAccess(session, modelName, modelEntry.id)) {
+                return { tickets: 0, label: modelEntry.name || modelName };
+            }
+        }
         return {
             tickets: modelEntry ? this.getTicketCost(modelEntry.id, reasoningEnabled) : 0,
             label: modelEntry?.name || modelName || 'the selected model'
@@ -7605,10 +7626,11 @@ class ChatApp {
             await this.prepareRuntimeTurn(session, abortController.signal);
 
             // Automatically acquire API key if needed
+            const hasTierAccess = this.hasEligibleModelAccess(session, retryModelName, null, true);
             const hasAccessToken = !!this.inferenceService.getAccessToken(session);
             const isAccessExpired = this.inferenceService.isAccessExpired(session);
             const accessLabel = this.inferenceService.getAccessLabel(session);
-            if (!hasAccessToken || isAccessExpired) {
+            if (!hasAccessToken || isAccessExpired || !hasTierAccess) {
                 try {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
@@ -8554,10 +8576,11 @@ class ChatApp {
             await this.prepareRuntimeTurn(session, abortController.signal);
 
             // Automatically acquire API key if needed
+            const hasTierAccess = this.hasEligibleModelAccess(session, submission.model, null, true);
             const hasAccessToken = !!this.inferenceService.getAccessToken(session);
             const isAccessExpired = this.inferenceService.isAccessExpired(session);
             const accessLabel = this.inferenceService.getAccessLabel(session);
-            if (!hasAccessToken || isAccessExpired) {
+            if (!hasAccessToken || isAccessExpired || !hasTierAccess) {
                 try {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
@@ -9338,6 +9361,9 @@ class ChatApp {
                 }
                 quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
             } else {
+                // A retained paid lane may be eligible while the active lane is not.
+                await this.councilController.ensureAccessForEntries(session, [entry], null, abortController.signal);
+                quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
                 options.onStatus?.('waiting-response');
             }
 
@@ -9360,9 +9386,10 @@ class ChatApp {
             throw new Error('The current station is banned.');
         }
 
+        const hasTierAccess = this.hasEligibleModelAccess(accessSession, quickAskModel.modelName, quickAskModel.modelId, true);
         const hasAccessToken = !!this.inferenceService.getAccessToken(accessSession);
         const isAccessExpired = this.inferenceService.isAccessExpired(accessSession);
-        if (!hasAccessToken || isAccessExpired) {
+        if (!hasAccessToken || isAccessExpired || !hasTierAccess) {
             options.onStatus?.('requesting-key');
             try {
                 if (this.floatingPanel) {
@@ -12539,7 +12566,11 @@ Your API key has been cleared. A new key from a different station will be obtain
             entry.promise = (async () => {
                 if (this.usesTicketAccess(session)) await ensureModelTiersReady({ signal: controller.signal });
                 this.throwIfAborted(controller.signal);
+                const requestedName = options.modelNameOverride || session.model;
+                const requestedId = options.modelIdOverride || models.find(m => m.name === requestedName || m.id === requestedName)?.id;
                 return acquireSessionAccess({
+                    tierPurchase: ticketTierPolicyEnabled() && this.usesTicketAccess(session)
+                        ? { modelId: requestedId, cost: requestedId ? getTicketCost(requestedId) : NaN } : null,
                     acquireAccess: this.runtime.acquireAccess,
                     requestTiming: timing,
                     session,
