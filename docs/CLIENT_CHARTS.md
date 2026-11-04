@@ -19,8 +19,8 @@ system prompt) only when the selected catalog entry lists `tools` in
 catalog; `modelCatalogCache.js` persists it. Other models receive exactly the
 request they received before. Single replies, Parallel lanes, Council synthesis, and Quick Ask all offer the
 same tool options. Both ticket and zkAPI adapters pass these to the shared parser.
-The model picker labels catalog-declared chart support; unsupported or unknown
-models receive no chart tools.
+Unsupported or unknown models receive no chart tools. Chart capability labels
+are omitted from the model picker (user preference, 2026-11-04).
 
 The function takes:
 

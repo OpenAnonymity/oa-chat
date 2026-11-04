@@ -1,4 +1,3 @@
-import { modelSupportsClientTools } from '../domain/chartArtifacts.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ModelPicker Component
@@ -483,7 +482,6 @@ export default class ModelPicker {
                         <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
                         ${pricing ? `<div class="mt-0.5 truncate text-[10px] text-muted-foreground" title="${escapePricing(pricing.description)}">${escapePricing(pricing.label)}</div>` : ''}
                     </div>
-                    <span class="text-xs text-muted-foreground" data-model-chart-support title="${modelSupportsClientTools(model) ? 'Can create charts from data' : 'This model does not advertise chart support'}">${modelSupportsClientTools(model) ? 'Charts' : 'No charts'}</span>
                     ${checkmarkSlot}
                     ${paymentBadge}
                 </div>

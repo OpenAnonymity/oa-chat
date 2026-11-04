@@ -1,3 +1,9 @@
+## 2026-11-04 — Remove chart labels from model picker
+
+The picker omits “Charts” and “No charts” labels and their hover descriptions.
+Chart capability checks remain in request handling; model names, selection and
+pricing are unchanged.
+
 ## 2026-11-03 — Interactive chart values
 
 Line/bar charts now inspect the nearest category with exact values for all series,
@@ -11,8 +17,8 @@ sent. See [CLIENT_CHARTS.md](CLIENT_CHARTS.md).
 Copy on chart-only replies now includes title/units/exact table values. Ticket and
 zkAPI requests, Parallel lanes, Council synthesis and Quick Ask share chart tools.
 Lane charts stay lane-scoped through history, regeneration, synthesis and sharing.
-Models without catalog-declared tools receive text chart history and are marked
-in the picker. Quick Ask charts stay in its temporary panel. Tool fragments count
+Models without catalog-declared tools receive text chart history. Picker capability
+labels were removed on 2026-11-04 at the user’s request. Quick Ask charts stay in its temporary panel. Tool fragments count
 as output before retry decisions; no acquisition/payment policy changes.
 See [CLIENT_CHARTS.md](CLIENT_CHARTS.md) for contracts and tests.
 
