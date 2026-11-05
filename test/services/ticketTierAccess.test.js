@@ -59,3 +59,30 @@ test('failed purchase retains old access, and absence of locks cannot spend', as
     assert.equal(s.apiKey, 'cheap');
     await assert.rejects(withTierPurchaseLock({ ...args, locks: null }), /locking/);
 });
+
+test('upgrading a shared key preserves session-level expiry and reuses the original purchase', () => {
+    const expiresAt = new Date(Date.now() + 60000).toISOString();
+    const original = { apiKey: 'shared', expiresAt, apiKeyInfo: { key: 'shared', ticketsConsumed: 5 } };
+    retainTicketAccess(original);
+    assert.equal(original.ticketAccessHistory[0].key, 'shared');
+    assert.equal(original.ticketAccessHistory[0].expiresAt, expiresAt);
+    original.apiKey = 'upgraded';
+    original.apiKeyInfo = { key: 'upgraded', ticketsConsumed: 10, expiresAt };
+    original.retiredTicketAccess = [{key:'upgraded',expiresAt}];
+    const restored = findTierAccess(original, 'p/high', 5, {getAccessToken:s=>s.apiKey,isAccessExpired:s=>Date.parse(s.expiresAt)<=Date.now()});
+    assert.equal(restored.key, 'shared');
+});
+
+test('active imported access keeps session expiry when restored by a purchase lock', async () => {
+    const expiresAt = future();
+    const stored = { id:'chat', apiKey:'shared', expiresAt, apiKeyInfo:{key:'shared',ticketsConsumed:5} };
+    const stale = { id:'chat' };
+    const service = { getAccessToken:s=>s.apiKey, isAccessExpired:s=>!s.expiresAt||Date.parse(s.expiresAt)<=Date.now(),
+        setAccessInfo:(s,info)=>Object.assign(s,{apiKey:info.key,apiKeyInfo:info,expiresAt:info.expiresAt}) };
+    let purchases=0;
+    await withTierPurchaseLock({session:stale,modelId:'p/high',cost:5,service,
+        db:{getSession:async()=>stored,updateExistingSession:async(_id,fn)=>fn(stored)},
+        locks:{request:(_name,_options,fn)=>fn()},acquire:async()=>{purchases++;}});
+    assert.equal(purchases,0);assert.equal(stale.apiKey,'shared');assert.equal(stale.expiresAt,expiresAt);
+    assert.equal(service.isAccessExpired(stale),false);assert.equal(stored.expiresAt,expiresAt);
+});

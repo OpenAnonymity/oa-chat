@@ -21,9 +21,9 @@ export function accessCoversModel(info, modelId, ticketCost) {
 export function retainTicketAccess(session) {
     const valid = item => item?.key && Date.parse(item.expiresAt || item.expires_at || '') > Date.now();
     const prior = (session.ticketAccessHistory || []).filter(valid);
-    const current = session.apiKeyInfo;
+    const current = { ...session.apiKeyInfo, expiresAt: session.expiresAt || session.apiKeyInfo?.expiresAt || session.apiKeyInfo?.expires_at };
     if (session.apiKey && valid({ ...current, key: session.apiKey })) {
-        prior.push({ ...current, key: session.apiKey, expiresAt: session.expiresAt });
+        prior.push({ ...current, key: session.apiKey });
     }
     session.ticketAccessHistory = [...new Map(prior.map(item => [item.key, item])).values()];
 }
@@ -63,7 +63,7 @@ export function findTierAccess(session, modelId, cost, service) {
     const usable = candidate => !retired.has(candidate.apiKey) && notBanned(candidate) && Boolean(service.getAccessToken(candidate))
         && !service.isAccessExpired(candidate)
         && accessCoversModel(candidate.apiKeyInfo, modelId, cost);
-    if (usable(session)) return session.apiKeyInfo;
+    if (usable(session)) return { ...session.apiKeyInfo, key: session.apiKey, expiresAt: session.expiresAt || session.apiKeyInfo?.expiresAt || session.apiKeyInfo?.expires_at };
     for (const info of session.ticketAccessHistory || []) {
         const candidate = { ...session, apiKey: info.key, apiKeyInfo: info, expiresAt: info.expiresAt };
         if (usable(candidate)) return info;
