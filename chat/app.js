@@ -39,6 +39,7 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
 import { renderMarkdownWithMath } from './services/mathRendering.js';
 import networkProxy from './services/networkProxy.js';
+import zeroDataRetention from './services/zeroDataRetention.js';
 import inferenceService from './services/inference/inferenceService.js';
 import { noteLoadedSession } from './services/inference/accessDiscardLog.js';
 import ticketClient from './services/ticketClient.js';
@@ -3103,6 +3104,8 @@ class ChatApp {
                 document.documentElement.setAttribute('data-welcome-hidden', 'true');
             }
         })();
+
+        this.initializeZeroDataRetention();
 
         // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
         const settingsPromise = Promise.all([
@@ -7444,6 +7447,17 @@ class ChatApp {
         if (mutationOwner && mutationOwner !== options.mutationToken) return;
         const job = { controller: new AbortController() };
         this.regenerationJobs.set(sessionId, job);
+        const regenerationSession = this.state.sessionsById.get(sessionId);
+        const zeroDataRetentionError = await this.checkZeroDataRetentionForSend({
+            sessionId,
+            model: options.modelName || regenerationSession?.model,
+            inferenceBackend: regenerationSession?.inferenceBackend
+        }).catch(error => error);
+        if (zeroDataRetentionError) {
+            if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
+            this.showToast(zeroDataRetentionError.message, 'error', 6000);
+            return;
+        }
         startRequestTiming(job.controller.signal, {
             mode: this.runtime?.getMode?.(this.state.sessionsById.get(sessionId)) === 'zkapi' ? 'zkapi' : 'ticket',
             visible: () => document.visibilityState === 'visible' && this.isViewingSession(sessionId)
@@ -8132,6 +8146,15 @@ class ChatApp {
             this.showToast?.(this.getFeatureUnavailableReason('council', session), 'info');
             return;
         }
+        const zeroDataRetentionError = await this.checkZeroDataRetentionForSend({
+            sessionId: session.id,
+            model: session.model,
+            inferenceBackend: session.inferenceBackend
+        }).catch(error => error);
+        if (zeroDataRetentionError) {
+            this.showToast(zeroDataRetentionError.message, 'error', 6000);
+            return;
+        }
         const operation = this.beginFeatureOperation('council', session);
         if (!operation) return;
         const mutation = this.beginSessionMutation(session.id, { exclusive: true });
@@ -8275,6 +8298,64 @@ class ChatApp {
         } catch { /* Optional timing cannot interfere with preparation. */ }
     }
 
+    initializeZeroDataRetention() {
+        zeroDataRetention.configure({
+            settingsStore: chatDB,
+            // Public list, fetched like the model catalog.
+            fetchJson: async url => {
+                const { response, data } = await networkProxy.fetchWithRetryJson(
+                    url,
+                    { method: 'GET', headers: {} },
+                    {
+                        context: 'Zero data retention providers',
+                        maxAttempts: 3,
+                        timeoutMs: 15000,
+                        proxyConfig: { bypassProxy: true }
+                    }
+                );
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                return data;
+            }
+        });
+        zeroDataRetention.onChange(() => {
+            this.modelPicker?.handleZeroDataRetentionChange?.();
+        });
+        zeroDataRetention.restore().catch(error => console.warn('Zero data retention restore failed:', error));
+    }
+
+    resolveModelIdForZeroDataRetention(modelName, session = null) {
+        if (!modelName) return '';
+        const models = session ? this.getModelsForSession(session) : this.state.models;
+        const match = (models || []).find(model => model.name === modelName || model.id === modelName);
+        return match?.id || modelName;
+    }
+
+    /**
+     * Refuses a send before any ticket or key is used when Zero data retention
+     * is on and a model in this turn has no eligible provider. The request
+     * layer enforces the same rule again for every OpenRouter call.
+     */
+    async checkZeroDataRetentionForSend(submission) {
+        if (!zeroDataRetention.isEnabled()) return null;
+        const session = submission.sessionId ? this.state.sessionsById.get(submission.sessionId) : null;
+        const backendId = submission.inferenceBackend || 'openrouter';
+        const modelNames = new Set([submission.model || this.getPrimaryModelName?.()].filter(Boolean));
+        if (session && this.isCouncilModeActive(session)) {
+            const fallbackModelName = this.normalizeModelName(session.model) || session.model || null;
+            const council = normalizeCouncilConfig(session.councilConfig, fallbackModelName);
+            council.members.forEach(name => modelNames.add(name));
+            if (council.outputMode === COUNCIL_OUTPUT_SYNTHESIS && council.synthesisModel) {
+                modelNames.add(council.synthesisModel);
+            }
+        }
+        for (const modelName of modelNames) {
+            const error = await zeroDataRetention.checkModel(
+                this.resolveModelIdForZeroDataRetention(modelName, session), backendId);
+            if (error) return error;
+        }
+        return null;
+    }
+
     async sendMessage(options = {}) {
         // A dialog owns the page; never send from the composer behind it.
         if (hasOpenModalDialog()) return;
@@ -8312,6 +8393,13 @@ class ChatApp {
             accepted: false
         };
         this.sendSubmissionsInFlight.set(submissionKey, submission);
+        const zeroDataRetentionError = await this.checkZeroDataRetentionForSend(submission).catch(error => error);
+        if (zeroDataRetentionError) {
+            this.sendSubmissionsInFlight.delete(submissionKey);
+            this.showToast(zeroDataRetentionError.message, 'error', 6000);
+            this.updateInputState();
+            return;
+        }
         startRequestTiming(submission.controller.signal, {
             mode: this.runtime?.getMode?.(this.state.sessionsById.get(sessionId)) === 'zkapi' ? 'zkapi' : 'ticket',
             visible: () => document.visibilityState === 'visible' && this.isViewingSession(submission.sessionId)

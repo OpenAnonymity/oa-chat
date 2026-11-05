@@ -29,6 +29,7 @@ import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
+import zeroDataRetention from './services/zeroDataRetention.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import {
     appendStreamingToolCallDeltas,
@@ -155,7 +156,9 @@ export class OpenRouterAPI {
             : body;
         // Composed billing adapters may reduce the allowance further, but may
         // not raise the user's 30,000-token ceiling or a smaller caller limit.
-        const finalBody = applyOutputTokenLimit(prepared, model, callerLimit);
+        // Zero data retention is applied last, after every adapter, so no
+        // composed product hook can drop or widen the provider restriction.
+        const finalBody = zeroDataRetention.applyToBody(applyOutputTokenLimit(prepared, model, callerLimit));
         validateInferenceInput(finalBody.messages, model);
         validateSerializedInferenceBody(JSON.stringify(finalBody));
         return finalBody;
@@ -207,6 +210,11 @@ export class OpenRouterAPI {
             modelId: options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID,
             reasoningEnabled: options.reasoningEnabled ?? true
         };
+        // The title model receives the first message. With zero data retention
+        // on and no eligible provider for it, keep the local title instead.
+        if (zeroDataRetention.isEnabled() && !zeroDataRetention.supportsModel(requestOptions.modelId)) {
+            return Promise.resolve('');
+        }
         return this.withRequestAccess(token, requestOptions, request =>
             request._generateSessionTitle(prompt, token, requestOptions));
     }

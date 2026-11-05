@@ -1,0 +1,86 @@
+import test, { afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+
+globalThis.localStorage = globalThis.localStorage || {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {}
+};
+
+const { default: ModelPicker } = await import('../../chat/components/ModelPicker.js');
+const { zeroDataRetention } = await import('../../chat/services/zeroDataRetention.js');
+
+const LIST = { data: [
+    { model_id: 'openai/primary', tag: 'azure', safety_retention: false },
+    { model_id: 'google/other', tag: 'google-ai-studio', safety_retention: true }
+] };
+
+async function useList() {
+    zeroDataRetention.configure({ settingsStore: { saveSetting: async () => {}, getSetting: async () => undefined },
+        fetchJson: async () => LIST });
+    await zeroDataRetention.ensureCatalog({ force: true });
+}
+
+function createPicker() {
+    const app = {
+        state: {
+            models: [
+                { id: 'openai/primary', name: 'OpenAI: Primary', provider: 'OpenAI', category: 'Pinned' },
+                { id: 'google/other', name: 'Google: Other', provider: 'Google', category: 'Pinned' }
+            ],
+            modelsLoading: false,
+            modelsVersion: 1
+        },
+        reasoningEnabled: true,
+        elements: {},
+        cachedModelDisplayMetadata: [],
+        getCurrentSession: () => ({ id: 'session-1', model: 'OpenAI: Primary' }),
+        getPrimaryModelName: () => 'OpenAI: Primary',
+        normalizeModelName: name => name
+    };
+    return new ModelPicker(app);
+}
+
+afterEach(async () => { await zeroDataRetention.setEnabled(false); });
+
+test('a shield marks models with a ZDR provider whether or not the switch is on', async () => {
+    await useList();
+    const picker = createPicker();
+    const primary = picker.buildModelOptionHTML(picker.app.state.models[0]);
+    const other = picker.buildModelOptionHTML(picker.app.state.models[1]);
+    assert.match(primary, /title="Supports zero data retention"/);
+    assert.doesNotMatch(other, /Supports zero data retention/);
+    assert.doesNotMatch(other, /aria-disabled/);
+});
+
+test('with the switch on, models without a ZDR provider are listed but cannot be chosen', async () => {
+    await useList();
+    await zeroDataRetention.setEnabled(true);
+    const picker = createPicker();
+    const other = picker.buildModelOptionHTML(picker.app.state.models[1]);
+    assert.match(other, /aria-disabled="true"/);
+    assert.match(other, /zdr-unavailable/);
+    assert.match(other, /No zero data retention providers/);
+    assert.doesNotMatch(picker.buildModelOptionHTML(picker.app.state.models[0]), /aria-disabled/);
+});
+
+test('keyboard navigation and Enter skip blocked rows', () => {
+    const picker = createPicker();
+    let selector = '';
+    picker.app.elements.modelsList = { querySelectorAll: query => { selector = query; return []; } };
+    picker.getModelOptions();
+    assert.equal(selector, '.model-option:not([aria-disabled="true"])');
+});
+
+test('the composer button shows the shield only while ZDR is enforced', async () => {
+    await useList();
+    const picker = createPicker();
+    const button = { innerHTML: '', title: '', classList: { add() {} }, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; } };
+    picker.app.elements.modelPickerBtn = button;
+    picker.renderCurrentModel();
+    assert.doesNotMatch(button.innerHTML, /zdr-chip-shield/);
+    await zeroDataRetention.setEnabled(true);
+    picker.renderCurrentModel();
+    assert.match(button.innerHTML, /zdr-chip-shield/);
+    assert.match(button.attributes['aria-label'], /zero data retention on/);
+});

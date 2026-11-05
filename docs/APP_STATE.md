@@ -1,3 +1,11 @@
+## 2026-11-05 — Zero data retention switch (staging)
+
+- The model picker has a "Zero data retention" switch under search, with the shared info tooltip. Models with an eligible provider show a green shield; with the switch on, the rest are dimmed and inert (`aria-disabled`, skipped by `getModelOptions`). See `docs/ZERO_DATA_RETENTION.md`.
+- Enforcement lives in `OpenRouterAPI.prepareRequestBody` (applied after every adapter) plus a pre-send check in `sendMessage`/`regenerateResponse`/`regenerateCouncilLane` so no ticket is spent on a refused model.
+- `provider.zdr: true` alone still admits Safety Retention endpoints; the request also pins `provider.only` to providers whose endpoint states `safety_retention: false`.
+- Title generation is skipped (local title kept) when ZDR is on, because the title model (Gemini Flash Lite) has no strict-ZDR provider.
+- New picker CSS must sit before the phone follow-up marker in `styles.css`; `phoneOverlays.test.js` requires everything after it to be phone-only.
+
 ## 2026-11-04 — Multiple charts and visible chart failures
 
 Replies retain up to four valid charts; each tool call validates independently.
