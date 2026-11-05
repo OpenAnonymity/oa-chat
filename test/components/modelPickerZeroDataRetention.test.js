@@ -72,15 +72,16 @@ test('keyboard navigation and Enter skip blocked rows', () => {
     assert.equal(selector, '.model-option:not([aria-disabled="true"])');
 });
 
-test('the composer button shows the shield only while ZDR is enforced', async () => {
+test('the composer button never shows a ZDR shield while the picker keeps it', async () => {
     await useList();
     const picker = createPicker();
     const button = { innerHTML: '', title: '', classList: { add() {} }, attributes: {}, setAttribute(key, value) { this.attributes[key] = value; } };
     picker.app.elements.modelPickerBtn = button;
     picker.renderCurrentModel();
-    assert.doesNotMatch(button.innerHTML, /zdr-chip-shield/);
+    assert.doesNotMatch(button.innerHTML, /zdr-shield/);
     await zeroDataRetention.setEnabled(true);
     picker.renderCurrentModel();
-    assert.match(button.innerHTML, /zdr-chip-shield/);
+    assert.doesNotMatch(button.innerHTML, /zdr-shield/);
+    assert.match(picker.buildModelOptionHTML(picker.app.state.models[0]), /zdr-shield/);
     assert.match(button.attributes['aria-label'], /zero data retention on/);
 });

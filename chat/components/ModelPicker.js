@@ -113,7 +113,9 @@ export default class ModelPicker {
         if (zdrToggle && this.boundZdrToggle !== zdrToggle && typeof zdrToggle.addEventListener === 'function') {
             this.boundZdrToggle = zdrToggle;
             zdrToggle.addEventListener('click', () => {
-                zeroDataRetention.setEnabled(!zeroDataRetention.isEnabled());
+                zeroDataRetention.setEnabled(!zeroDataRetention.isEnabled()).catch(error => {
+                    this.app.showToast?.(error.message, 'error', 6000);
+                });
             });
         }
         this.renderZdrToggle();
@@ -623,9 +625,8 @@ export default class ModelPicker {
         const currentModelId = model?.id || currentModelName;
         const zdrEnforced = zeroDataRetention.isEnabled() && zeroDataRetention.supportsModel(currentModelId);
         const zdrBlocked = zeroDataRetention.isEnabled() && !zdrEnforced && zeroDataRetention.hasCatalog();
-        const zdrChipHtml = zdrEnforced
-            ? `<span class="zdr-shield-wrap zdr-chip-shield">${zdrShieldHTML()}</span>`
-            : zdrBlocked ? '<span class="zdr-chip-note text-muted-foreground">· not ZDR</span>' : '';
+        const zdrChipHtml = zdrBlocked
+            ? '<span class="zdr-chip-note text-muted-foreground">· not ZDR</span>' : '';
 
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">

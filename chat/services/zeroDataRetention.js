@@ -6,7 +6,7 @@
  * `provider.zdr: true` alone still admits "Safety Retention" endpoints when
  * account or guardrail settings allow them, and there is no request field
  * that excludes those. So each request also carries `provider.only`: the
- * providers that serve this exact model with ZDR and without safety
+ * endpoint slugs that serve this exact model with ZDR and without safety
  * retention, taken from OpenRouter's public ZDR endpoint list.
  *
  * Fail closed: when ZDR is on and the list has not loaded, or the model has
@@ -43,15 +43,9 @@ function firstString(...values) {
     return '';
 }
 
-/**
- * The provider identifier OpenRouter accepts in `provider.only`. Endpoint
- * tags look like `amazon-bedrock` or `amazon-bedrock/us-east-1`; the slug is
- * the part before the slash. The display name is a fallback only.
- */
+/** Keep the full routing slug; stripping a region broadens routing. */
 export function providerSlugForEndpoint(entry) {
-    const tag = firstString(entry?.tag, entry?.provider_slug, entry?.slug);
-    if (tag) return tag.split('/')[0].toLowerCase();
-    return firstString(entry?.provider_name, typeof entry?.provider === 'string' ? entry.provider : '', entry?.provider?.name);
+    return firstString(entry?.tag, entry?.provider_slug, entry?.slug).toLowerCase();
 }
 
 function endpointModelId(entry) {
@@ -65,10 +59,10 @@ function endpointModelId(entry) {
 }
 
 /**
- * Builds model id → eligible provider slugs from the ZDR endpoint list.
- * An endpoint counts only when it states `safety_retention: false`; a missing
- * or unexpected value is treated as retention (excluded), so a format change
- * hides models rather than admitting a retaining endpoint.
+ * Builds model id → eligible full endpoint slugs from the ZDR endpoint list.
+ * Every listed endpoint in a model/provider group must explicitly state
+ * `safety_retention: false` and none may state `zdr: false`. A missing or
+ * unexpected retention policy excludes the group, including mixed regions.
  */
 export function parseZdrEndpoints(payload) {
     const entries = Array.isArray(payload) ? payload
@@ -79,15 +73,27 @@ export function parseZdrEndpoints(payload) {
     const byModel = new Map();
     for (const entry of entries) {
         if (!entry || typeof entry !== 'object') continue;
-        if (entry.safety_retention !== false) continue;
-        if (entry.zdr === false) continue;
         const modelId = endpointModelId(entry);
-        const provider = providerSlugForEndpoint(entry);
-        if (!modelId || !provider) continue;
-        if (!byModel.has(modelId)) byModel.set(modelId, new Set());
-        byModel.get(modelId).add(provider);
+        const endpoint = providerSlugForEndpoint(entry);
+        // A display name is not an endpoint identifier; never guess a route.
+        if (!modelId || !endpoint) continue;
+        const provider = endpoint.split('/')[0];
+        if (!byModel.has(modelId)) byModel.set(modelId, new Map());
+        const groups = byModel.get(modelId);
+        if (!groups.has(provider)) groups.set(provider, { eligible: true, endpoints: new Set() });
+        const group = groups.get(provider);
+        group.endpoints.add(endpoint);
+        // One retaining, unknown, or conflicting row vetoes the whole group,
+        // regardless of row order. This also avoids broad prefix matches.
+        if (entry.safety_retention !== false || entry.zdr === false) group.eligible = false;
     }
-    return new Map([...byModel].map(([modelId, providers]) => [modelId, [...providers].sort()]));
+    const catalog = new Map();
+    for (const [modelId, groups] of byModel) {
+        const endpoints = [...groups.values()].filter(group => group.eligible)
+            .flatMap(group => [...group.endpoints]).sort();
+        if (endpoints.length) catalog.set(modelId, endpoints);
+    }
+    return catalog;
 }
 
 /**
@@ -106,9 +112,10 @@ export function applyZeroDataRetention(body, { enabled, catalog }) {
     }
     let providers = catalog.get(modelId) || [];
     const existing = body.provider && typeof body.provider === 'object' ? body.provider : {};
-    if (Array.isArray(existing.only) && existing.only.length) {
-        const allowed = new Set(existing.only.map(value => String(value).toLowerCase()));
-        providers = providers.filter(provider => allowed.has(provider.toLowerCase()));
+    if (Array.isArray(existing.only)) {
+        const allowed = existing.only.map(value => String(value).trim().toLowerCase()).filter(Boolean);
+        providers = providers.filter(endpoint => allowed.some(slug =>
+            endpoint === slug || endpoint.startsWith(`${slug}/`)));
     }
     if (!providers.length) {
         throw new ZdrUnavailableError(
@@ -131,7 +138,7 @@ export function applyZeroDataRetention(body, { enabled, catalog }) {
  * App-wide state: the person's choice and the loaded endpoint list.
  * The choice is stored with the other chat settings (not synced).
  */
-class ZeroDataRetentionState {
+export class ZeroDataRetentionState {
     constructor() {
         this.enabled = false;
         this.catalog = null;
@@ -139,24 +146,70 @@ class ZeroDataRetentionState {
         this.listeners = new Set();
         this.settingsStore = null;
         this.fetchJson = null;
+        // Standalone API consumers have no app preference until configured.
+        this.settingsReady = true;
+        this.settingsError = null;
+        this.restorePromise = null;
+        this.preferenceRevision = 0;
+        this.savePromise = Promise.resolve();
     }
 
     configure({ settingsStore, fetchJson } = {}) {
-        if (settingsStore) this.settingsStore = settingsStore;
+        if (settingsStore && settingsStore !== this.settingsStore) {
+            this.settingsStore = settingsStore;
+            this.preferenceRevision += 1;
+            this.settingsReady = false;
+            this.settingsError = null;
+            this.restorePromise = null;
+        }
         if (fetchJson) this.fetchJson = fetchJson;
     }
 
-    async restore() {
-        try {
-            const saved = await this.settingsStore?.getSetting?.(ZDR_SETTING_KEY);
-            this.enabled = saved === true;
-        } catch {
-            this.enabled = false;
-        }
-        this.notify();
-        // Shields need the list even while the switch is off.
-        this.ensureCatalog().catch(() => {});
-        return this.enabled;
+    preferenceError() {
+        return new ZdrUnavailableError(
+            'Your saved zero data retention preference could not be read yet. Reload or choose the setting in the model picker. Your message wasn\'t sent.',
+            { reason: 'settings' });
+    }
+
+    restore() {
+        if (this.restorePromise) return this.restorePromise;
+        const revision = this.preferenceRevision;
+        const store = this.settingsStore;
+        this.settingsReady = false;
+        const pending = (async () => {
+            try {
+                const saved = await store?.getSetting?.(ZDR_SETTING_KEY);
+                if (revision === this.preferenceRevision) {
+                    if (saved !== undefined && saved !== null && typeof saved !== 'boolean') throw this.preferenceError();
+                    this.enabled = saved === true;
+                    this.settingsReady = true;
+                    this.settingsError = null;
+                }
+            } catch {
+                if (revision === this.preferenceRevision) {
+                    this.settingsError = this.preferenceError();
+                    throw this.settingsError;
+                }
+            } finally {
+                this.notify();
+            }
+            this.ensureCatalog().catch(() => {});
+            return this.enabled;
+        })();
+        this.restorePromise = pending;
+        const clear = () => { if (this.restorePromise === pending) this.restorePromise = null; };
+        pending.then(clear, clear);
+        return pending;
+    }
+
+    async ensureReady() {
+        if (this.settingsError) throw this.settingsError;
+        if (!this.settingsReady) await (this.restorePromise || this.restore());
+        if (!this.settingsReady || this.settingsError) throw this.settingsError || this.preferenceError();
+    }
+
+    isReady() {
+        return this.settingsReady && !this.settingsError;
     }
 
     isEnabled() {
@@ -164,10 +217,24 @@ class ZeroDataRetentionState {
     }
 
     async setEnabled(enabled) {
-        this.enabled = enabled === true;
+        const choice = enabled === true;
+        this.preferenceRevision += 1; // A late restore must not replace a new choice.
+        this.enabled = choice;
+        this.settingsReady = true;
+        this.settingsError = null;
         this.notify();
-        try { await this.settingsStore?.saveSetting?.(ZDR_SETTING_KEY, this.enabled); } catch { /* setting stays in memory */ }
-        if (this.enabled) this.ensureCatalog().catch(() => {});
+        if (choice) this.ensureCatalog().catch(() => {});
+        const store = this.settingsStore;
+        // Serialize rapid changes so the last choice is also the saved choice.
+        const save = this.savePromise.catch(() => {}).then(() => store?.saveSettings
+            ? store.saveSettings([{ key: ZDR_SETTING_KEY, value: choice }])
+            : store?.saveSetting?.(ZDR_SETTING_KEY, choice));
+        this.savePromise = save;
+        try { await save; } catch {
+            throw new ZdrUnavailableError(
+                'Your zero data retention choice applies to this tab, but could not be saved. Please try again before reloading.',
+                { reason: 'settings-save' });
+        }
         return this.enabled;
     }
 
@@ -199,6 +266,7 @@ class ZeroDataRetentionState {
 
     /** Restricts an OpenRouter request body, or throws ZdrUnavailableError. */
     applyToBody(body) {
+        if (!this.settingsReady || this.settingsError) throw this.settingsError || this.preferenceError();
         return applyZeroDataRetention(body, { enabled: this.enabled, catalog: this.catalog });
     }
 
@@ -207,7 +275,9 @@ class ZeroDataRetentionState {
      * if needed. Returns null when sending may proceed, or the error.
      */
     async checkModel(modelId, backendId = 'openrouter') {
-        if (!this.enabled || !ZDR_BACKEND_IDS.includes(backendId)) return null;
+        if (!ZDR_BACKEND_IDS.includes(backendId)) return null;
+        try { await this.ensureReady(); } catch (error) { return error; }
+        if (!this.enabled) return null;
         try {
             await this.ensureCatalog();
         } catch {

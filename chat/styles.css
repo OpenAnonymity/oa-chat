@@ -10771,7 +10771,6 @@ html[data-keyboard-nav] .oa-chart-plot:focus-visible { outline: 2px solid hsl(va
 .zdr-name-line > .truncate { min-width: 0; }
 .model-option.zdr-unavailable { opacity: .45; cursor: not-allowed; }
 .model-option.zdr-unavailable:hover { background-color: transparent; }
-.zdr-chip-shield { margin-left: -2px; }
 .zdr-chip-note { font-size: 11px; white-space: nowrap; }
 @media (max-width: 767px), (hover: none) and (pointer: coarse) {
     .zdr-picker-row { min-height: 44px; padding-block: .25rem; }

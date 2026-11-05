@@ -1,9 +1,34 @@
 ## 2026-11-05 — Zero data retention switch (staging)
 
+- UI follow-up: green ZDR shields belong only in the model picker modal, never
+  beside the selected model in the chat bar. Keep the current switch label and
+  omit the proposed search-retention notices; search may remain available with
+  a ZDR model. The composer retains its existing unavailable-model text.
+- This checkout starts from supplied bundle commit `9c4cd7de`; claimed fix commit
+  `cc7008cf` was absent. Local follow-up now restores the saved preference before
+  requests, rejects unreadable settings, retains full endpoint slugs, and excludes
+  mixed/unknown-retention provider groups. No deployment has been made.
 - The model picker has a "Zero data retention" switch under search, with the shared info tooltip. Models with an eligible provider show a green shield; with the switch on, the rest are dimmed and inert (`aria-disabled`, skipped by `getModelOptions`). See `docs/ZERO_DATA_RETENTION.md`.
-- Enforcement lives in `OpenRouterAPI.prepareRequestBody` (applied after every adapter) plus a pre-send check in `sendMessage`/`regenerateResponse`/`regenerateCouncilLane` so no ticket is spent on a refused model.
-- `provider.zdr: true` alone still admits Safety Retention endpoints; the request also pins `provider.only` to providers whose endpoint states `safety_retention: false`.
+- Enforcement lives in `OpenRouterAPI.prepareRequestBody` (applied after every adapter), with readiness/model preflight before API request access and app-level checks in `sendMessage`/`regenerateResponse`/`regenerateCouncilLane`. Some app paths can still acquire session access before API preflight; see the feature doc.
+- `provider.zdr: true` alone can admit Safety Retention endpoints; `provider.only` preserves full routing slugs and excludes an entire model/provider group if any listed endpoint retains data or has an unknown policy. Display names are not routing identifiers.
+- Preference storage remains the existing IndexedDB chat setting. Configure it at controller construction before handlers can send. Request preparation fails closed while restoration is pending or failed. A newer toggle wins over late reads; writes are serialized and failed saves show an error. Once readiness is resolved, normal startup does not restore again over a new choice.
+- Send lifecycle follow-up: the initial ZDR patch awaited even a known-off
+  preference, changing synchronous Send/Stop ownership and failing five existing
+  runtime tests. Skip async preflight when ready/off; keep pending checks inside
+  the send's try/finally, update the pending input state, and honor cancellation
+  before captured work. The original 137 runtime tests now pass unchanged.
+- Parallel/Council preflight includes new-chat pending or remembered members and
+  active synthesis, plus the controller's resolved automatic secondary/fallback
+  entries. Recheck the actual created session before spending, and check
+  Quick Ask's target before runtime preparation/access. Cached checks add no
+  network calls; cold catalog loading and restricted upstream routes can affect
+  TTFT. Existing model choices are never silently replaced.
 - Title generation is skipped (local title kept) when ZDR is on, because the title model (Gemini Flash Lite) has no strict-ZDR provider.
+- Final exact-lock validation: full `npm test` passes 4,852 tests, zero failures,
+  12 existing skips. Installed lock metadata matches the lockfile. Final review
+  approved; preparing a committed local staging candidate, with no push or deployment.
+- Staging preparation carries forward the production retained-key expiry fixes
+  from `2792c72f`, with two regression tests; see [TICKET_TIER_ACCESS.md](TICKET_TIER_ACCESS.md).
 - New picker CSS must sit before the phone follow-up marker in `styles.css`; `phoneOverlays.test.js` requires everything after it to be phone-only.
 
 ## 2026-11-04 — Multiple charts and visible chart failures

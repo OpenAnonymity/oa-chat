@@ -100,6 +100,10 @@ export class OpenRouterAPI {
     // Request-scoped leases isolate concurrent title/completion calls. Products
     // own credential acquisition, budget policy and cleanup, not SSE parsing.
     async withRequestAccess(token, options, operation) {
+        if (!zeroDataRetention.isReady() || zeroDataRetention.isEnabled()) {
+            const privacyError = await zeroDataRetention.checkModel(options.modelId);
+            if (privacyError) throw privacyError;
+        }
         const { requestTiming, ...accessOptions } = options;
         let access;
         if (this.options.acquireRequestAccess) requestTiming?.begin('access_ms');
@@ -203,13 +207,14 @@ export class OpenRouterAPI {
             request._sendCompletionStrict(messages, modelId, token, requestOptions));
     }
 
-    generateSessionTitle(prompt, token, options = {}) {
+    async generateSessionTitle(prompt, token, options = {}) {
         if (!this.extractTextContent(prompt).trim()) return Promise.resolve('');
         const requestOptions = {
             ...options,
             modelId: options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID,
             reasoningEnabled: options.reasoningEnabled ?? true
         };
+        if (!zeroDataRetention.isReady()) await zeroDataRetention.ensureReady();
         // The title model receives the first message. With zero data retention
         // on and no eligible provider for it, keep the local title instead.
         if (zeroDataRetention.isEnabled() && !zeroDataRetention.supportsModel(requestOptions.modelId)) {
