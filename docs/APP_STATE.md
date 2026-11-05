@@ -7978,3 +7978,6 @@ The fixed 5px white strip above that separator is removed: the main sidebar
 and history frame have no bottom padding. The history viewport now meets the
 separator directly; the Account row and history's scrolling end spacer retain
 their existing dimensions.
+## Tier-aware ticket access production candidate (2026-11-04)
+
+See [TICKET_TIER_ACCESS.md](TICKET_TIER_ACCESS.md). No picker/UI change. Fresh full-price keys on an uncovered upgrade; reuse equal/cheaper access and retained purchases, with cross-tab locking and verifier retirement. Activation requires the corresponding org/station policy rollout. This production-based candidate excludes the staging request-timing experiment.

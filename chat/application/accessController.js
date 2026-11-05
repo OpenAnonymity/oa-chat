@@ -1,3 +1,5 @@
+import { withTierPurchaseLock } from '../services/inference/tierPurchaseLock.js';
+import { ticketTierPolicyEnabled } from '../services/inference/ticketTierAccess.js';
 import { reportDiagnostic } from '../services/diagnostics.js';
 import {
     isVerifierResultUsable,
@@ -411,6 +413,15 @@ export async function acquireVerifiedAccess(options = {}) {
 }
 
 export async function acquireSessionAccess(options = {}) {
+    if (ticketTierPolicyEnabled() && options.tierPurchase) {
+        return withTierPurchaseLock({ session: options.session,
+            ...options.tierPurchase, service: options.inferenceService, db: options.chatDB,
+            signal: options.signal, acquire: () => acquireSessionAccessUnlocked(options) });
+    }
+    return acquireSessionAccessUnlocked(options);
+}
+
+async function acquireSessionAccessUnlocked(options) {
     const {
         session,
         inferenceService,
@@ -447,7 +458,9 @@ export async function acquireSessionAccess(options = {}) {
         }
     } catch (error) {
         if (error?.verifierSubmitKeyProof) {
-            inferenceService.clearAccessInfo(session, { reason: 'verifier-rejected' });
+            if (!ticketTierPolicyEnabled() || !inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) {
+                inferenceService.clearAccessInfo(session, { reason: 'verifier-rejected' });
+            }
             session.lastVerifierSubmitKeyProof = error.verifierSubmitKeyProof;
             await chatDB.saveSession(session);
             onSessionChanged(session);

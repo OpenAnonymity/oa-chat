@@ -2517,3 +2517,18 @@ test('simultaneously quiet lanes restore their own clocks without a new saved sn
     controller.restoreStillWorkingDisplays('session-1');
     assert.equal(paints.length, 0);
 });
+test('stale tab with zero tickets reuses a stored paid lane before shortage checks', async () => {
+    const previous = globalThis.location;
+    globalThis.location = { hostname: 'staging.openanonymity.ai' };
+    try {
+        const expiresAt = new Date(Date.now() + 60000).toISOString();
+        const stored = { councilAccess: { primary: { apiKey: 'paid', expiresAt, updatedAt: Date.now(),
+            apiKeyInfo: { key: 'paid', ticketsConsumed: 5, expiresAt, verifierSubmitKeyProof: { status: 'verified' } } } } };
+        const controller = createController({ ticketCount: 0, costs: { 'p/high': 5 }, chatDB: { getSession: async () => stored },
+            inferenceService: { isAccessExpired: () => true } });
+        controller.app.usesTicketAccess = () => true;
+        const session = { id: 's' };
+        assert.equal(await controller.ensureSufficientTicketsForEntries(session, [{ id: 'p/high', laneId: 'primary' }]), 0);
+        assert.equal(controller.findEligibleLaneAccess(session, { id: 'p/high', laneId: 'primary' }).apiKey, 'paid');
+    } finally { globalThis.location = previous; }
+});

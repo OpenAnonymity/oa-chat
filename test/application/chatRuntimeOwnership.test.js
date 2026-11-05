@@ -2663,3 +2663,22 @@ test('regenerate action never deletes the saved transcript before requesting its
     assert.deepEqual(requested, { sessionId: 'one', userMessageId: 'question', mutationToken: owner, replaceFromMessageId: 'original' });
     assert.equal(ended, true);
 });
+
+test('Council Quick Ask restores retained access before building its inference session', async () => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness();
+        const session = { id: 's' };
+        let active = 'expired'; let restores = 0;
+        app.inferenceService = { getAccessLabel: () => 'API key', getVerificationAdapter: () => null, getAccessInfo: () => ({}) };
+        app.councilController = {
+            seedPrimaryLaneAccessFromSession() {}, needsFreshLaneAccess: () => false,
+            ensureAccessForEntries: async () => { restores++; active = 'retained-paid'; },
+            buildLaneSession: () => ({ apiKey: active })
+        };
+        app.getBannedAccessWarning = () => null;
+        const result = await app.ensureQuickAskAccess(session, { laneId: 'primary', laneEntry: { id: 'p/high', name: 'High' } }, new AbortController());
+        assert.equal(restores, 1);
+        assert.equal(result.apiKey, 'retained-paid');
+    } finally { restore(); }
+});

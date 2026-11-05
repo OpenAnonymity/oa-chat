@@ -1250,6 +1250,7 @@ class TicketClient {
                 key: data.key,
                 keyHash: data.key_hash,
                 ticketsConsumed: data.tickets_consumed || tickets.length,
+                modelPolicy: data.model_policy || null,
                 creditLimit: data.credit_limit,
                 durationMinutes: data.duration_minutes,
                 expiresAt: data.expires_at,

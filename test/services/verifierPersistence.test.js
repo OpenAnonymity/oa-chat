@@ -143,3 +143,14 @@ for (const status of ['verified', 'rejected']) {
         }
     });
 }
+
+test('detaching a paid key when leaving Parallel retains it for cheaper models', t => {
+    installBrowser(t);
+    location.hostname = 'staging.openanonymity.ai';
+    const info = { key: 'paid', ticketsConsumed: 1, expiresAt: new Date(Date.now() + 60000).toISOString(), verifierSubmitKeyProof: { status: 'verified' } };
+    const live = { id: 'chat', apiKey: info.key, apiKeyInfo: info, expiresAt: info.expiresAt };
+    backend.clearAccessInfo(live, { reason: 'council-lane' });
+    assert.equal(live.apiKey, null);
+    assert.equal(live.ticketAccessHistory[0].key, info.key);
+    assert.equal(live.retiredTicketAccess, undefined);
+});

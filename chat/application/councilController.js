@@ -1,3 +1,4 @@
+import { ticketTierPolicyEnabled, accessCoversModel, mergeTicketAccessHistory } from '../services/inference/ticketTierAccess.js';
 import { trackFeatureUsage } from '../services/featureUsage.js';
 import { STILL_WORKING_DELAY_MS } from '../services/streamSegments.js';
 import { waitForSignal } from '../services/inference/reliability.js';
@@ -469,6 +470,13 @@ export default class CouncilController {
         if (token && verifier?.supports && !usableProof) {
             throw new Error('Refusing to persist a Council lane key without an allowed verification state.');
         }
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+            const history = (session.ticketLaneHistory ||= {});
+            const previous = container[laneId];
+            history[laneId] = [...new Map([...(history[laneId] || []), previous]
+                .filter(item => item?.apiKey && !this.isLaneAccessExpired(item))
+                .map(item => [item.apiKey, item])).values()];
+        }
         container[laneId] = {
             apiKey: token,
             apiKeyInfo: accessInfo.apiKeyInfo || accessInfo.info || accessInfo,
@@ -482,6 +490,12 @@ export default class CouncilController {
 
     clearLaneAccess(session, laneId) {
         const container = this.ensureCouncilAccessContainer(session);
+        if (ticketTierPolicyEnabled() && container[laneId]?.apiKey) {
+            (session.retiredTicketAccess ||= []).push({ key: container[laneId].apiKey, expiresAt: container[laneId].expiresAt });
+        }
+        if (session.ticketLaneHistory?.[laneId]) {
+            session.ticketLaneHistory[laneId] = session.ticketLaneHistory[laneId].filter(item => item.apiKey !== container[laneId]?.apiKey);
+        }
         container[laneId] = {
             apiKey: null,
             apiKeyInfo: null,
@@ -507,11 +521,16 @@ export default class CouncilController {
 
     isLaneAccessUsable(session, laneAccess, entry = null) {
         if (!laneAccess?.apiKey) return false;
+        if ((session.retiredTicketAccess || []).some(info => info.key === laneAccess.apiKey)) return false;
         this.inferenceService.getVerificationAdapter?.(session)?.trackPendingAccess?.(laneAccess.apiKeyInfo, session);
         if (!this.isLaneAccessVerified(session, laneAccess)) return false;
         if (this.isLaneAccessExpired(laneAccess)) return false;
         if (this.isLaneAccessBanned(session, laneAccess)) return false;
-        if (entry?.id && laneAccess.modelId !== entry.id) return false;
+        if (entry?.id) {
+            if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+                if (!accessCoversModel(laneAccess.apiKeyInfo, entry.id, this.getTicketCostForEntry(entry))) return false;
+            } else if (laneAccess.modelId !== entry.id) return false;
+        }
         return true;
     }
 
@@ -598,8 +617,15 @@ export default class CouncilController {
         return freshTicketCost;
     }
 
+    async refreshStoredTicketAccess(session) {
+        if (!ticketTierPolicyEnabled() || !this.app.usesTicketAccess?.(session)) return;
+        const stored = await this.chatDB.getSession(session.id);
+        if (stored) Object.assign(session, mergeTicketAccessHistory(session, stored));
+    }
+
     async ensureSufficientTicketsForEntries(session, entries, signal) {
         throwIfAborted(signal);
+        await this.refreshStoredTicketAccess(session);
         try {
             return this.assertSufficientTicketsForEntries(session, entries);
         } catch (error) {
@@ -611,9 +637,17 @@ export default class CouncilController {
         }
     }
 
+    findEligibleLaneAccess(session, entry) {
+        const current = this.getLaneAccess(session, entry.laneId);
+        if (this.isLaneAccessUsable(session, current, entry)) return current;
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+            return (session.ticketLaneHistory?.[entry.laneId] || []).find(item => this.isLaneAccessUsable(session, item, entry)) || null;
+        }
+        return null;
+    }
+
     needsFreshLaneAccess(session, entry) {
-        const laneAccess = this.getLaneAccess(session, entry.laneId);
-        return !this.isLaneAccessUsable(session, laneAccess, entry);
+        return !this.findEligibleLaneAccess(session, entry);
     }
 
     seedPrimaryLaneAccessFromSession(session, entry) {
@@ -630,7 +664,9 @@ export default class CouncilController {
             return null;
         }
         const accessModelId = this.resolveAccessModelId(accessInfo.info || session.apiKeyInfo || null);
-        if (accessModelId !== entry.id) {
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)
+            ? !accessCoversModel(accessInfo.info || session.apiKeyInfo, entry.id, this.getTicketCostForEntry(entry))
+            : accessModelId !== entry.id) {
             return null;
         }
         if (this.isLaneAccessBanned(session, {
@@ -784,10 +820,26 @@ export default class CouncilController {
     }
 
     async ensureLaneAccess(session, entry, typingId, signal = null) {
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+            const locks = globalThis.navigator?.locks;
+            if (!locks?.request) throw new Error('Secure ticket access requires browser locking support.');
+            return locks.request(`oa-tier-purchase:${session.id}`, { mode: 'exclusive', ...(signal ? { signal } : {}) }, async () => {
+                const stored = await this.chatDB.getSession(session.id);
+                if (!stored) throw new Error('This chat is no longer available.');
+                Object.assign(session, mergeTicketAccessHistory(session, stored));
+                return this.ensureLaneAccessUnlocked(session, entry, typingId, signal);
+            });
+        }
+        return this.ensureLaneAccessUnlocked(session, entry, typingId, signal);
+    }
+
+    async ensureLaneAccessUnlocked(session, entry, typingId, signal = null) {
         throwIfAborted(signal);
         this.seedPrimaryLaneAccessFromSession(session, entry);
-        const laneAccess = this.getLaneAccess(session, entry.laneId);
-        if (this.isLaneAccessUsable(session, laneAccess, entry)) {
+        const eligible = this.findEligibleLaneAccess(session, entry);
+        const laneAccess = eligible || this.getLaneAccess(session, entry.laneId);
+        if (eligible) {
+            if (eligible !== this.getLaneAccess(session, entry.laneId)) this.setLaneAccess(session, entry.laneId, eligible);
             return laneAccess;
         }
         if (laneAccess?.apiKey && this.isLaneAccessBanned(session, laneAccess)) {

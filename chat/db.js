@@ -1,3 +1,4 @@
+import { ticketTierPolicyEnabled, mergeTicketAccessHistory } from './services/inference/ticketTierAccess.js';
 // IndexedDB implementation for chat history storage
 import { MessageReplacement } from './services/messageReplacement.js';
 import { logAccessOverwrite } from './services/inference/accessDiscardLog.js';
@@ -468,6 +469,15 @@ class ChatDatabase {
     // inside the same transaction, only when the incoming copy has no key, and
     // never changes what is written; it only leaves an access-overwrite event.
     putSessionNotingOverwrite(store, session) {
+        if (ticketTierPolicyEnabled() && typeof store.get === 'function') {
+            const snapshot = structuredClone(session);
+            const existing = store.get(snapshot.id);
+            existing.onsuccess = () => {
+                Object.assign(snapshot, mergeTicketAccessHistory(snapshot, existing.result));
+                store.put(snapshot);
+            };
+            return;
+        }
         if (session?.apiKey || typeof store.get !== 'function') {
             store.put(session);
             return;

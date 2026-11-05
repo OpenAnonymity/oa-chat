@@ -1,3 +1,4 @@
+import { ticketTierPolicyEnabled, retainTicketAccess } from '../ticketTierAccess.js';
 import { applyVerifierRetryResult } from '../../../application/verifierRecovery.js';
 import { chatDB } from '../../../db.js';
 import openRouterAPI from '../../../api.js';
@@ -117,6 +118,7 @@ const openRouterBackend = {
     },
     setAccessInfo(session, accessInfo) {
         if (!session || !accessInfo) return;
+        if (ticketTierPolicyEnabled()) retainTicketAccess(session);
         session.apiKey = accessInfo.key || accessInfo.token || null;
         session.apiKeyInfo = accessInfo;
         session.expiresAt = accessInfo.expiresAt || accessInfo.expires_at || null;
@@ -150,6 +152,14 @@ const openRouterBackend = {
     },
     clearAccessInfo(session, { reason = 'unspecified' } = {}) {
         if (!session) return;
+        if (ticketTierPolicyEnabled()) {
+            if (reason === 'council-lane' && hasUsableAccess(session) && !this.isAccessExpired(session)) {
+                retainTicketAccess(session);
+            } else {
+                if (session.apiKey) (session.retiredTicketAccess ||= []).push({ key: session.apiKey, expiresAt: session.expiresAt });
+                session.ticketAccessHistory = (session.ticketAccessHistory || []).filter(info => info.key !== session.apiKey);
+            }
+        }
         logAccessDiscard(session, reason);
         session.apiKey = null;
         session.apiKeyInfo = null;
@@ -201,6 +211,8 @@ const openRouterBackend = {
             expiresAtUnix: sharedAccess.expiresAtUnix,
             stationSignature: sharedAccess.stationSignature,
             orgSignature: sharedAccess.orgSignature,
+            ...(sharedAccess.modelPolicy ? { modelPolicy: sharedAccess.modelPolicy } : {}),
+            ...(sharedAccess.ticketsConsumed ? { ticketsConsumed: sharedAccess.ticketsConsumed } : {}),
             usage: sharedAccess.usage || null
         };
     },
@@ -215,6 +227,8 @@ const openRouterBackend = {
             recentlyAttested: sharedApiKey.recentlyAttested || false,
             stationSignature: sharedApiKey.stationSignature || null,
             orgSignature: sharedApiKey.orgSignature || null,
+            ...(sharedApiKey.modelPolicy ? { modelPolicy: sharedApiKey.modelPolicy } : {}),
+            ...(sharedApiKey.ticketsConsumed ? { ticketsConsumed: sharedApiKey.ticketsConsumed } : {}),
             usage: sharedApiKey.usage || null
         };
     },
@@ -238,6 +252,8 @@ const openRouterBackend = {
                 station_name: sharedAccess.stationId,
                 recentlyAttested: sharedAccess.recentlyAttested || false,
                 usage: sharedAccess.usage || null,
+                ...(sharedAccess.modelPolicy ? { modelPolicy: sharedAccess.modelPolicy } : {}),
+                ...(sharedAccess.ticketsConsumed ? { ticketsConsumed: sharedAccess.ticketsConsumed } : {}),
                 isShared: true,
                 key: sharedAccess.token,
                 expiresAtUnix: sharedAccess.expiresAtUnix,
