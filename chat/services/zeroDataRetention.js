@@ -119,7 +119,7 @@ export function applyZeroDataRetention(body, { enabled, catalog }) {
     }
     if (!providers.length) {
         throw new ZdrUnavailableError(
-            'This model has no zero data retention providers. Choose a model with a shield, or turn off Zero data retention. Your message wasn\'t sent.',
+            'This model has no zero data retention providers. Choose a model with a ZDR endpoint, or turn off Zero data retention. Your message wasn\'t sent.',
             { modelId, reason: 'model' });
     }
     const { models: _fallbackModels, ...rest } = body;
@@ -167,7 +167,7 @@ export class ZeroDataRetentionState {
 
     preferenceError() {
         return new ZdrUnavailableError(
-            'Your saved zero data retention preference could not be read yet. Reload or choose the setting in the model picker. Your message wasn\'t sent.',
+            'We couldn\'t load your Zero data retention setting, so your message wasn\'t sent. Set it in the model picker, then try again.',
             { reason: 'settings' });
     }
 
@@ -231,8 +231,9 @@ export class ZeroDataRetentionState {
             : store?.saveSetting?.(ZDR_SETTING_KEY, choice));
         this.savePromise = save;
         try { await save; } catch {
+            const currentSetting = this.enabled ? 'on' : 'off';
             throw new ZdrUnavailableError(
-                'Your zero data retention choice applies to this tab, but could not be saved. Please try again before reloading.',
+                `Zero data retention is ${currentSetting}, but we couldn't save the change. Check that it is still ${currentSetting} after reloading.`,
                 { reason: 'settings-save' });
         }
         return this.enabled;
@@ -287,7 +288,7 @@ export class ZeroDataRetentionState {
         }
         if (this.supportsModel(modelId)) return null;
         return new ZdrUnavailableError(
-            'This model has no zero data retention providers. Choose a model with a shield, or turn off Zero data retention. Your message wasn\'t sent.',
+            'This model has no zero data retention providers. Choose a model with a ZDR endpoint, or turn off Zero data retention. Your message wasn\'t sent.',
             { modelId, reason: 'model' });
     }
 

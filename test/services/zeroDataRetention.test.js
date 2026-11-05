@@ -222,8 +222,12 @@ describe('saved preferences', () => {
         await Promise.all([first, second]);
         assert.deepEqual(writes, [true, false]);
         state.configure({ settingsStore: { saveSetting: async () => { throw new Error('disk full'); } } });
-        await assert.rejects(state.setEnabled(true), error => error.reason === 'settings-save');
+        await assert.rejects(state.setEnabled(true), error => error.reason === 'settings-save'
+            && error.message.includes('Zero data retention is on,') && error.message.includes('still on after reloading'));
         assert.equal(state.isEnabled(), true, 'the current tab keeps enforcing the chosen policy');
+        await assert.rejects(state.setEnabled(false), error => error.reason === 'settings-save'
+            && error.message.includes('Zero data retention is off,') && error.message.includes('still off after reloading'));
+        assert.equal(state.isEnabled(), false);
     });
 });
 

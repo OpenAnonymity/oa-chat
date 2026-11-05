@@ -1,5 +1,13 @@
 ## 2026-11-05 — Zero data retention switch (staging)
 
+- Copy follow-up: unavailable-model toasts say "Choose a model with a ZDR
+  endpoint" instead of referring to the picker shield. Both preflight and final
+  request preparation use the updated wording; routing behavior is unchanged.
+- Preference errors now explain that a failed load blocks the message and asks
+  the person to set ZDR in the model picker. Failed-save copy names the current
+  on/off state and asks the person to check it after reloading. It reads the current
+  state when the save fails, so a newer toggle is reflected. Enforcement is unchanged.
+
 - UI follow-up: green ZDR shields belong only in the model picker modal, never
   beside the selected model in the chat bar. Keep the current switch label and
   omit the proposed search-retention notices; search may remain available with
