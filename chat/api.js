@@ -176,19 +176,28 @@ export class OpenRouterAPI {
         };
     }
 
+    restrictFetchAttempt(init) {
+        if (!init.body) return init;
+        // Recheck the current preference on every retry without rerunning
+        // billing adapters or undoing a reduced output allowance.
+        return { ...init, body: JSON.stringify(zeroDataRetention.applyToBody(JSON.parse(init.body))) };
+    }
+
     fetchWithRetry(access, url, init, config) {
         return fetchWithOpenRouterCreditRecovery(
-            this.networkTransport.fetchWithRetry.bind(this.networkTransport),
+            (target, request, retryConfig) => this.networkTransport.fetchWithRetry(target, this.restrictFetchAttempt(request), retryConfig),
             url, this.prepareFetchOptions(access, init), {
                 ...config,
-                proxyConfig: access.proxyConfig || config?.proxyConfig
+                proxyConfig: access.proxyConfig || config?.proxyConfig,
+                prepareAttempt: request => this.restrictFetchAttempt(request)
             });
     }
 
     fetchWithRetryJson(access, url, init, config) {
         return this.networkTransport.fetchWithRetryJson(url, this.prepareFetchOptions(access, init), {
             ...config,
-            proxyConfig: access.proxyConfig || config?.proxyConfig
+            proxyConfig: access.proxyConfig || config?.proxyConfig,
+            prepareAttempt: request => this.restrictFetchAttempt(request)
         });
     }
 

@@ -212,6 +212,46 @@ describe('ZDR send preflight and ownership', () => {
             error => error.reason === 'model' && /Blocked model/.test(error.message));
     });
 
+    for (const eligible of [true, false]) {
+        test(`regenerate checks the saved message model before side effects (${eligible})`, async t => {
+            const app = harness();
+            const session = app.state.sessionsById.get('one');
+            session.model = eligible ? 'Blocked model' : 'Allowed one';
+            session.importedFrom = 'shared';
+            const originalModel = eligible ? 'Allowed one' : 'Blocked model';
+            t.mock.method(chatDB, 'getSessionMessages', async () => [{ id: 'u', role: 'user', model: originalModel, content: 'test' }]);
+            const effects = [];
+            app.clearMemoryApiOverrideContent = () => effects.push('memory');
+            app.markImportedSessionAsForked = async () => effects.push('fork');
+            app.updateUrlWithSession = () => {};
+            app.preflightTurnTicketBudget = async (_session, _content, options) => { effects.push(options.modelName); return false; };
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            await app.regenerateResponse();
+            assert.deepEqual(effects, eligible ? ['memory', 'fork', 'Allowed one'] : []);
+            assert.equal(notices.length, eligible ? 0 : 1);
+            assert.equal(app.regenerationJobs.size, 0);
+        });
+    }
+
+    test('Parallel lane preflight checks its saved model rather than the current group', async t => {
+        const app = harness();
+        const session = app.state.sessionsById.get('one');
+        session.model = 'Blocked model';
+        session.responseMode = 'council';
+        session.councilConfig = { enabled: true, members: ['Blocked model', 'Allowed two'], outputMode: 'parallel' };
+        t.mock.method(chatDB, 'getSessionMessages', async () => [
+            { id: 'u', role: 'user', content: 'test' },
+            { id: 'a', role: 'assistant', council: { stage1: [{ laneId: 'primary', model: 'Allowed one', modelId: 'test/one', response: 'saved' }] } }
+        ]);
+        app.reserveAccessAcquisitionHandoff = () => {};
+        let checked = false;
+        app.preflightTurnTicketBudget = async () => { checked = true; return false; };
+        app.showToast = message => assert.fail(message);
+        await app.regenerateCouncilLane('a', 'primary');
+        assert.equal(checked, true);
+    });
+
     test('Quick Ask refuses its chosen model before runtime preparation or paid access', async () => {
         const app = harness();
         app.resolveModelForQuickAsk = async () => ({ modelId: 'test/blocked', modelName: 'Blocked model' });

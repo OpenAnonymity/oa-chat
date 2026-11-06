@@ -7452,17 +7452,6 @@ class ChatApp {
         if (mutationOwner && mutationOwner !== options.mutationToken) return;
         const job = { controller: new AbortController() };
         this.regenerationJobs.set(sessionId, job);
-        const regenerationSession = this.state.sessionsById.get(sessionId);
-        const zeroDataRetentionError = await this.checkZeroDataRetentionForSend({
-            sessionId,
-            model: options.modelName || regenerationSession?.model,
-            inferenceBackend: regenerationSession?.inferenceBackend
-        }).catch(error => error);
-        if (zeroDataRetentionError) {
-            if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
-            this.showToast(zeroDataRetentionError.message, 'error', 6000);
-            return;
-        }
         startRequestTiming(job.controller.signal, {
             mode: this.runtime?.getMode?.(this.state.sessionsById.get(sessionId)) === 'zkapi' ? 'zkapi' : 'ticket',
             visible: () => document.visibilityState === 'visible' && this.isViewingSession(sessionId)
@@ -7555,14 +7544,6 @@ class ChatApp {
     async regenerateCapturedResponse(options = {}) {
         const session = this.state.sessionsById.get(options.sessionId);
         if (!session) return;
-        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
-
-        // Any local regeneration on an imported session forks it from upstream updates.
-        if (session.importedFrom) {
-            await this.markImportedSessionAsForked(session);
-            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
-        }
-
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
@@ -7574,9 +7555,27 @@ class ChatApp {
             ? messages.find(message => message.id === options.userMessageId && message.role === 'user')
             : [...messages].reverse().find(m => m.role === 'user');
         if (!lastUserMessage) return;
+        const retryModelName = this.normalizeModelName(lastUserMessage.model || session.model) || lastUserMessage.model || session.model;
+        const privacyError = await this.checkZeroDataRetentionForSend({
+            sessionId: session.id,
+            model: this.isCouncilModeActive(session) ? session.model : retryModelName,
+            inferenceBackend: session.inferenceBackend
+        }).catch(error => error);
+        this.throwIfAborted(options.abortController.signal);
+        if (privacyError) {
+            this.showToast(privacyError.message, 'error', 6000);
+            return;
+        }
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
+
+        // Any local regeneration on an imported session forks it from upstream updates.
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
+        }
+
         if (lastUserMessage.pendingFileObjects?.length) await this.ensureMessageFileMetadata(lastUserMessage);
         this.throwIfAborted(options.abortController.signal);
-        const retryModelName = this.normalizeModelName(lastUserMessage.model || session.model) || lastUserMessage.model || session.model;
         const retrySearchEnabled = Boolean(lastUserMessage.searchEnabled);
         const retryMemoryMode = typeof lastUserMessage.memoryMode === 'boolean' ? lastUserMessage.memoryMode : this.memoryMode;
         const retryReasoningEnabled = typeof lastUserMessage.reasoningEnabled === 'boolean' ? lastUserMessage.reasoningEnabled : this.reasoningEnabled;
@@ -8151,32 +8150,13 @@ class ChatApp {
             this.showToast?.(this.getFeatureUnavailableReason('council', session), 'info');
             return;
         }
-        const zeroDataRetentionError = await this.checkZeroDataRetentionForSend({
-            sessionId: session.id,
-            model: session.model,
-            inferenceBackend: session.inferenceBackend
-        }).catch(error => error);
-        if (zeroDataRetentionError) {
-            this.showToast(zeroDataRetentionError.message, 'error', 6000);
-            return;
-        }
         const operation = this.beginFeatureOperation('council', session);
         if (!operation) return;
         const mutation = this.beginSessionMutation(session.id, { exclusive: true });
         if (!mutation) { this.finishFeatureOperation(operation); return; }
         try {
-        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
-
-        if (session.importedFrom) {
-            await this.markImportedSessionAsForked(session);
-            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
-        }
-
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
-        this.reserveAccessAcquisitionHandoff(session);
-        this.chatArea?.closeQuickAskWindow?.();
-
         const messages = await chatDB.getSessionMessages(session.id);
         if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
         const messageIndex = messages.findIndex(m => m.id === messageId);
@@ -8193,6 +8173,26 @@ class ChatApp {
 
         const userMessage = [...messages.slice(0, messageIndex)].reverse().find(m => m.role === 'user');
         if (!userMessage) return;
+        const entry = this.councilController.resolveEntryForStage1Entry(
+            session, stageEntry, this.councilController.resolveModelEntries(session));
+        if (!entry?.id) return;
+        const privacyError = await this.checkZeroDataRetentionForSend({
+            sessionId: session.id, model: entry.id, inferenceBackend: session.inferenceBackend, singleModel: true
+        }).catch(error => error);
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
+        if (privacyError) {
+            this.showToast(privacyError.message, 'error', 6000);
+            return;
+        }
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
+        }
+
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
         const regenerationContent = options.skipMemoryAugment
             ? ''
@@ -8348,7 +8348,7 @@ class ChatApp {
         const backendId = submission.inferenceBackend || 'openrouter';
         const modelNames = new Set([submission.model || this.getPrimaryModelName?.()].filter(Boolean));
         const fallbackModelName = submission.model || session?.model || this.state.pendingModelName;
-        const council = session
+        const council = submission.singleModel ? null : session
             ? (this.isCouncilModeActive(session) ? normalizeCouncilConfig(session.councilConfig, fallbackModelName) : null)
             : (this.supportsFeature('council', null)
                 ? normalizeCouncilConfig(this.pendingCouncilConfig || this.buildPersistedParallelCouncilConfig(fallbackModelName), fallbackModelName)

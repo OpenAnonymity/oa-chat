@@ -256,6 +256,92 @@ describe('request layer', () => {
         };
     }
 
+    for (const retryKind of ['credit', 'affordability', 'json']) {
+        for (const eligible of [true, false]) {
+            test(`${retryKind} retry rechecks a newly enabled ZDR setting (${eligible ? 'eligible' : 'blocked'})`, async () => {
+                const { fetchRetry, fetchRetryJson } = await import('../../chat/services/fetchRetry.js');
+                const calls = [];
+                let adapters = 0;
+                const rawFetch = async (_url, init) => {
+                    calls.push(JSON.parse(init.body));
+                    if (calls.length === 1) {
+                        await zeroDataRetention.setEnabled(true);
+                        if (retryKind === 'json') return new Response('', { status: 503 });
+                        return Response.json({ error: retryKind === 'credit'
+                            ? { metadata: { limit_source: 'openrouter_in_flight_budget' } }
+                            : { message: 'requested up to 100 tokens, but can only afford 50' }
+                        }, { status: 402, headers: { 'Retry-After': '0' } });
+                    }
+                    return Response.json({ ok: true });
+                };
+                const transport = {
+                    fetchWithRetry: (url, init, config) => fetchRetry(url, init, { ...config, fetchFn: rawFetch }),
+                    fetchWithRetryJson: (url, init, config) => fetchRetryJson(url, init, { ...config, fetchFn: rawFetch })
+                };
+                const api = new OpenRouterAPI({ networkTransport: transport,
+                    prepareRequestBody: body => { adapters++; return body; } });
+                const body = { model: eligible ? 'openai/gpt-6.1-sol' : 'google/gemini-3.5-pro',
+                    messages: [{ role: 'user', content: 'test' }], max_tokens: 100 };
+                const method = retryKind === 'json' ? 'fetchWithRetryJson' : 'fetchWithRetry';
+                const pending = api[method]({ headers: {} }, 'https://openrouter.ai/api/v1/chat/completions',
+                    { body: JSON.stringify(body) }, { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0, timeoutMs: 0 });
+                if (!eligible) await assert.rejects(pending, error => error.reason === 'model');
+                else {
+                    await pending;
+                    assert.deepEqual(calls[1].provider.only, ['azure']);
+                    assert.equal(calls[1].provider.zdr, true);
+                    assert.equal(calls[1].max_tokens, retryKind === 'affordability' ? 45 : 100);
+                }
+                assert.equal(calls.length, eligible ? 2 : 1);
+                assert.equal(adapters, 1, 'retry must not rerun billing adapters');
+            });
+        }
+    }
+
+    for (const path of ['cold relay', 'direct fallback']) {
+        for (const eligible of [true, false]) {
+            test(`${path} checks ZDR at final dispatch (${eligible})`, async t => {
+                const { default: networkProxy } = await import('../../chat/services/networkProxy.js');
+                const proxy = Object.assign(Object.create(Object.getPrototypeOf(networkProxy)), {
+                    state: { ...networkProxy.state, settings: { enabled: true, fallbackToDirect: true } },
+                    tlsInfo: {}, activeRequestCount: 0, emitChange() {},
+                    trackEncryptedRequest() {}, wrapResponseForTracking: response => response,
+                    httpSession: {}
+                });
+                const calls = [];
+                proxy.ensureProxyApplied = async () => {
+                    if (path === 'cold relay') await zeroDataRetention.setEnabled(true);
+                };
+                proxy.fetchThroughProxy = async (_url, init) => {
+                    calls.push({ route: 'proxy', body: JSON.parse(init.body), signal: init.signal });
+                    if (path === 'direct fallback') {
+                        await zeroDataRetention.setEnabled(true);
+                        throw new Error('relay failed');
+                    }
+                    return Response.json({ ok: true });
+                };
+                t.mock.method(globalThis, 'fetch', async (_url, init) => {
+                    calls.push({ route: 'direct', body: JSON.parse(init.body), signal: init.signal });
+                    return Response.json({ ok: true });
+                });
+                const api = new OpenRouterAPI({ networkTransport: proxy });
+                const controller = new AbortController();
+                const pending = api.fetchWithRetry({ headers: {} }, 'https://openrouter.ai/api/v1/chat/completions',
+                    { body: JSON.stringify({ model: eligible ? 'openai/gpt-6.1-sol' : 'google/gemini-3.5-pro', messages: [] }) },
+                    { maxAttempts: 1, timeoutMs: 0, signal: controller.signal });
+                if (!eligible) {
+                    await assert.rejects(pending, error => error.reason === 'model');
+                    assert.equal(calls.length, path === 'cold relay' ? 0 : 1);
+                    if (path === 'cold relay') assert.equal(proxy.state.lastError, networkProxy.state.lastError);
+                } else {
+                    await pending;
+                    assert.deepEqual(calls.at(-1).body.provider.only, ['azure']);
+                    assert.equal(calls.at(-1).signal, controller.signal);
+                }
+            });
+        }
+    }
+
     test('a request waits for the saved on preference before acquiring access or sending', async () => {
         let finish;
         let acquired = 0;

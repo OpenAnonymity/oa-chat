@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { chatDB } from '../../chat/db.js';
 import syncService from '../../chat/services/encryptedSyncService.js';
 import { TicketStore } from '../../chat/services/ticketStore.js';
 import {
@@ -26,6 +27,10 @@ function storeWith({ active = [], archived = [], log = null } = {}) {
     store.readFromDatabase = async () => ({ active, archived, invalidatedKeyIds: [] });
     store.persistTickets = async (nextActive, nextArchive, options) => {
         state.persisted.push({ active: nextActive, archive: nextArchive, options });
+        if (options?.usageLog) {
+            state.log = options.usageLog;
+            state.writes.push(options.usageLog);
+        }
     };
     store.readUsageLog = async () => normalizeTicketUsageLog(state.log);
     store.writeUsageLog = async next => {
@@ -104,11 +109,14 @@ test('a successful spend records usage after seeding from the prior archive', as
     assert.equal(state.persisted.length, 1);
 });
 
-test('shares are not recorded as usage', async () => {
+test('a first share seeds history without counting the shared tickets', async () => {
     const { store, state } = storeWith({ active: [ticket(1), ticket(2)] });
     await store.consumeTickets(2, async () => ({ ok: true }), { order: 'tail', recordUsage: false });
-    assert.equal(state.writes.length, 0);
+    assert.equal(state.writes.length, 1);
+    assert.equal(state.log.backfilled, true);
+    assert.deepEqual(state.log.days, {});
     assert.equal(state.persisted.length, 1);
+    assert.deepEqual(await store.getUsageHistory(), []);
 });
 
 test('tickets the server consumed during a failed request are recorded', async () => {
@@ -137,9 +145,9 @@ test('expired-key cleanup removes spent tickets but keeps the usage log', async 
     assert.deepEqual(state.log.days, { '2026-10-15': 7 });
 });
 
-test('a failed usage write never fails the spend', async () => {
+test('a failed usage read never fails the spend', async () => {
     const { store, state } = storeWith({ active: [ticket(1)] });
-    store.writeUsageLog = async () => { throw new Error('quota'); };
+    store.readUsageLog = async () => { throw new Error('quota'); };
     const originalWarn = console.warn;
     console.warn = () => {};
     try {
@@ -173,4 +181,42 @@ test('the usage log switches with the account and is never uploaded', async () =
         chatDB.getSetting = originalGet;
     }
     assert.ok(!read.includes(TICKET_USAGE_KEY));
+});
+
+
+test('already seeded history still requires the account scope lock', async () => {
+    const { store } = storeWith({ log: { backfilled: true, days: { '2026-11-05': 2 } } });
+    let locked = false;
+    const read = store.readUsageLog;
+    store.withLock = async handler => { locked = true; try { return await handler(); } finally { locked = false; } };
+    store.readUsageLog = async () => { assert.equal(locked, true); return read(); };
+    assert.deepEqual(await store.getUsageHistory(), [{ day: '2026-11-05', count: 2 }]);
+    store.withLock = async () => { throw new Error('account scope unavailable'); };
+    await assert.rejects(store.getUsageHistory(), /account scope unavailable/);
+});
+
+
+test('usage and consumed tickets commit together and a failed batch cannot double count', async t => {
+    const { store, state } = storeWith({ active: [ticket(1)] });
+    const originalDb = chatDB.db;
+    chatDB.db = {};
+    t.after(() => { chatDB.db = originalDb; });
+    store.persistTickets = TicketStore.prototype.persistTickets;
+    store.markHadTicketsBeforeIfNeeded = async () => {};
+    store.publishUpdate = () => {};
+    let fail = true;
+    const batches = [];
+    t.mock.method(chatDB, 'saveSettings', async entries => {
+        batches.push(entries);
+        if (fail) throw new Error('disk full');
+        state.log = entries.find(entry => entry.key === TICKET_USAGE_KEY)?.value;
+    });
+    t.mock.method(console, 'warn', () => {});
+    await store.consumeTickets(1, async () => 'key');
+    assert.equal(state.log, null, 'failed batch must leave the usage log unchanged');
+    fail = false;
+    await store.consumeTickets(1, async () => 'replayed key');
+    assert.equal(state.log.days[localDayKey(new Date())], 1);
+    assert.equal(batches.length, 2);
+    assert.equal(batches[1].length, 3, 'active tickets, archive and usage share a transaction');
 });

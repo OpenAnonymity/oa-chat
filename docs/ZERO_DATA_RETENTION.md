@@ -79,8 +79,15 @@ every OpenRouter request to providers with a zero data retention policy.
   the file to its parser. Their retention is separate from model ZDR.
   User clarification, 2026-11-05: search may remain available with a ZDR base
   model; do not add the proposed switch relabeling or search-retention notices.
-- **Regenerate** checks the session model; when the last user message used a
-  different model, only the request-layer check applies (after key acquisition).
+- **Regenerate** checks the saved user-message model before memory/import/access
+  changes. Full Council checks its actual executing group; a single Parallel lane
+  checks its resolved historical model, not unrelated current selections.
+- **Retries and relay setup.** The current preference is reapplied on each credit,
+  affordability and JSON retry, after relay initialization, and before direct
+  fallback. Reduced token caps remain intact and billing adapters run only once.
+  A privacy refusal does not mark the relay failed or initiate a fallback.
+- **Failed saves.** The picker facade now forwards the approved error toast to
+  the application; the current tab's choice remains enforced.
 - **IP address.** Without the relay, the provider sees the browser's IP for
   direct requests. The tooltip's "OA Chat is anonymous" refers to account
   identity.

@@ -1,3 +1,22 @@
+## 2026-11-05 — Combined ZDR and ticket usage staging follow-up
+
+- ZDR is reapplied for credit/affordability retries and JSON transport retries,
+  then again after relay initialization and before direct fallback. These checks
+  do not rerun billing adapters or raise reduced output caps. Privacy refusals
+  are not proxy failures and cannot trigger an unrestricted fallback.
+- The real model-picker interface forwards failed-save toasts. Normal regeneration
+  validates the saved user-message model before memory/import/access changes;
+  full Council validates its executing group, and a single Parallel retry validates
+  its resolved historical lane only.
+- Usage reads always hold the account-data/ticket lock, including already seeded
+  logs. The host waits for a known account before starting a read. Counts and spent
+  tickets commit in one settings transaction so a failed write cannot increment
+  counts ahead of durable consumption. Shares seed the prior archive without
+  adding their own count, including when sharing is the first action after rollout.
+- Existing lower-tier key reuse, explicit full-price upgrades, retained-key expiry,
+  search/PDF behavior and picker-only shields are preserved. This combined source
+  includes the existing staging timing experiment and must not go to production.
+
 ## 2026-11-05 — Daily ticket usage log for the Account chart (staging)
 
 - `services/ticketUsageLog.js` keeps `tickets-usage-daily`: `{ version, backfilled, days: { 'YYYY-MM-DD': count } }`
@@ -7,11 +26,11 @@
 - Why a separate log: when a monthly key is invalidated, the `TICKET_KEY_INVALIDATED`
   branch of `consumeTickets` deletes that key's *spent* tickets from `tickets-archive` too,
   so the archive only ever holds the current ticket month.
-- `consumeTickets` records usage inside the ticket lock, before `persistTickets`, for the
+- `consumeTickets` prepares usage inside the ticket lock and commits it with `persistTickets`, for the
   success branch and for tickets the server consumed during a failed request
   (`error.consumeTickets`). Shares pass `recordUsage: false` (`ticketClient.splitTickets`).
-  Expired-key cleanup records nothing and never touches the log. A failed log write only
-  warns; it never fails a spend.
+  Expired-key cleanup records nothing and never touches the log. A failed log read only
+  warns; it never fails a spend. Ticket/archive/count writes share one transaction.
 - First use seeds once from the archive as it is then (`backfilled: true`), taking the
   larger count per day so it cannot double count. Pre-rollout shares in that archive cannot
   be told apart and are counted; months already expired before rollout are gone.
@@ -38,7 +57,7 @@
   requests, rejects unreadable settings, retains full endpoint slugs, and excludes
   mixed/unknown-retention provider groups. No deployment has been made.
 - The model picker has a "Zero data retention" switch under search, with the shared info tooltip. Models with an eligible provider show a green shield; with the switch on, the rest are dimmed and inert (`aria-disabled`, skipped by `getModelOptions`). See `docs/ZERO_DATA_RETENTION.md`.
-- Enforcement lives in `OpenRouterAPI.prepareRequestBody` (applied after every adapter), with readiness/model preflight before API request access and app-level checks in `sendMessage`/`regenerateResponse`/`regenerateCouncilLane`. Some app paths can still acquire session access before API preflight; see the feature doc.
+- Enforcement lives in `OpenRouterAPI.prepareRequestBody` (applied after every adapter), with readiness/model preflight before API request access and app-level checks in `sendMessage`/`regenerateCapturedResponse`/`regenerateCouncilLane`. Some app paths can still acquire session access before API preflight; see the feature doc.
 - `provider.zdr: true` alone can admit Safety Retention endpoints; `provider.only` preserves full routing slugs and excludes an entire model/provider group if any listed endpoint retains data or has an unknown policy. Display names are not routing identifiers.
 - Preference storage remains the existing IndexedDB chat setting. Configure it at controller construction before handlers can send. Request preparation fails closed while restoration is pending or failed. A newer toggle wins over late reads; writes are serialized and failed saves show an error. Once readiness is resolved, normal startup does not restore again over a new choice.
 - Send lifecycle follow-up: the initial ZDR patch awaited even a known-off
