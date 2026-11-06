@@ -14,7 +14,12 @@
 !/scripts/**
 !/patches
 /patches/*
+# Every reviewed SDK patch imported by scripts/patch-zkapi-sdk.mjs must ship:
+# postinstall/build refuse to run without the full hash-checked chain.
 !/patches/zkapi-browser-sdk-wallet-recovery.mjs
+!/patches/zkapi-browser-sdk-proof-cache.mjs
+!/patches/zkapi-browser-sdk-provider-verification.mjs
+!/patches/zkapi-browser-sdk-server-time.mjs
 !/deployments
 /deployments/*
 !/deployments/zkapi

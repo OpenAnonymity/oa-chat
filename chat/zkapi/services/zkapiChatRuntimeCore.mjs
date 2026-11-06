@@ -26,7 +26,7 @@ function waitFor(promise, signal) {
 }
 
 /** OA owns the chat lifecycle; the SDK owns private keys, proofs and settlement. */
-export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)), protocolNow = async () => Date.now() } = {}) {
     if (!client || !backend || typeof createInferenceService !== 'function' || !modelConfiguration) {
         throw new Error('Private chat runtime dependencies are required.');
     }
@@ -222,8 +222,18 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             await initializeClient();
             await client.ensureTestnetAccess?.({ signal, interactive: true });
             if (signal?.aborted) throw abortError();
+            // Pre-send gates use the SDK's trusted zkAPI server clock. If it is
+            // unavailable, keep the legacy device check here; the SDK still
+            // refuses a new authorization without trusted time.
+            let nowMs;
+            try { nowMs = await protocolNow(signal); }
+            catch {
+                if (signal?.aborted) throw abortError();
+                nowMs = Date.now();
+            }
+            if (signal?.aborted) throw abortError();
             const expired = Number(client.note?.expiry_ts) > 0
-                && Number(client.note.expiry_ts) * 1000 <= Date.now();
+                && Number(client.note.expiry_ts) * 1000 <= nowMs;
             if (client.withdrawalBlocksChat) {
                 // Recovery is an explicit balance-panel action. Repeated send
                 // attempts must not trap the person in the withdrawal dialog.
@@ -240,7 +250,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
                 const lease = client.activeLease;
                 const reusesKey = lease?.session_id === sessionId
                     && Number(lease.spending_limit_usd) === spendingLimitUsd
-                    && Number(lease.expires_at) * 1000 > Date.now() + 90_000
+                    && Number(lease.expires_at) * 1000 > nowMs + 90_000
                     && !lease.retiring && !lease.retired;
                 // An existing matching key has already proved its cap. Its
                 // remaining allowance is enforced upstream, not reproved here.

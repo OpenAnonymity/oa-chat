@@ -60,11 +60,11 @@ export function buildTrustedStationFallback(keyData, keyHash, stations = TRUSTED
 
 // Only our locally validated, current-policy records survive persistence. Old
 // advisory records have no marker and must obtain fresh approval on their next use.
-export function isCurrentTrustedStationFallback(proof, accessInfo = null) {
+export function isCurrentTrustedStationFallback(proof, accessInfo = null, { now = Date.now } = {}) {
     const trust = proof?.trustedStationFallback;
     if (!trust || trust.policy !== trustedStationPolicyRevision() ||
         !stationPin(trust.stationId, TRUSTED_VERIFIER_STATIONS, VERIFIER_URL) ||
-        !Number.isSafeInteger(trust.keyValidTill) || trust.keyValidTill * 1000 <= Date.now() ||
+        !Number.isSafeInteger(trust.keyValidTill) || trust.keyValidTill * 1000 <= now() ||
         !hexBytes(trust.stationSignature, 64) || !/^[a-f0-9]{16}$/.test(trust.keyHash || '')) return false;
     if (!accessInfo) return true;
     return trust.stationId === accessInfo.stationId &&

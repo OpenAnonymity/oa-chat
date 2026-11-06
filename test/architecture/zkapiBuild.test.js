@@ -82,9 +82,15 @@ test('Vercel source uploads include only reviewed public deployment pin files', 
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     await fs.copyFile('.vercelignore', path.join(directory, '.vercelignore'));
     execFileSync('git', ['init', '-q', directory]);
+    // Derive the required patch files from the patcher's actual imports so a
+    // newly chained patch cannot be omitted from a remote source upload.
+    const patcher = await fs.readFile('scripts/patch-zkapi-sdk.mjs', 'utf8');
+    const patchFiles = [...patcher.matchAll(/from '\.\.\/(patches\/[^']+)'/g)].map(match => match[1]);
+    assert.deepEqual(patchFiles.sort(), ['patches/zkapi-browser-sdk-proof-cache.mjs',
+        'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-server-time.mjs',
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs']);
     const included = [...['mainnet', 'sepolia'].map(network =>
-        `deployments/zkapi/${network}.json`),
-        'patches/zkapi-browser-sdk-wallet-recovery.mjs'];
+        `deployments/zkapi/${network}.json`), ...patchFiles];
     const excluded = ['deployments/private/key.json', 'deployments/zkapi/other/mainnet.json',
         ...['secret.json', 'nested/secret.json', '.env', '.git/config']
             .map(file => `deployments/zkapi/${file}`), 'patches/private-test.json'];

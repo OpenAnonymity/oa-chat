@@ -1,4 +1,5 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import zkapiBackend from './inference/backends/zkapiBackend.js';
 import { createInferenceService } from '../../publicInferenceApi.js';
 import * as modelConfiguration from '../../services/modelConfig.js';
@@ -17,6 +18,8 @@ export function createZkapiChatRuntime(options = {}) {
         createInferenceService,
         modelConfiguration,
         settleAccess: settlePrivateAccess,
+        // Non-authorizing pre-send gates; reuses a recent server-clock anchor.
+        protocolNow: signal => walletRuntime.protocolTimeMs(signal, { maxAgeMs: 5 * 60_000 }),
         resolveModelBudget: async (modelId, reasoningEnabled, signal) => {
             await ensureModelTiersReady({ signal });
             return getModelBudget(modelId, reasoningEnabled);

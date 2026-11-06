@@ -1429,6 +1429,18 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
         if (result.error) throw new Error(`Local Anvil ${method} failed`);
         return result.result;
     };
+    // Anvil may answer eth_sendRawTransaction before it automines the block,
+    // as the real-EVM deposit test already allows. Read state only after the
+    // receipt exists rather than racing the miner.
+    const minedReceipt = async hash => {
+        let receipt = await rpc('eth_getTransactionReceipt', [hash]);
+        for (let attempt = 0; !receipt && attempt < 40; attempt += 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            receipt = await rpc('eth_getTransactionReceipt', [hash]);
+        }
+        assert(receipt, 'the accepted transaction is mined');
+        return receipt;
+    };
     let started = false;
     for (let attempt = 0; attempt < 50; attempt += 1) {
         try { await rpc('eth_chainId'); started = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); }
@@ -1452,6 +1464,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
     } });
     await h.ready();
     const hash = await h.send();
+    assert.equal((await minedReceipt(hash)).status, '0x1');
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), 2_000_000_000_000_000n);
     const client = new ZkapiClient();
     client.config = { funding: { ...FUNDING, demo_rpc_url: url } };
@@ -1471,7 +1484,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
     assert.equal(broadcastBytes[0], broadcastBytes[1]);
     const returnHash = await restored.withAuthorizedAction({ kind: 'sweep', asset: 'eth', destination: DESTINATION, amount: 'max' },
         () => restored.transferEth(DESTINATION, 'max'));
-    const receipt = await rpc('eth_getTransactionReceipt', [returnHash]);
+    const receipt = await minedReceipt(returnHash);
     assert.equal(receipt.status, '0x1');
     const returnTransaction = Transaction.from(broadcastBytes.at(-1));
     const unusedFeeAllowance = returnTransaction.gasLimit * (returnTransaction.maxFeePerGas - BigInt(receipt.effectiveGasPrice));
@@ -1504,7 +1517,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
         { kind: 'deposit', amount: amount.toString(), preparedOperationId: nativeQuote.operationId,
             depositCommitment: nativeQuote.depositCommitment, feeLimitWei: nativeQuote.feeReserveWei,
             feeQuoteExpiresAt: nativeQuote.expiresAt });
-    const nativeReceipt = await rpc('eth_getTransactionReceipt', [depositHash]);
+    const nativeReceipt = await minedReceipt(depositHash);
     assert.equal(nativeReceipt.status, '0x1');
     const nativeActualFee = BigInt(nativeReceipt.gasUsed) * BigInt(nativeReceipt.effectiveGasPrice);
     assert(nativeActualFee <= BigInt(nativeQuote.feeReserveWei));

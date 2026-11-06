@@ -33,7 +33,9 @@ function pendingRecoveryError() {
 export function createPrivateLeaseRecovery({
     runtime = walletRuntime,
     withWalletLock = withBrowserWalletLock,
-    now = Date.now,
+    // Defaults to the SDK's trusted zkAPI server clock (device clock on
+    // legacy servers); another tab's ownership deadline is server time.
+    now = null,
     retryOptions = { maxWaitMs: 15_000, maxAttempts: 2 }
 } = {}) {
     return async function recoverInterruptedPrivateAccess({
@@ -55,8 +57,11 @@ export function createPrivateLeaseRecovery({
             const owner = runtime.runtime.lease;
             if (sessionId && owner?.sessionId && owner.sessionId !== sessionId) return false;
             const ownershipDeadline = Number(owner?.settle_after || owner?.expires_at);
+            const nowMs = now ? now()
+                : typeof runtime.protocolTimeMs === 'function' ? await runtime.protocolTimeMs(signal) : Date.now();
+            throwIfAborted(signal);
             if (owner && owner.ownerId !== runtime.ownerId
-                && ownershipDeadline > Math.floor(now() / 1000)) {
+                && ownershipDeadline > Math.floor(nowMs / 1000)) {
                 if (!owner.sessionId) throw pendingReceiptError();
                 return false;
             }

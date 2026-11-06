@@ -7,9 +7,10 @@ export function isVerifierUnavailable(proof) {
     return proof?.status === VERIFIER_UNAVAILABLE_STATUS;
 }
 
-export function isVerifierResultUsable(result) {
+// `options.now` lets a caller with a trusted issuer clock (zkAPI) check expiry.
+export function isVerifierResultUsable(result, options = {}) {
     return isVerifierProofApproved(result) ||
-        (isVerifierUnavailable(result) && isCurrentTrustedStationFallback(result));
+        (isVerifierUnavailable(result) && isCurrentTrustedStationFallback(result, null, options));
 }
 
 export const LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS = 'local-loopback-bypass';
@@ -35,7 +36,7 @@ export function isLocalLoopbackVerifierBypassProof(proof) {
 }
 
 export function isVerifierProofUsable(proof, options = {}) {
-    return isVerifierResultUsable(proof) ||
+    return isVerifierResultUsable(proof, options) ||
         (options.allowLocalBypass === true && isLocalLoopbackVerifierBypassProof(proof));
 }
 

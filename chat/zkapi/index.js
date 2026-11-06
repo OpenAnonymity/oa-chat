@@ -25,7 +25,7 @@ export function createZkapiPaymentIntegration({ configUrl, workerUrl, mode = 'br
         mode,
         requestTestnetPassword,
         verifyProviderKey: createProviderKeyVerifier(providerVerifier, { ensureReady: ensureProviderVerifierReady }),
-        assertProviderKey: lease => assertPrivateLeaseVerification(lease, providerVerifier),
+        assertProviderKey: (lease, options) => assertPrivateLeaseVerification(lease, providerVerifier, options),
         transport: transport || ((url, init, options) => networkProxy.fetch(url, init, options))
     });
     const runtime = createPaymentModeRuntime();

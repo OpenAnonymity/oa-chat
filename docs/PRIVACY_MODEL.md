@@ -633,6 +633,12 @@ settlement state; it does not receive account identities or chat content. OA's
 provider adapter sends inference with the ephemeral credential. Private note
 storage is browser-local and separate from account-backed chat/ticket sync.
 
+Before a new private key, the SDK may read the configured protocol server's
+unauthenticated, non-cacheable `GET /v2/time` (Sepolia sends its shared
+password as for other `/v2/*` calls). It carries no wallet, note, request or
+account data and the server keeps no state; it adds one request whose timing
+sits next to the existing quote and lease requests on the same transport.
+
 SDK protocol, manifest, configuration, and daemon requests explicitly omit
 account cookies, including on same-origin reverse-proxy paths. The host passes
 OA's existing opt-in proxy transport instead of creating a second proxy policy.

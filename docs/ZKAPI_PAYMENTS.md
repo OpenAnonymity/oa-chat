@@ -1,3 +1,56 @@
+## zkAPI server time for private keys (2026-11-06)
+
+Device clocks hours or days off, or changed or suspended mid-request, could
+make every new private-key proof fail with "request_time is outside the
+accepted freshness window", trip the local ETH/USD quote check, or have the
+host verifier reject a freshly minted key. The fix is backwards compatible:
+
+- **Server (zkapi `32b97d1` + additive change):** `GET /v2/time` returns
+  `server_time_ms`, `chain_id`, `protocol_version` and the existing fixed
+  window (300 s age, 30 s future), with `Cache-Control: no-store` and no state
+  or identifiers. Request and proof formats and admission bounds are
+  unchanged. `/expire` additionally answers `expired_unaccepted` for an exact,
+  unreserved request whose `request_time` is past the age window. A future
+  `request_time` alone never expires a proof, although an independently
+  expired or superseded quote still can. The issuance lock and exact binding
+  are unchanged. Old clients get this recovery with no update.
+- **Client (`server-time-v1`, the fourth hash-checked patch on pinned SDK
+  `3342c95`, after `wallet-recovery-v1`, `proof-cache-integrity-v1` and
+  `provider-verification-v1`):** new request timestamps, new-quote checks,
+  lease validity, key reuse and checkout use a monotonic anchor of
+  `/v2/time` (a lower bound), never a global `Date.now` override. Samples are
+  bounded (5 s round trip, 30 s for request time), memory-only per deployment
+  and page load, and are resampled after an OS suspend or a clock change
+  larger than the 2-second wall-vs-monotonic discontinuity tolerance. The prover loads before
+  `request_time` is chosen. Host verification receives a strict `now` that
+  fails closed after a discontinuity, plus a bounded `refreshNow`. The SDK
+  rechecks lease expiry against a fresh sample after asynchronous
+  verification. A failure keeps the exact journal and never starts a second
+  authorization by itself.
+- **Compatibility:** an old client on a new server is unchanged. A new client
+  on a new server resists skew. A new client on an old server falls back to
+  the device clock **only** on 404/405. 401/403, 5xx, malformed data and
+  transport failures block a new key instead. Browser-skew protection
+  therefore requires the new server endpoint. A dev server without the
+  `/zkapi-deployment/` rewrite also reads as legacy, because the production
+  rewrite's 404 is authoritative for this endpoint.
+- **Recovery:** saved journals stay byte-identical. The exact `/expire`
+  handshake and signed-receipt installation check the saved quote structurally
+  only, so a failed time endpoint or a slow device never blocks them. Only an
+  exactly bound server acknowledgement (`expired_unaccepted` or
+  `superseded_unaccepted`) or a signed receipt clears a journal.
+- **Host gates:** the note-expiry and key-reuse pre-send gates and
+  interrupted-access ownership deadlines use the SDK server clock. The
+  pre-send gates fall back to the legacy device check if it is unavailable,
+  because the SDK still refuses a new key without trusted time. Ticket
+  verification and account clocks are untouched: the verifier accepts an
+  explicit `now` only from the zkAPI adapter.
+- **Packaging:** `.vercelignore` now ships all four patch files. Before, a
+  source upload dropped the proof-cache, provider-verification and new patch
+  files. A test derives the required files from the patcher's imports.
+
+Rollout: deploy the server first (old clients keep working), then the client.
+
 ## Withdrawal fee preflight and OA isolation (2026-09-30)
 
 Send ETH and MetaMask withdrawals check public fee data and the pending ETH balance before

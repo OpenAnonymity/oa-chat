@@ -1,3 +1,37 @@
+## 2026-11-06 — zkAPI server time for private keys (backwards compatible)
+
+See [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md#zkapi-server-time-for-private-keys-2026-11-06).
+Non-obvious learnings:
+- Generate `patches/zkapi-browser-sdk-server-time.mjs` only from the exact
+  post-`provider-verification-v1` bytes (`09cf761c…`). Every replacement's
+  `after` text must be unique: the patch tests reverse the chain with
+  `replace(after, before)`.
+- Three time uses: `protocolTimeMs()` (authoritative; `required: true` for new
+  keys, reuse and post-verification), `protocolAuthorizationNowMs()` (strict
+  synchronous, Infinity after a suspend or a clock change over the 2 s
+  discontinuity tolerance) and
+  `protocolEstimateMs()` (display and settlement timers only). Never pass the
+  estimate to an authorization callback.
+- `performance.now()` can pause during OS sleep. Suspend is detected as
+  wall-vs-monotonic disagreement, so a strict check fails closed. Lifecycle
+  events only force the next authoritative resample.
+- The `/v2/time` 404 from the production `/zkapi-deployment/` proxy is
+  authoritative (`zkapiAuthoritativeProxy`). Falling through to a direct
+  request would hit CORS on old mainnet servers.
+- Saved-quote recovery is structural (`validateSavedNativeQuote`). New-quote
+  validation stays strictly fresh.
+- `.vercelignore` must list every patch the patcher imports.
+- The Anvil provider test now waits for receipts before reading state. Anvil
+  1.8.5 can answer `eth_sendRawTransaction` before mining. It still fails
+  afterwards, for a reason that predates this work. Since `a1e856f5`
+  (2026-10-12, ERC-20 removal) its recovery context is `kind: 'deposit'`, so
+  the real SDK `resumeExternalTransaction` needs complete native funding (the
+  fixture lacks the price-feed fields), a durable SDK `pendingDeposit` and a
+  vault `NoteDeposited` event, none of which the minimal EVM fixture models.
+  The same error reproduces on the exact pre-server-time SDK bytes. Fixing it
+  needs a deliberate fixture redesign (for example a real vault deployment),
+  not a stub. Without Anvil installed, the test skips itself.
+
 ## 2026-10-31 — Ticket expiry notice with next step
 
 The `ticket-key-invalidated` listener now shows the neutral, text-only

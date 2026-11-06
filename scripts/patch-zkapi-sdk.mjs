@@ -6,10 +6,12 @@ import { createRequire } from 'node:module';
 import patch from '../patches/zkapi-browser-sdk-wallet-recovery.mjs';
 import proofCachePatch from '../patches/zkapi-browser-sdk-proof-cache.mjs';
 import providerVerificationPatch from '../patches/zkapi-browser-sdk-provider-verification.mjs';
+import serverTimePatch from '../patches/zkapi-browser-sdk-server-time.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const digest = value => createHash('sha256').update(value).digest('hex');
-export const zkapiSdkPatches = [patch, proofCachePatch, providerVerificationPatch];
+// Order matters: each file's chain starts from the previous patch's result.
+export const zkapiSdkPatches = [patch, proofCachePatch, providerVerificationPatch, serverTimePatch];
 
 export function zkapiSdkPatchProvenance() {
     return { name: 'wallet-recovery-v1', revision: patch.revision,
