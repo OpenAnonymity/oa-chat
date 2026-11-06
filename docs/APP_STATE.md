@@ -1,3 +1,24 @@
+## 2026-11-05 — Daily ticket usage log for the Account chart (staging)
+
+- `services/ticketUsageLog.js` keeps `tickets-usage-daily`: `{ version, backfilled, days: { 'YYYY-MM-DD': count } }`
+  in local calendar days. Dates and counts only. It is account-scoped (listed in
+  `getAccountScopedSettingKeys`, switched like `tickets-leases`) and never uploaded
+  (`readUploadSnapshot` does not read it). Capped at 3,660 days.
+- Why a separate log: when a monthly key is invalidated, the `TICKET_KEY_INVALIDATED`
+  branch of `consumeTickets` deletes that key's *spent* tickets from `tickets-archive` too,
+  so the archive only ever holds the current ticket month.
+- `consumeTickets` records usage inside the ticket lock, before `persistTickets`, for the
+  success branch and for tickets the server consumed during a failed request
+  (`error.consumeTickets`). Shares pass `recordUsage: false` (`ticketClient.splitTickets`).
+  Expired-key cleanup records nothing and never touches the log. A failed log write only
+  warns; it never fails a spend.
+- First use seeds once from the archive as it is then (`backfilled: true`), taking the
+  larger count per day so it cannot double count. Pre-rollout shares in that archive cannot
+  be told apart and are counted; months already expired before rollout are gone.
+- Exposed to the host as `tickets.getUsageHistory()` → frozen `[{ day, count }]`, oldest
+  first. Per device: other devices' spends are only included via the one-time seed.
+- Tests: `test/services/ticketUsageLog.test.js`.
+
 ## 2026-11-05 — Zero data retention switch (staging)
 
 - Copy follow-up: unavailable-model toasts say "Choose a model with a ZDR

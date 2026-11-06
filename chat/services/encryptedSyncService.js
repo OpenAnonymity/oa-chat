@@ -51,6 +51,8 @@ const TICKETS_ARCHIVE_KEY = 'tickets-archive';
 const TICKETS_TOMBSTONES_KEY = 'tickets-tombstones';
 const TICKETS_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
 const TICKETS_LEASES_KEY = 'tickets-leases';
+// Local-only daily usage counts (see ticketUsageLog.js); never uploaded.
+const TICKETS_USAGE_KEY = 'tickets-usage-daily';
 
 // Preference keys to sync
 const SYNCABLE_PREF_KEYS = [
@@ -272,6 +274,7 @@ export class SyncService {
             TICKETS_TOMBSTONES_KEY,
             TICKETS_INVALIDATED_KEYS_KEY,
             TICKETS_LEASES_KEY,
+            TICKETS_USAGE_KEY,
             SYNC_LAST_TIME_KEY,
             SYNC_SCHEMA_VERSION_KEY,
             SYNC_WALLET_WRITER_KEY,

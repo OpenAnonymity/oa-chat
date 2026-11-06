@@ -23,6 +23,13 @@ import {
     normalizeTicketKeyId,
     partitionTicketsByKeyId
 } from '../domain/ticketKeys.js';
+import {
+    TICKET_USAGE_KEY,
+    addTicketUsage,
+    backfillTicketUsage,
+    normalizeTicketUsageLog,
+    toTicketUsageHistory
+} from './ticketUsageLog.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -1056,6 +1063,7 @@ export class TicketStore {
                     ...ticket,
                     consumed_at: ticket.consumed_at || new Date().toISOString()
                 })));
+                await this.recordUsage(selected.length, archived, options);
                 await this.persistTickets(remaining, updatedArchive, {
                     skipSync: syncService.shouldDeferRedemptionSync()
                 });
@@ -1136,6 +1144,7 @@ export class TicketStore {
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
                         const updatedActive = active.filter(ticket => !usedTokenSet.has(ticket.finalized_ticket));
+                        await this.recordUsage(usedSelected.length, archived, options);
                         await this.persistTickets(
                             updatedActive,
                             updatedArchive,
@@ -1149,6 +1158,7 @@ export class TicketStore {
                             ...ticket,
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
+                        await this.recordUsage(selected.length, archived, options);
                         await this.persistTickets(remaining, updatedArchive, {
                             skipSync:
                                 syncService.shouldDeferRedemptionSync()
@@ -1157,6 +1167,53 @@ export class TicketStore {
                 }
                 throw error;
             }
+        });
+    }
+
+    async readUsageLog() {
+        if (typeof chatDB === 'undefined' || !chatDB.db) return null;
+        return normalizeTicketUsageLog(await chatDB.getSetting(TICKET_USAGE_KEY));
+    }
+
+    async writeUsageLog(log) {
+        if (typeof chatDB === 'undefined' || !chatDB.db) return;
+        await chatDB.saveSetting(TICKET_USAGE_KEY, log);
+    }
+
+    /**
+     * Adds spent tickets to the daily usage log. Called inside the ticket
+     * lock with the archive as it was before this spend, so the one-time
+     * backfill never counts these tickets twice. Shares pass
+     * `recordUsage: false`. A failed write never fails the spend.
+     */
+    async recordUsage(count, archivedBeforeSpend, options = {}) {
+        if (options.recordUsage === false || !(count > 0)) return;
+        try {
+            const current = await this.readUsageLog();
+            if (!current) return;
+            const seeded = backfillTicketUsage(current, archivedBeforeSpend);
+            await this.writeUsageLog(addTicketUsage(seeded, count, new Date()));
+        } catch (error) {
+            console.warn('Failed to record ticket usage:', error);
+        }
+    }
+
+    /**
+     * Daily ticket usage for the Account chart: `[{ day, count }]`, oldest
+     * first. Seeds the log from the current archive the first time.
+     */
+    async getUsageHistory() {
+        await this.ensureDbReady();
+        const current = await this.readUsageLog();
+        if (!current) return toTicketUsageHistory(null);
+        if (current.backfilled) return toTicketUsageHistory(current);
+        return this.withLock(async () => {
+            const latest = await this.readUsageLog();
+            if (!latest || latest.backfilled) return toTicketUsageHistory(latest);
+            const { archived } = await this.readFromDatabase();
+            const seeded = backfillTicketUsage(latest, archived);
+            await this.writeUsageLog(seeded);
+            return toTicketUsageHistory(seeded);
         });
     }
 

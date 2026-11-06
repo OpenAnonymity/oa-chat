@@ -711,6 +711,10 @@ class ChatApp {
                 releasePreparedTicketPublication,
                 getIssuerPublicKey: signal => this.getExtensionTicketIssuer(signal),
                 getToolsSnapshot: () => this.getExtensionTicketToolsSnapshot(),
+                // Daily counts of tickets spent on inference on this device,
+                // oldest first: [{ day: 'YYYY-MM-DD', count }]. Dates and
+                // counts only; see services/ticketUsageLog.js.
+                getUsageHistory: () => ticketStore.getUsageHistory(),
                 subscribe: (listener) => {
                     if (typeof listener !== 'function') return () => {};
                     let active = true;
