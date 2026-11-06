@@ -145,7 +145,7 @@ describe('ZDR send preflight and ownership', () => {
         await app.sendMessage();
         assert.equal(app.sendSubmissionsInFlight.size, 0);
         assert.equal(app.elements.messageInput.value, 'Original prompt');
-        assert.match(notices[0], /preference/);
+        assert.match(notices[0], /couldn't load your Zero data retention setting/);
     });
 
     for (const usePending of [true, false]) {
