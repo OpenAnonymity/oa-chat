@@ -74,17 +74,52 @@ function retryDelay(response) {
     return Number.isFinite(delay) ? Math.max(0, delay) : 1000;
 }
 
+// A user reported that an inference HTTP 401 cleared after pressing Retry a
+// few times; whether OpenRouter rejects valid keys transiently is unverified.
+// Resend the identical request (same credential, body and request access
+// scope) after these pauses. No new access is requested here.
+export const INFERENCE_AUTH_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 4000]);
+const authRetryCounts = new WeakMap();
+
+/** Whether this final 401 went through the same-request resend policy. */
+export function isInferenceAuthRetryResponse(response) {
+    return Boolean(response && typeof response === 'object' && authRetryCounts.has(response));
+}
+
+/** Same-request 401 retries already spent before this final response. */
+export function getInferenceAuthRetryCount(response) {
+    return isInferenceAuthRetryResponse(response) ? authRetryCounts.get(response) : 0;
+}
+
 export async function fetchWithOpenRouterCreditRecovery(fetchRequest, url, init, config = {}) {
+    const { authRetryDelaysMs: requestedDelays, ...transportConfig } = config;
+    const authRetryDelaysMs = Array.isArray(requestedDelays) ? requestedDelays : INFERENCE_AUTH_RETRY_DELAYS_MS;
     // Other providers can reuse the API adapter without inheriting this policy.
     if (url !== 'https://openrouter.ai/api/v1/chat/completions') {
-        return fetchRequest(url, init, config);
+        return fetchRequest(url, init, transportConfig);
     }
     let request = init;
     let reducedOutput = false;
     let settlementRetries = 0;
+    let authRetries = 0;
     for (;;) {
         abortIfNeeded(config.signal);
-        const response = await fetchRequest(url, request, config);
+        const response = await fetchRequest(url, request, transportConfig);
+        if (response.status === 401) {
+            // A rejected request produced no output, so a resend cannot
+            // duplicate any. The budget is per call and never refilled.
+            if (authRetries < authRetryDelaysMs.length) {
+                const delay = authRetryDelaysMs[authRetries];
+                authRetries += 1;
+                // Status and attempt only: never the key, body or provider text.
+                console.warn(`Inference request rejected (HTTP 401); resending the same request (${authRetries}/${authRetryDelaysMs.length}).`);
+                discardResponseBody(response.body);
+                await waitForRetry(delay, config.signal);
+                continue;
+            }
+            authRetryCounts.set(response, authRetries);
+            return response;
+        }
         if (response.status !== 402) return response;
         let data;
         try {

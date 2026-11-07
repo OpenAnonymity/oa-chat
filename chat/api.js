@@ -13,7 +13,7 @@ import { consumeSseBody } from './services/inference/sseStream.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
 import { validateInferenceInput, validateConversationInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
 
-import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode, isKeyLimitExceededResponse } from './services/inference/openRouterCreditRecovery.js';
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode, getInferenceAuthRetryCount, isInferenceAuthRetryResponse, isKeyLimitExceededResponse } from './services/inference/openRouterCreditRecovery.js';
 import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
 import { OPENROUTER_APP_HEADERS } from './services/inference/appAttribution.js';
 import {
@@ -1492,8 +1492,11 @@ export class OpenRouterAPI {
                 return await watchdog.wait(finalizeStreamResult());
             }
 
-            // The outer send policy owns retries. A watchdog also races transports
-            // that do not reliably implement AbortSignal (including relay reads).
+            // The outer send policy owns retries, except the bounded same-request
+            // resends of a rejected HTTP request (402 budget, 401 auth) at the
+            // OpenRouter boundary. A watchdog also races transports that do not
+            // reliably implement AbortSignal (including relay reads).
+            const authRetryDelaysMs = this.options.inferenceTiming?.authRetryDelaysMs;
             const pendingResponse = this.fetchWithRetry(
                 access,
                 url,
@@ -1502,7 +1505,8 @@ export class OpenRouterAPI {
                     context: 'Inference stream',
                     maxAttempts: 1,
                     timeoutMs: 0, // watchdog owns connection + body deadlines
-                    signal: watchdog.signal
+                    signal: watchdog.signal,
+                    ...(Array.isArray(authRetryDelaysMs) ? { authRetryDelaysMs } : {})
                 }
             );
 
@@ -1523,6 +1527,14 @@ export class OpenRouterAPI {
                 error.message = getErrorMessage(errorData?.error, getErrorMessage(errorData, fallbackMessage));
                 error.status = response.status;
                 error.data = errorData;
+                if (response.status === 401 && isInferenceAuthRetryResponse(response)) {
+                    // Tagged here, at the inference HTTP response, and only when
+                    // the OpenRouter boundary resent this identical request.
+                    // Access issuance, verifier, wallet, account and other
+                    // endpoints' (e.g. local daemon) 401s never are.
+                    error.inferenceAuthRejected = true;
+                    error.authRetryCount = getInferenceAuthRetryCount(response);
+                }
                 if (response.status === 402 || isKeyLimitExceededResponse(response.status, errorData, error.creditRecoveryMessage)) {
                     error.code = getCreditErrorCode(errorData);
                 }

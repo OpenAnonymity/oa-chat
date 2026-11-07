@@ -1,3 +1,37 @@
+## 2026-11-07 — inference 401: bounded same-key retry (local); cause still unknown
+
+See [inference reliability](INFERENCE_RELIABILITY.md). The report
+was an OA-ticket inference `POST openrouter.ai/.../chat/completions` that
+returned 401 on Sonnet 5.5. The upstream body was not captured, and fresh and
+reused Sonnet keys both worked on live `1afdc812`. The user says pressing
+Retry a few times works. Implemented locally, not deployed: resend the
+identical request 3 times (1 s, 2 s, 4 s). Non-obvious learnings:
+- The retry lives in `fetchWithOpenRouterCreditRecovery`, beside the 402
+  resends. It runs inside one `withRequestAccess` scope, so private mode
+  keeps the same checked-out lease. Do not add 401 to
+  `isRetryableInferenceError` or `fetchRetry`: those also see issuance,
+  verifier and wallet 401s, which must stay fail-closed.
+- `chat/api.js` tags the final response 401 (`inferenceAuthRejected`,
+  `authRetryCount`) only when the recovery module handled it
+  (`isInferenceAuthRetryResponse`); a daemon or other base-URL 401 stays
+  untagged. Only tagged errors get the "provider rejected this chat's access
+  key" copy; other 401s keep "Authentication error".
+- Each resend writes a sanitized `console.warn`. The timeline still logs one
+  entry per stream call, so 401s that recovered are visible only in the
+  console.
+- The schedule can be overridden for tests via
+  `inferenceTiming.authRetryDelaysMs`. It is stripped before reaching the
+  transport.
+- Android native streaming does not resend. QuickAsk, council lanes and
+  regeneration do, because they share `streamCompletion`.
+- Unchanged and still open: no automatic key rotation (a purchase costs the
+  tier price, 3 tickets for Sonnet 5.5); panel "Regenerate key" can
+  reinstall the same eligible key via `findTierAccess`; ticket-key expiry
+  uses the device clock.
+- `npm run test` hardcodes `/tmp` for its bundle, which sandboxes may block.
+  An equivalent copy of the runner using `$TMPDIR` works. The two Anvil /
+  real-EVM payment tests fail on baseline too.
+
 ## 2026-11-06 — zkAPI server time for private keys (backwards compatible)
 
 See [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md#zkapi-server-time-for-private-keys-2026-11-06).

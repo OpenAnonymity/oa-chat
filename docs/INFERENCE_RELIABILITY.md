@@ -47,6 +47,15 @@ chat is being viewed. Stop clears streaming state without manufacturing an error
   attempt. Permanent HTTP failures and started-stream failures do not auto-retry.
   Explicit Retry response uses the existing regeneration flow and may consume
   inference credit like any user-requested generation.
+- One exception sits at the OpenRouter `/chat/completions` HTTP boundary
+  (`fetchWithOpenRouterCreditRecovery`). Besides its existing 402 budget
+  resends, an HTTP 401 resends the identical request (same credential, body
+  and request-access lease) up to three times, after 1 s, 2 s and 4 s. No
+  output exists yet, so nothing can duplicate. Stop cancels the wait. The
+  final 401 is tagged `inferenceAuthRejected` and gets its own copy. 401s
+  from access issuance, verifiers, wallets or accounts are not tagged and not
+  resent. The budget is per stream call, so outer 5xx/network retries
+  multiply it, but it stays bounded.
 - Shared HTTP retries cancel discarded transient-error bodies so proxy busy state
   can return to zero.
 - Local aggregate guard: 32 MiB request and 32 images across conversation history

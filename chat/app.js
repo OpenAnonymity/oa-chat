@@ -8979,8 +8979,14 @@ class ChatApp {
                     (terminalError?.status === 403 && this.isAccessCreditExhaustedError(terminalError))) {
                     // Credit/token limit errors (a spent key limit arrives as 403 since 2026-10)
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
+                } else if (terminalError?.status === 401 && terminalError?.inferenceAuthRejected === true) {
+                    // The provider rejected the inference request itself, after
+                    // the same request was already resent with the same key.
+                    const attempts = (Number(terminalError.authRetryCount) || 0) + 1;
+                    const attemptNote = attempts > 1 ? ` ${attempts} times` : '';
+                    userFriendlyMessage = `The provider rejected this chat's access key${attemptNote} (HTTP 401). Try again in a moment. If it keeps failing, start a new chat, which uses a new key, and submit an [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else if (terminalError?.status === 401) {
-                    // Authentication errors
+                    // Other authentication errors (e.g. private-access issuance)
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
                 } else if (terminalError?.status === 503 || terminalError?.status === 502 || terminalError?.status === 504) {
                     // Service unavailable / gateway errors (after retries exhausted)

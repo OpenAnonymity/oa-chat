@@ -32,6 +32,7 @@ const { default: preferencesStore } = await import('../../chat/services/preferen
 const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
+const { OpenRouterAPI } = await import('../../chat/api.js');
 const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
 const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
@@ -641,6 +642,99 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(calls, 1);
         assert.equal(refreshes, 1);
         assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    // Inference HTTP 401: the real send loop, the real OpenRouter client and
+    // its rejected-request boundary, with only the network transport stubbed.
+    function authRetryHarness(respond, { delays = [1, 2, 4], acquireRequestAccess } = {}) {
+        const requests = [];
+        const api = new OpenRouterAPI({
+            ...(acquireRequestAccess ? { acquireRequestAccess } : {}),
+            inferenceTiming: { authRetryDelaysMs: delays },
+            networkTransport: { async fetchWithRetry(url, init) {
+                requests.push({ url, authorization: init.headers.Authorization || init.headers.authorization, body: init.body });
+                return respond(requests.length);
+            } }
+        });
+        const harness = streamHarness((messages, modelId, session, ...rest) =>
+            api.streamCompletion(messages, modelId, 'ticket-key', ...rest));
+        harness.app.acquireAndSetAccess = async () => assert.fail('A 401 retry must not acquire new access');
+        harness.app.refreshAccessAfterCreditExhaustion = async () => assert.fail('A 401 retry must not redeem tickets');
+        return { ...harness, requests };
+    }
+    const rejected = () => new Response(JSON.stringify({ error: { code: 401, message: 'PRIVATE_PROVIDER_BODY' } }), { status: 401 });
+    const answered = text => new Response(`data: {"choices":[{"delta":{"content":"${text}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`);
+
+    test('a transient inference 401 resends the identical request with the same key and no new access', async () => {
+        const { app, records, requests } = authRetryHarness(call => call <= 2 ? rejected() : answered('Recovered answer'));
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant.content, 'Recovered answer');
+        assert.equal(requests.length, 3);
+        assert.deepEqual(new Set(requests.map(request => request.authorization)), new Set(['Bearer ticket-key']));
+        assert.equal(new Set(requests.map(request => request.body)).size, 1, 'same model, payload and conversation');
+        assert.equal(requests[0].url, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('a persistent inference 401 stops after three resends with plain copy and no provider text', async () => {
+        const { app, records, requests } = authRetryHarness(() => rejected());
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(requests.length, 4, 'one request plus three same-key resends');
+        assert.match(assistant.content, /provider rejected this chat's access key 4 times \(HTTP 401\)\. Try again in a moment\./);
+        assert.doesNotMatch(assistant.content, /PRIVATE_PROVIDER_BODY|Bearer|ticket-key/);
+        assert.equal(assistant.isLocalOnly, true);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('mixed gateway and auth rejections stay bounded by both retry budgets', async () => {
+        const { app, records, requests } = authRetryHarness(call => call === 1
+            ? new Response('{}', { status: 503 }) : rejected());
+        await app.sendMessage();
+        assert.equal(requests.length, 5, 'one 503, then one request plus three auth resends');
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /HTTP 401/);
+    });
+
+    test('stopping during the 401 backoff cancels the wait and sends nothing more', async () => {
+        const { app, records, requests } = authRetryHarness(() => {
+            setTimeout(() => app.sessionStreamingStates.get('one').abortController.abort(), 5);
+            return rejected();
+        }, { delays: [60000, 60000, 60000] });
+        const started = Date.now();
+        await app.sendMessage();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.ok(Date.now() - started < 5000, 'the backoff must not hold the composer');
+        assert.equal(requests.length, 1);
+        assert.equal([...records.values()].some(message => message.role === 'assistant' && /401/.test(message.content || '')), false);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('a 401 reported after output keeps the partial reply and is never replayed', async () => {
+        const { app, records, requests } = authRetryHarness(() => new Response(
+            'data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n'
+            + 'data: {"error":{"code":401,"message":"PRIVATE_PROVIDER_BODY"}}\n\n'));
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(requests.length, 1);
+        assert.equal(assistant.content, 'Partial answer');
+        assert.ok(assistant.inferenceError);
+    });
+
+    test('a private-access issuance 401 is not resent and keeps the existing authentication copy', async () => {
+        let acquired = 0;
+        const { app, records, requests } = authRetryHarness(() => assert.fail('No inference without access'), {
+            acquireRequestAccess: async () => {
+                acquired++;
+                throw Object.assign(new Error('Invalid org signature'), { name: 'BrowserWalletHttpError', status: 401 });
+            }
+        });
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(acquired, 1);
+        assert.equal(requests.length, 0);
+        assert.match(assistant.content, /^Authentication error\./);
     });
 
     test('wide mode updates the action label and icon immediately in both directions', () => {
