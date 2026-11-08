@@ -10,6 +10,7 @@ import { isReportedModelId } from './domain/modelSelection.js';
 // ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
 import { consumeSseBody } from './services/inference/sseStream.js';
+import { bearerToken, markInferenceKeyAccepted } from './services/inference/keyReadiness.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
 import { validateInferenceInput, validateConversationInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
 
@@ -622,6 +623,7 @@ export class OpenRouterAPI {
                 error.data = data;
                 throw error;
             }
+            markInferenceKeyAccepted(bearerToken(headers));
 
             if (data?.usage && typeof options.onUsage === 'function') {
                 try {
@@ -1444,6 +1446,9 @@ export class OpenRouterAPI {
                             if (event.type === 'stream-open') {
                                 if (!streamOpened) {
                                     streamOpened = true;
+                                    // The native job has no readiness resends,
+                                    // but its acceptance closes the key's window.
+                                    markInferenceKeyAccepted(bearerToken(headers));
                                     watchdog.opened();
                                     if (typeof onStreamOpen === 'function') {
                                         await watchdog.wait(onStreamOpen());
@@ -1506,7 +1511,8 @@ export class OpenRouterAPI {
                     maxAttempts: 1,
                     timeoutMs: 0, // watchdog owns connection + body deadlines
                     signal: watchdog.signal,
-                    ...(Array.isArray(authRetryDelaysMs) ? { authRetryDelaysMs } : {})
+                    ...(Array.isArray(authRetryDelaysMs) ? { authRetryDelaysMs } : {}),
+                    ...(this.options.inferenceTiming?.authClock ? { authClock: this.options.inferenceTiming.authClock } : {})
                 }
             );
 

@@ -2532,3 +2532,25 @@ test('stale tab with zero tickets reuses a stored paid lane before shortage chec
         assert.equal(controller.findEligibleLaneAccess(session, { id: 'p/high', laneId: 'primary' }).apiKey, 'paid');
     } finally { globalThis.location = previous; }
 });
+
+test('a freshly issued, explicitly verified council lane key gets the shared readiness window', async () => {
+    const readiness = await import('../../chat/services/inference/keyReadiness.js');
+    const key = 'sk-or-v1-readiness-council-lane-0001';
+    const controller = createController({
+        ticketCount: 1,
+        costs: { 'openai/gpt': 1 },
+        models: [{ id: 'openai/gpt', name: 'GPT' }],
+        chatDB: { saveSession: async () => {} },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            requestAccess: async () => ({ key, stationId: 'station-a', expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+            getVerificationAdapter: () => ({ supports: true }),
+            verifyAccess: async () => ({ status: 'verified', data: { key_hash: 'hash-a' } })
+        }
+    });
+    const session = { id: 'session-lane-readiness', councilAccess: {} };
+    assert.equal(readiness.getFreshKeyReadiness(key), null);
+    await controller.requestLaneAccess(session, { laneId: 'primary', id: 'openai/gpt', name: 'GPT' }, null);
+    assert.equal(session.councilAccess.primary.apiKey, key);
+    assert.ok(readiness.getFreshKeyReadiness(key), 'enrolled by the shared verified-acquisition boundary');
+});

@@ -1,4 +1,5 @@
 import { discardResponseBody, readInferenceErrorBody } from './reliability.js';
+import { bearerToken, getFreshKeyReadiness, markInferenceKeyAccepted, readinessClock } from './keyReadiness.js';
 
 // Only rejected HTTP requests are retried here. A successful response body is
 // never read or replayed, so partial generations cannot be duplicated.
@@ -79,7 +80,39 @@ function retryDelay(response) {
 // Resend the identical request (same credential, body and request access
 // scope) after these pauses. No new access is requested here.
 export const INFERENCE_AUTH_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 4000]);
+// A key this tab just received and verified may also be rejected for about
+// half a minute before the provider accepts it. Inside its absolute readiness
+// window (keyReadiness.js) the same request keeps being resent: 1, 2, 4 s, then
+// every 5 s, never past the window, the key's expiry or this many requests.
+export const FRESH_KEY_AUTH_RETRY_DELAYS_MS = Object.freeze([1000, 2000, 4000]);
+export const FRESH_KEY_AUTH_RETRY_INTERVAL_MS = 5000;
+export const FRESH_KEY_MAX_AUTH_ATTEMPTS = 16;
 const authRetryCounts = new WeakMap();
+
+const defaultAuthClock = Object.freeze({
+    ...readinessClock,
+    sleep: (ms, signal) => waitForRetry(ms, signal)
+});
+
+// Whether a send `delay` ms from now still falls inside a call's window
+// snapshot: before its fixed monotonic deadline and the key's expiry.
+function insideWindow(readinessWindow, clock, delay = 0) {
+    if (clock.now() + delay >= readinessWindow.deadline) return false;
+    return !(Number.isFinite(readinessWindow.expiresAtMs) && clock.wallNow() + delay >= readinessWindow.expiresAtMs);
+}
+
+// The pause before the next same-request resend, given `resends` already made,
+// or null when the budget is spent. A call that started inside a key's window
+// keeps that window's fixed deadline and expiry until it ends (another
+// caller's acceptance only closes the window for later calls), and never
+// falls back to the short policy.
+function nextAuthRetryDelay(resends, clock, shortDelays, readinessWindow) {
+    if (!readinessWindow) return resends < shortDelays.length ? shortDelays[resends] : null;
+    if (resends + 1 >= FRESH_KEY_MAX_AUTH_ATTEMPTS) return null;
+    const delay = resends < FRESH_KEY_AUTH_RETRY_DELAYS_MS.length
+        ? FRESH_KEY_AUTH_RETRY_DELAYS_MS[resends] : FRESH_KEY_AUTH_RETRY_INTERVAL_MS;
+    return insideWindow(readinessWindow, clock, delay) ? delay : null;
+}
 
 /** Whether this final 401 went through the same-request resend policy. */
 export function isInferenceAuthRetryResponse(response) {
@@ -92,8 +125,9 @@ export function getInferenceAuthRetryCount(response) {
 }
 
 export async function fetchWithOpenRouterCreditRecovery(fetchRequest, url, init, config = {}) {
-    const { authRetryDelaysMs: requestedDelays, ...transportConfig } = config;
+    const { authRetryDelaysMs: requestedDelays, authClock: requestedClock, ...transportConfig } = config;
     const authRetryDelaysMs = Array.isArray(requestedDelays) ? requestedDelays : INFERENCE_AUTH_RETRY_DELAYS_MS;
+    const authClock = { ...defaultAuthClock, ...(requestedClock || {}) };
     // Other providers can reuse the API adapter without inheriting this policy.
     if (url !== 'https://openrouter.ai/api/v1/chat/completions') {
         return fetchRequest(url, init, transportConfig);
@@ -102,24 +136,41 @@ export async function fetchWithOpenRouterCreditRecovery(fetchRequest, url, init,
     let reducedOutput = false;
     let settlementRetries = 0;
     let authRetries = 0;
+    let lastRejected = null;
+    const key = bearerToken(init?.headers);
+    // Decided once, at the first send: a snapshot of the fresh key's window
+    // (fixed deadline and expiry), or null for the short policy.
+    const readinessWindow = getFreshKeyReadiness(key, authClock);
     for (;;) {
         abortIfNeeded(config.signal);
+        // A pause can overrun (throttled timers, a suspended device): recheck
+        // the window and the key's expiry immediately before every resend.
+        if (lastRejected && readinessWindow && !insideWindow(readinessWindow, authClock)) {
+            authRetryCounts.set(lastRejected, authRetries - 1);
+            return lastRejected;
+        }
         const response = await fetchRequest(url, request, transportConfig);
         if (response.status === 401) {
             // A rejected request produced no output, so a resend cannot
-            // duplicate any. The budget is per call and never refilled.
-            if (authRetries < authRetryDelaysMs.length) {
-                const delay = authRetryDelaysMs[authRetries];
+            // duplicate any. The per-call count is never refilled; a fresh
+            // key's window is absolute and shared by every call using it.
+            const delay = nextAuthRetryDelay(authRetries, authClock, authRetryDelaysMs, readinessWindow);
+            if (delay != null) {
                 authRetries += 1;
                 // Status and attempt only: never the key, body or provider text.
-                console.warn(`Inference request rejected (HTTP 401); resending the same request (${authRetries}/${authRetryDelaysMs.length}).`);
+                console.warn(`Inference request rejected (HTTP 401); resending the same request (attempt ${authRetries + 1}).`);
                 discardResponseBody(response.body);
-                await waitForRetry(delay, config.signal);
+                lastRejected = response;
+                await authClock.sleep(delay, config.signal);
                 continue;
             }
             authRetryCounts.set(response, authRetries);
             return response;
         }
+        lastRejected = null;
+        // A success or a billing answer (which needs a known key) closes the
+        // key's readiness window. Other statuses may come from an edge first.
+        if (response.ok || response.status === 402) markInferenceKeyAccepted(key);
         if (response.status !== 402) return response;
         let data;
         try {

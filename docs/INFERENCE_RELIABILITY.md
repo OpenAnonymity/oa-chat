@@ -56,6 +56,29 @@ chat is being viewed. Stop clears streaming state without manufacturing an error
   from access issuance, verifiers, wallets or accounts are not tagged and not
   resent. The budget is per stream call, so outer 5xx/network retries
   multiply it, but it stays bounded.
+- A ticket key this tab has just received and verified can be refused (401)
+  for roughly its first half-minute and then accepted unchanged. One capture
+  showed this; the provider's internals are unknown.
+  - **Which keys get a window.** Only keys whose verifier result is
+    explicitly `verified`, enrolled in `acquireVerifiedAccess`. Each such key
+    gets one absolute 60 s window (`keyReadiness.js`), measured on a
+    monotonic clock from when the station returned it. Retries, Retry and
+    concurrent calls never restart it.
+  - **Inside the window,** the identical request is resent after 1, 2 and
+    4 s, then every 5 s. Each resend must still fall before the window end
+    and the key's expiry, and this is rechecked immediately before sending.
+    The cap is 16 requests. A call that used the window never falls back to
+    the short policy. A 2xx or 402 closes the window for later calls. Calls
+    already in flight keep the deadline and expiry they snapshotted at their
+    first send.
+  - **Unchanged:** the key, headers, body, lease and transport. Nothing is
+    redeemed, rotated or reported.
+  - **Title.** For such a key, the automatic title starts only after this
+    turn's request is accepted (stream open). Stop or a failed turn leaves no
+    title job and no later billable title.
+  - **Every other key** keeps the short policy: older, reloaded, restored,
+    shared, trusted-station-fallback and private zkAPI keys. Android native
+    streaming has no resends.
 - Shared HTTP retries cancel discarded transient-error bodies so proxy busy state
   can return to zero.
 - Local aggregate guard: 32 MiB request and 32 images across conversation history

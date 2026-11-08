@@ -1133,3 +1133,46 @@ test('a cancellation during pricing never starts shortage billing', async () => 
         onTicketShortage: () => assert.fail('Cancelled send must not buy tickets')
     }), { name: 'AbortError' });
 });
+
+const readiness = await import('../../chat/services/inference/keyReadiness.js');
+
+test('an explicitly verified fresh ticket key opens a readiness window anchored before verification', async () => {
+    const key = 'sk-or-v1-readiness-verified-0001';
+    const harness = createAccessHarness({
+        accessResult: { key, stationId: 'station-a', expiresAt: new Date(Date.now() + 20 * 60_000).toISOString() },
+        verifyAccess: async () => {
+            await new Promise(resolve => setTimeout(resolve, 80)); // slow verifier
+            return { status: 'verified', data: { key_hash: 'verifier-hash', retryable: false } };
+        }
+    });
+    await acquireWith(harness);
+    const window = readiness.getFreshKeyReadiness(key);
+    assert.ok(window, 'verified fresh key is tracked');
+    assert.ok(window.deadline - readiness.readinessClock.now() <= 60_000 - 70,
+        'the verifier wait is counted against the window');
+});
+
+test('trusted-station fallback, rejected verification and custom access never open a readiness window', async () => {
+    const fallbackKey = 'sk-or-v1-readiness-fallback-0001';
+    const fallbackAccess = recordedTrustedAccess(fallbackKey);
+    const fallback = createAccessHarness({ accessResult: fallbackAccess, verification: recordedTrustedResult(fallbackAccess) });
+    await acquireWith(fallback);
+    assert.equal(fallback.session.apiKey, fallbackKey, 'fallback access is still installed');
+    assert.equal(readiness.getFreshKeyReadiness(fallbackKey), null);
+
+    const rejectedKey = 'sk-or-v1-readiness-rejected-0001';
+    const rejected = createAccessHarness({ accessResult: { key: rejectedKey, stationId: 'station-a' },
+        verification: { status: 'unverified', detail: 'ownership_check_error', data: { detail: 'ownership_check_error', retryable: false } } });
+    await assert.rejects(acquireWith(rejected));
+    assert.equal(readiness.getFreshKeyReadiness(rejectedKey), null);
+
+    // A composed access implementation (the private payment runtime) never does.
+    await acquireSessionAccess({
+        session: { id: 'private-session' },
+        inferenceService: { setAccessInfo: (target, info) => { target.access = info; },
+            getAccessToken: target => target.access?.token, getVerificationAdapter: () => ({ supports: false }) },
+        chatDB: { saveSession: async () => {} },
+        acquireAccess: async () => ({ token: 'sk-or-v1-readiness-private-0001' })
+    });
+    assert.equal(readiness.getFreshKeyReadiness('sk-or-v1-readiness-private-0001'), null);
+});

@@ -1,3 +1,83 @@
+## 2026-11-08 — fresh-key readiness window for inference 401 (local, not deployed)
+
+Implements the fix proposed in the diagnosis note below. Details:
+[inference reliability](INFERENCE_RELIABILITY.md).
+
+**Registry.** `chat/services/inference/keyReadiness.js` is an in-memory,
+per-tab registry.
+- It is keyed by a non-cryptographic FNV-1a lookup tag. That tag is not a
+  protection, so nothing is logged or persisted.
+- At most 16 windows are open at once. At most 64 keys are remembered as
+  already used, and each key gets a window at most once per page load.
+
+**Enrollment.** Keys are enrolled only by `acquireVerifiedAccess`, the
+verified-acquisition step that the chat, QuickAsk and council lanes share.
+- The window opens only when the verifier result is explicitly `verified`.
+  Trusted-station fallback, loopback bypass, and custom or private (zkAPI)
+  access are never enrolled.
+- The 60 s window is measured on the monotonic clock from when the station
+  returned the key, before verification. A slow verifier therefore uses up
+  the window.
+
+**Resends.** `fetchWithOpenRouterCreditRecovery` decides at a call's first
+send whether that call uses a window.
+- If it does, the identical request is resent after 1, 2 and 4 s, then every
+  5 s, but only while the next send would still fall before the deadline and
+  the key's expiry.
+- Hard cap: 16 requests.
+- The window and the expiry are rechecked immediately before every resend,
+  so a pause that overruns (throttled timers, a sleeping device) sends
+  nothing more.
+- A call that started in a window never falls back to the short policy.
+- Each call snapshots the window's deadline and expiry at its first send.
+  A 2xx or 402 answer removes the registry entry, so later calls get no
+  window. A call already pausing (for example an inline QuickAsk sharing the
+  chat's key) still resends on its own snapshot, deadline, signal and
+  attempt cap.
+- Keys without a window keep the 1/2/4 s policy.
+
+**Title.**
+- For a key still in its window, `startOrDeferSessionTitle` in `app.js`
+  starts the automatic title only from this turn's stream-open callback, on
+  both the send and the Retry paths.
+- Stop or an early failure therefore leaves no title job behind. That job
+  would otherwise hold `isSessionBusy`, the composer and payment-mode
+  switching, and could bill later.
+- `titleGenerationPending` stays set, so the next accepted Retry titles the
+  chat. A follow-up message does not: titles key off the first user message,
+  as before.
+- `_generateSessionTitle` itself never waits.
+
+**Android native and tests.**
+- Android native streaming gets no readiness resends. Its stream-open only
+  closes the window.
+- Tests inject `inferenceTiming.authClock` (`now`, `wallNow`, `sleep`). The
+  transport never receives it.
+
+## 2026-11-07 — inference 401 follow-up: fresh-key readiness delay (diagnosis only)
+
+A user capture on the deployed same-key-retry build showed a freshly issued,
+verifier-approved ticket key rejected with OpenRouter `401 "User not found."`
+for roughly the first half-minute after issuance. The background title request
+was rejected the same way. The identical key and request body were then
+accepted with no new key and no payload change. Learnings:
+- **Fact:** the 1/2/4 s per-call budget (about 7-8 s) is too short for this
+  delay. A manual Retry starts a fresh budget, which is why "Retry a few
+  times" eventually works.
+- **Inference, not established:** an upstream authentication
+  readiness/consistency delay for new keys. The provider's internals are
+  unknown.
+- **Title path:** title generation (`_generateSessionTitle` via
+  `fetchWithRetryJson`) never resends a 401 and fails silently into the local
+  title.
+- **Proposed fix (not implemented):** a bounded readiness window anchored to
+  the local monotonic time when this tab received a fresh, verified key.
+  Within it, resend the same request only; there is no window for keys of
+  unknown age.
+- **Better upstream fix:** the station should confirm acceptance of the new
+  key before returning it. A single-endpoint probe is not proof that every
+  region is ready.
+
 ## 2026-11-07 — inference 401: bounded same-key retry (local); cause still unknown
 
 See [inference reliability](INFERENCE_RELIABILITY.md). The report
