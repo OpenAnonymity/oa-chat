@@ -298,6 +298,69 @@ describe('request layer', () => {
         }
     }
 
+    // Inference 401 same-request resends (short policy and a fresh verified
+    // key's readiness window) go through the same per-attempt restriction:
+    // a ZDR change during the backoff narrows or refuses the resend, a
+    // reduced output cap survives it, and billing adapters never rerun.
+    let readinessKeySequence = 0;
+    for (const policy of ['short', 'fresh-key window']) {
+        for (const eligible of [true, false]) {
+            test(`${policy} 401 resend rechecks a newly enabled ZDR setting (${eligible ? 'eligible' : 'blocked'})`, async () => {
+                const readiness = await import('../../chat/services/inference/keyReadiness.js');
+                const key = `sk-or-v1-zdr-auth-${policy === 'short' ? 'short' : 'fresh'}-${String(++readinessKeySequence).padStart(4, '0')}`;
+                let t = 0;
+                const authClock = { now: () => 1_000_000 + t, wallNow: () => 2_000_000 + t,
+                    sleep: async ms => { t += ms; } };
+                if (policy !== 'short') {
+                    readiness.markFreshInferenceKey(key, { clock: authClock, receivedAt: authClock.now(),
+                        expiresAt: authClock.wallNow() + 20 * 60_000 });
+                }
+                const calls = [];
+                let adapters = 0;
+                // 402 affordability (cap reduced), then 401s; ZDR turns on
+                // during the first 401's backoff, then the provider accepts.
+                const transport = { fetchWithRetry: async (_url, init) => {
+                    calls.push({ body: JSON.parse(init.body), authorization: init.headers.Authorization });
+                    if (calls.length === 1) {
+                        return Response.json({ error: { message: 'requested up to 100 tokens, but can only afford 50' } }, { status: 402 });
+                    }
+                    if (calls.length === 2) {
+                        await zeroDataRetention.setEnabled(true);
+                        return Response.json({ error: { code: 401, message: 'User not found.' } }, { status: 401 });
+                    }
+                    if (calls.length <= (policy === 'short' ? 3 : 6)) {
+                        return Response.json({ error: { code: 401, message: 'User not found.' } }, { status: 401 });
+                    }
+                    return Response.json({ ok: true });
+                } };
+                const api = new OpenRouterAPI({ networkTransport: transport,
+                    prepareRequestBody: body => { adapters++; return body; } });
+                const body = { model: eligible ? 'openai/gpt-6.1-sol' : 'google/gemini-3.5-pro',
+                    messages: [{ role: 'user', content: 'test' }], max_tokens: 100 };
+                const pending = api.fetchWithRetry({ headers: { Authorization: `Bearer ${key}` } },
+                    'https://openrouter.ai/api/v1/chat/completions', { body: JSON.stringify(body) },
+                    { maxAttempts: 1, timeoutMs: 0, authRetryDelaysMs: [1, 2, 4], authClock });
+                if (!eligible) {
+                    await assert.rejects(pending, error => error instanceof ZdrUnavailableError && error.reason === 'model');
+                    assert.equal(calls.length, 2, 'nothing is resent once ZDR refuses the model');
+                } else {
+                    const response = await pending;
+                    assert.equal(response.status, 200);
+                    assert.equal(calls.length, policy === 'short' ? 4 : 7);
+                    for (const call of calls.slice(2)) {
+                        assert.deepEqual(call.body.provider.only, ['azure']);
+                        assert.equal(call.body.provider.zdr, true);
+                        assert.equal(call.body.max_tokens, 45, 'the reduced output cap survives every resend');
+                    }
+                }
+                assert.equal(calls[0].body.provider, undefined, 'ZDR was off at the first send');
+                assert.equal(new Set(calls.map(call => call.authorization)).size, 1, 'same key throughout');
+                assert.equal(adapters, 1, 'resends must not rerun billing adapters');
+                if (policy !== 'short') readiness.markInferenceKeyAccepted(key);
+            });
+        }
+    }
+
     for (const path of ['cold relay', 'direct fallback']) {
         for (const eligible of [true, false]) {
             test(`${path} checks ZDR at final dispatch (${eligible})`, async t => {

@@ -2,12 +2,14 @@ import { withTierPurchaseLock } from '../services/inference/tierPurchaseLock.js'
 import { ticketTierPolicyEnabled } from '../services/inference/ticketTierAccess.js';
 import { reportDiagnostic } from '../services/diagnostics.js';
 import {
+    isVerifierResultApproved,
     isVerifierResultUsable,
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
 } from '../services/inference/verifiedAccess.js';
 import { getCreditLimitSource, isKeyLimitExceededResponse, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
 import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
 import { waitForSignal } from '../services/inference/reliability.js';
+import { markFreshInferenceKey, readinessClock } from '../services/inference/keyReadiness.js';
 
 // Each retry selects other tickets, so this only bounds a wallet that is all in use.
 const MAX_CONTENDED_TICKET_RETRIES = 2;
@@ -297,6 +299,7 @@ async function acquireVerifiedAccessMeasured(options) {
         }
     };
 
+    let keyReceivedAt = null;
     try {
         for (;;) {
             throwIfCancelled();
@@ -310,6 +313,8 @@ async function acquireVerifiedAccessMeasured(options) {
                         ticketsRequired, ...(signal ? { signal } : {})
                     });
                 } finally { options.requestTiming?.end('access_ms'); }
+                // When this tab received the new key, before any verifier wait.
+                keyReceivedAt = readinessClock.now();
                 break;
             } catch (error) {
                 if (['NO_TICKETS', 'INSUFFICIENT_TICKETS'].includes(error.code)) {
@@ -424,6 +429,15 @@ async function acquireVerifiedAccessMeasured(options) {
         const proof = buildVerifierSubmitKeyProof(verifyResult, result);
         if (!isVerifierResultUsable(verifyResult)) {
             throw createVerificationFailure(verifyResult, proof);
+        }
+        // Only an explicitly verified key just issued to this tab gets a
+        // provider readiness window (keyReadiness.js), anchored at receipt.
+        // Trusted-station fallback, bypass and custom/private access do not.
+        if (isVerifierResultApproved(verifyResult)) {
+            markFreshInferenceKey(result.key || result.token, {
+                receivedAt: keyReceivedAt,
+                expiresAt: result.expiresAt || result.expires_at || null
+            });
         }
 
         result = {

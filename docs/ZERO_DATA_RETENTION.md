@@ -83,8 +83,10 @@ every OpenRouter request to providers with a zero data retention policy.
   changes. Full Council checks its actual executing group; a single Parallel lane
   checks its resolved historical model, not unrelated current selections.
 - **Retries and relay setup.** The current preference is reapplied on each credit,
-  affordability and JSON retry, after relay initialization, and before direct
-  fallback. Reduced token caps remain intact and billing adapters run only once.
+  affordability and JSON retry, on every inference HTTP 401 same-request resend
+  (the short 1/2/4 s policy and a fresh key's 60 s readiness window; see
+  [inference reliability](INFERENCE_RELIABILITY.md)), after relay initialization,
+  and before direct fallback. Reduced token caps remain intact and billing adapters run only once.
   A privacy refusal does not mark the relay failed or initiate a fallback.
 - **Failed saves.** The picker facade now forwards the approved error toast to
   the application; the current tab's choice remains enforced.

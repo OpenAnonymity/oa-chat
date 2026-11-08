@@ -4,6 +4,7 @@ import { STILL_WORKING_DELAY_MS } from './services/streamSegments.js';
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
 import { reportDiagnostic, addBreadcrumb } from './services/diagnostics.js';
+import { getFreshKeyReadiness } from './services/inference/keyReadiness.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { runWithResend } from './services/inference/resend.js';
@@ -6084,6 +6085,34 @@ class ChatApp {
         this.renderSessions();
     }
 
+    /**
+     * Start the automatic title now, or, when the chat's key was just issued and
+     * may still be refused for its first seconds (keyReadiness.js), only once
+     * this turn's own request is accepted. A deferred title is not a job: Stop
+     * or a failed turn leaves nothing to wait, hold the composer or bill later,
+     * and the still-pending title is attempted again only when a Retry of this
+     * turn is accepted (a new follow-up message keeps the local title).
+     * Returns the starter to call when the stream opens (a no-op otherwise).
+     */
+    startOrDeferSessionTitle(session, userMessageId) {
+        if (!session?.id || !userMessageId) return () => {};
+        const start = () => {
+            this.generateSessionTitleIfNeeded(session.id, userMessageId).catch(error => {
+                console.debug('Session title generation failed:', error);
+            });
+        };
+        if (!getFreshKeyReadiness(this.inferenceService.getAccessToken?.(session))) {
+            start();
+            return () => {};
+        }
+        let pending = true;
+        return () => {
+            if (!pending) return;
+            pending = false;
+            start();
+        };
+    }
+
     async generateSessionTitleIfNeeded(sessionId, userMessageId, options = {}) {
         if (this.isSessionDeleted(sessionId) || this.isSessionBackendChanging(sessionId)) return;
         const previous = this.titleGenerationJobs.get(sessionId);
@@ -7680,11 +7709,7 @@ class ChatApp {
                 }
             }
 
-            if (lastUserMessage?.id) {
-                this.generateSessionTitleIfNeeded(session.id, lastUserMessage.id).catch(error => {
-                    console.debug('Session title generation failed:', error);
-                });
-            }
+            const startTitleOnAcceptance = this.startOrDeferSessionTitle(session, lastUserMessage?.id);
 
             // Set current session for network logging
             if (window.networkLogger) {
@@ -7922,6 +7947,7 @@ class ChatApp {
                     abortController,
                     async () => {
                         streamOpenedAt ??= Date.now();
+                        startTitleOnAcceptance();
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
                         streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
@@ -8744,11 +8770,7 @@ class ChatApp {
                 }
             }
 
-            if (userMessage?.id) {
-                this.generateSessionTitleIfNeeded(session.id, userMessage.id).catch(error => {
-                    console.debug('Session title generation failed:', error);
-                });
-            }
+            const startTitleOnAcceptance = this.startOrDeferSessionTitle(session, userMessage?.id);
 
             // Set current session for network logging
             if (window.networkLogger) {
@@ -9020,6 +9042,7 @@ class ChatApp {
                     abortController,
                     async () => {
                         streamOpenedAt ??= Date.now();
+                        startTitleOnAcceptance();
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
                         streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
@@ -9253,8 +9276,14 @@ class ChatApp {
                     (terminalError?.status === 403 && this.isAccessCreditExhaustedError(terminalError))) {
                     // Credit/token limit errors (a spent key limit arrives as 403 since 2026-10)
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
+                } else if (terminalError?.status === 401 && terminalError?.inferenceAuthRejected === true) {
+                    // The provider rejected the inference request itself, after
+                    // the same request was already resent with the same key.
+                    const attempts = (Number(terminalError.authRetryCount) || 0) + 1;
+                    const attemptNote = attempts > 1 ? ` ${attempts} times` : '';
+                    userFriendlyMessage = `The provider rejected this chat's access key${attemptNote} (HTTP 401). Try again in a moment. If it keeps failing, start a new chat, which uses a new key, and submit an [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else if (terminalError?.status === 401) {
-                    // Authentication errors
+                    // Other authentication errors (e.g. private-access issuance)
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
                 } else if (transientLine) {
                     // The provider's own text stays in the Activity Timeline.

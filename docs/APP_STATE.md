@@ -1,3 +1,147 @@
+## 2026-11-08 — staging port of the inference 401 / fresh-key readiness fix (local, not deployed)
+
+Ports production commits `ca9a0797` (same-key 401 resends) and `721cd0ae`
+(fresh-key readiness window, deferred title) onto staging pin `d58dd6a5` with
+`cherry-pick --no-commit`; the production branch is not merged and production
+is unchanged. The two entries below describe the behavior itself.
+- Conflicts resolved by keeping both sides: `chat/api.js` keeps staging's
+  `provider_dispatch_ms` mark and `rateLimitDetails` beside the 401 tagging;
+  `accessController.js` records key receipt after staging's `access_ms` span
+  (`requestTiming` instrumentation untouched); the tests kept staging's
+  contended-ticket retry test.
+- Staging's `OpenRouterAPI.fetchWithRetry` wraps each transport attempt in
+  `restrictFetchAttempt`, so the 401 loop in `fetchWithOpenRouterCreditRecovery`
+  reapplies ZDR on every resend without new code. "Same body" therefore means
+  same body unless the ZDR preference changed: turning ZDR on during a backoff
+  narrows the resend (`provider.only`) or throws `ZdrUnavailableError` before
+  sending. `test/services/zeroDataRetention.test.js` pins both policies (short
+  and fresh-key window), eligible and blocked, with an earlier 402 reduced cap
+  that must survive and a single billing-adapter run. Removing the per-attempt
+  restriction fails exactly those four tests.
+- Title deferral composes with staging's ZDR title skip: the deferred starter
+  still goes through `generateSessionTitle`, which returns '' with ZDR on.
+- The timing experiment marks `provider_dispatch_ms` once before the first
+  send, so a recovered 401 wait is inside that turn's measured time. No timing
+  fields were added. This revision still carries the staging experiment and
+  MUST NOT become a production pin.
+- Local test setup: `npm ci --ignore-scripts --cache "$TMPDIR/npm-cache"` (the
+  default npm cache is not writable in the sandbox), `git submodule update
+  --init nanomem`, then `node scripts/patch-zkapi-sdk.mjs`.
+
+## 2026-11-08 — fresh-key readiness window for inference 401 (local, not deployed)
+
+Implements the fix proposed in the diagnosis note below. Details:
+[inference reliability](INFERENCE_RELIABILITY.md).
+
+**Registry.** `chat/services/inference/keyReadiness.js` is an in-memory,
+per-tab registry.
+- It is keyed by a non-cryptographic FNV-1a lookup tag. That tag is not a
+  protection, so nothing is logged or persisted.
+- At most 16 windows are open at once. At most 64 keys are remembered as
+  already used, and each key gets a window at most once per page load.
+
+**Enrollment.** Keys are enrolled only by `acquireVerifiedAccess`, the
+verified-acquisition step that the chat, QuickAsk and council lanes share.
+- The window opens only when the verifier result is explicitly `verified`.
+  Trusted-station fallback, loopback bypass, and custom or private (zkAPI)
+  access are never enrolled.
+- The 60 s window is measured on the monotonic clock from when the station
+  returned the key, before verification. A slow verifier therefore uses up
+  the window.
+
+**Resends.** `fetchWithOpenRouterCreditRecovery` decides at a call's first
+send whether that call uses a window.
+- If it does, the identical request is resent after 1, 2 and 4 s, then every
+  5 s, but only while the next send would still fall before the deadline and
+  the key's expiry.
+- Hard cap: 16 requests.
+- The window and the expiry are rechecked immediately before every resend,
+  so a pause that overruns (throttled timers, a sleeping device) sends
+  nothing more.
+- A call that started in a window never falls back to the short policy.
+- Each call snapshots the window's deadline and expiry at its first send.
+  A 2xx or 402 answer removes the registry entry, so later calls get no
+  window. A call already pausing (for example an inline QuickAsk sharing the
+  chat's key) still resends on its own snapshot, deadline, signal and
+  attempt cap.
+- Keys without a window keep the 1/2/4 s policy.
+
+**Title.**
+- For a key still in its window, `startOrDeferSessionTitle` in `app.js`
+  starts the automatic title only from this turn's stream-open callback, on
+  both the send and the Retry paths.
+- Stop or an early failure therefore leaves no title job behind. That job
+  would otherwise hold `isSessionBusy`, the composer and payment-mode
+  switching, and could bill later.
+- `titleGenerationPending` stays set, so the next accepted Retry titles the
+  chat. A follow-up message does not: titles key off the first user message,
+  as before.
+- `_generateSessionTitle` itself never waits.
+
+**Android native and tests.**
+- Android native streaming gets no readiness resends. Its stream-open only
+  closes the window.
+- Tests inject `inferenceTiming.authClock` (`now`, `wallNow`, `sleep`). The
+  transport never receives it.
+
+## 2026-11-07 — inference 401 follow-up: fresh-key readiness delay (diagnosis only)
+
+A user capture on the deployed same-key-retry build showed a freshly issued,
+verifier-approved ticket key rejected with OpenRouter `401 "User not found."`
+for roughly the first half-minute after issuance. The background title request
+was rejected the same way. The identical key and request body were then
+accepted with no new key and no payload change. Learnings:
+- **Fact:** the 1/2/4 s per-call budget (about 7-8 s) is too short for this
+  delay. A manual Retry starts a fresh budget, which is why "Retry a few
+  times" eventually works.
+- **Inference, not established:** an upstream authentication
+  readiness/consistency delay for new keys. The provider's internals are
+  unknown.
+- **Title path:** title generation (`_generateSessionTitle` via
+  `fetchWithRetryJson`) never resends a 401 and fails silently into the local
+  title.
+- **Proposed fix (not implemented):** a bounded readiness window anchored to
+  the local monotonic time when this tab received a fresh, verified key.
+  Within it, resend the same request only; there is no window for keys of
+  unknown age.
+- **Better upstream fix:** the station should confirm acceptance of the new
+  key before returning it. A single-endpoint probe is not proof that every
+  region is ready.
+
+## 2026-11-07 — inference 401: bounded same-key retry (local); cause still unknown
+
+See [inference reliability](INFERENCE_RELIABILITY.md). The report
+was an OA-ticket inference `POST openrouter.ai/.../chat/completions` that
+returned 401 on Sonnet 5.5. The upstream body was not captured, and fresh and
+reused Sonnet keys both worked on live `1afdc812`. The user says pressing
+Retry a few times works. Implemented locally, not deployed: resend the
+identical request 3 times (1 s, 2 s, 4 s). Non-obvious learnings:
+- The retry lives in `fetchWithOpenRouterCreditRecovery`, beside the 402
+  resends. It runs inside one `withRequestAccess` scope, so private mode
+  keeps the same checked-out lease. Do not add 401 to
+  `isRetryableInferenceError` or `fetchRetry`: those also see issuance,
+  verifier and wallet 401s, which must stay fail-closed.
+- `chat/api.js` tags the final response 401 (`inferenceAuthRejected`,
+  `authRetryCount`) only when the recovery module handled it
+  (`isInferenceAuthRetryResponse`); a daemon or other base-URL 401 stays
+  untagged. Only tagged errors get the "provider rejected this chat's access
+  key" copy; other 401s keep "Authentication error".
+- Each resend writes a sanitized `console.warn`. The timeline still logs one
+  entry per stream call, so 401s that recovered are visible only in the
+  console.
+- The schedule can be overridden for tests via
+  `inferenceTiming.authRetryDelaysMs`. It is stripped before reaching the
+  transport.
+- Android native streaming does not resend. QuickAsk, council lanes and
+  regeneration do, because they share `streamCompletion`.
+- Unchanged and still open: no automatic key rotation (a purchase costs the
+  tier price, 3 tickets for Sonnet 5.5); panel "Regenerate key" can
+  reinstall the same eligible key via `findTierAccess`; ticket-key expiry
+  uses the device clock.
+- `npm run test` hardcodes `/tmp` for its bundle, which sandboxes may block.
+  An equivalent copy of the runner using `$TMPDIR` works. The two Anvil /
+  real-EVM payment tests fail on baseline too.
+
 ## 2026-11-05 — Combined ZDR and ticket usage staging follow-up
 
 - ZDR is reapplied for credit/affordability retries and JSON transport retries,

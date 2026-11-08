@@ -32,6 +32,8 @@ const { default: preferencesStore } = await import('../../chat/services/preferen
 const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
+const { OpenRouterAPI } = await import('../../chat/api.js');
+const readiness = await import('../../chat/services/inference/keyReadiness.js');
 const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
 const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
@@ -822,6 +824,217 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(calls, 1);
         assert.equal(refreshes, 1);
         assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    // Inference HTTP 401: the real send loop, the real OpenRouter client and
+    // its rejected-request boundary, with only the network transport stubbed.
+    function authRetryHarness(respond, { delays = [1, 2, 4], acquireRequestAccess, authClock } = {}) {
+        const requests = [];
+        const api = new OpenRouterAPI({
+            ...(acquireRequestAccess ? { acquireRequestAccess } : {}),
+            inferenceTiming: { authRetryDelaysMs: delays, ...(authClock ? { authClock } : {}) },
+            networkTransport: { async fetchWithRetry(url, init) {
+                requests.push({ url, at: authClock?.now(), authorization: init.headers.Authorization || init.headers.authorization, body: init.body });
+                return respond(requests.length);
+            } }
+        });
+        const harness = streamHarness((messages, modelId, session, ...rest) =>
+            api.streamCompletion(messages, modelId, 'ticket-key', ...rest));
+        harness.app.acquireAndSetAccess = async () => assert.fail('A 401 retry must not acquire new access');
+        harness.app.refreshAccessAfterCreditExhaustion = async () => assert.fail('A 401 retry must not redeem tickets');
+        return { ...harness, requests };
+    }
+    const rejected = () => new Response(JSON.stringify({ error: { code: 401, message: 'PRIVATE_PROVIDER_BODY' } }), { status: 401 });
+    const answered = text => new Response(`data: {"choices":[{"delta":{"content":"${text}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`);
+
+    test('a transient inference 401 resends the identical request with the same key and no new access', async () => {
+        const { app, records, requests } = authRetryHarness(call => call <= 2 ? rejected() : answered('Recovered answer'));
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant.content, 'Recovered answer');
+        assert.equal(requests.length, 3);
+        assert.deepEqual(new Set(requests.map(request => request.authorization)), new Set(['Bearer ticket-key']));
+        assert.equal(new Set(requests.map(request => request.body)).size, 1, 'same model, payload and conversation');
+        assert.equal(requests[0].url, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    // Fresh-key readiness with the real deferred title job: the real send and
+    // Retry loops, the real OpenRouter client and title request, only the
+    // network transport stubbed.
+    let freshKeySequence = 0;
+    function freshKeyHarness(respondStream, { hangPauses = false } = {}) {
+        const key = `sk-or-v1-app-fresh-key-${String(++freshKeySequence).padStart(4, '0')}`;
+        // Virtual offsets from the real clocks, which the app's own readiness
+        // check (deciding whether to defer the title) reads.
+        let t = 0;
+        const monotonicBase = performance.now();
+        const wallBase = Date.now();
+        const abortError = () => new DOMException('Request aborted', 'AbortError');
+        const authClock = {
+            now: () => monotonicBase + t,
+            wallNow: () => wallBase + t,
+            sleep: (ms, signal) => new Promise((resolve, reject) => {
+                if (signal?.aborted) { reject(abortError()); return; }
+                signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+                if (!hangPauses) { t += ms; resolve(); }
+            })
+        };
+        const streams = [];
+        const titles = [];
+        const api = new OpenRouterAPI({
+            inferenceTiming: { authClock },
+            networkTransport: {
+                async fetchWithRetry(url, init) {
+                    streams.push({ at: t, authorization: init.headers.Authorization, body: init.body });
+                    return respondStream(t, streams.length);
+                },
+                async fetchWithRetryJson(url, init) {
+                    titles.push({ at: t, authorization: init.headers.Authorization });
+                    return { response: { ok: true, status: 200 }, data: { choices: [{ message: { content: 'Generated title' } }] } };
+                }
+            }
+        });
+        const harness = streamHarness((messages, modelId, session, ...rest) => api.streamCompletion(messages, modelId, key, ...rest));
+        const { app } = harness;
+        const session = app.state.sessionsById.get('one');
+        Object.assign(session, { title: 'Local title', titleSource: 'local', titleGenerationPending: true });
+        app.inferenceService.getAccessToken = () => key;
+        app.inferenceService.generateSessionTitle = (target, prompt, options) => api.generateSessionTitle(prompt, key, options);
+        // The real title job, not the harness stub.
+        app.generateSessionTitleIfNeeded = ChatApp.prototype.generateSessionTitleIfNeeded;
+        app.getModelsForSession = () => app.state.models;
+        app.cleanGeneratedSessionTitle = value => String(value || '').trim();
+        app.clearSessionTitleGenerationPending = async () => {};
+        app.tryRecordRuntimeUsage = async () => {};
+        app.renderSessions = () => {};
+        app.acquireAndSetAccess = async () => assert.fail('A 401 resend must not acquire new access');
+        app.refreshAccessAfterCreditExhaustion = async () => assert.fail('A 401 resend must not redeem tickets');
+        return { ...harness, key, session, streams, titles, markFresh: () => readiness.markFreshInferenceKey(key,
+            { clock: authClock, receivedAt: monotonicBase, expiresAt: wallBase + 20 * 60_000 }) };
+    }
+    const settleTitleJobs = async app => { await Promise.all([...app.titleGenerationJobs.values()].map(job => job.promise.catch(() => {}))); };
+
+    test('a fresh verified key rejected for its first 30 s is answered, and its title starts only after acceptance', async () => {
+        const h = freshKeyHarness(t => t >= 30_000 ? answered('Recovered answer') : rejected());
+        h.markFresh();
+        await h.app.sendMessage();
+        await settleTitleJobs(h.app);
+        const assistant = [...h.records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant.content, 'Recovered answer');
+        assert.deepEqual(h.streams.map(request => request.at), [0, 1000, 3000, 7000, 12000, 17000, 22000, 27000, 32000]);
+        assert.equal(new Set(h.streams.map(request => request.authorization + request.body)).size, 1);
+        assert.equal(h.titles.length, 1, 'one title request, never a rejected one');
+        assert.equal(h.titles[0].at, 32000);
+        assert.equal(h.session.title, 'Generated title');
+        assert.equal(readiness.getFreshKeyReadiness(h.key), null);
+    });
+
+    test('Stop during fresh-key readiness leaves no title job: the chat is free at once and nothing is billed later', async () => {
+        let accept = false;
+        const h = freshKeyHarness(() => accept ? answered('Follow-up answer') : rejected(), { hangPauses: true });
+        h.markFresh();
+        const first = h.app.sendMessage();
+        for (let i = 0; i < 50 && h.streams.length === 0; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.streams.length, 1);
+        assert.equal(h.app.titleGenerationJobs.size, 0, 'no title job waits on the unaccepted key');
+        h.app.stopCurrentSessionStreaming();
+        await first;
+        assert.equal(h.app.titleGenerationJobs.size, 0);
+        assert.equal(h.app.isSessionBusy('one'), false, 'the composer is free immediately');
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(h.titles.length, 0, 'no background title after Stop');
+        assert.equal(h.streams.length, 1);
+        // An immediate follow-up in the same chat is accepted.
+        accept = true;
+        h.app.elements.messageInput.value = 'Follow-up prompt';
+        await h.app.sendMessage();
+        await settleTitleJobs(h.app);
+        assert.ok([...h.records.values()].some(message => message.role === 'assistant' && message.content === 'Follow-up answer'));
+        assert.equal(h.app.titleGenerationJobs.size, 0);
+    });
+
+    test('an early primary failure starts no title; Retry is accepted and only then titles the chat', async () => {
+        let mode = 'fail';
+        const h = freshKeyHarness(() => mode === 'fail' ? new Response('{"error":{"message":"Bad request"}}', { status: 400 }) : answered('Retried answer'));
+        h.markFresh();
+        await h.app.sendMessage();
+        assert.equal(h.app.titleGenerationJobs.size, 0);
+        assert.equal(h.titles.length, 0, 'a failed turn never titles in the background');
+        assert.equal(h.session.titleGenerationPending, true, 'the title is still owed to the chat');
+        mode = 'accept';
+        await h.app.regenerateResponse();
+        await settleTitleJobs(h.app);
+        assert.ok([...h.records.values()].some(message => message.role === 'assistant' && message.content === 'Retried answer'));
+        assert.equal(h.titles.length, 1);
+        assert.equal(h.session.title, 'Generated title');
+    });
+
+    test('a key with no readiness window titles at once, as before', async () => {
+        const h = freshKeyHarness(() => answered('Answer'));
+        await h.app.sendMessage();
+        await settleTitleJobs(h.app);
+        assert.equal(h.titles.length, 1);
+    });
+
+    test('a persistent inference 401 stops after three resends with plain copy and no provider text', async () => {
+        const { app, records, requests } = authRetryHarness(() => rejected());
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(requests.length, 4, 'one request plus three same-key resends');
+        assert.match(assistant.content, /provider rejected this chat's access key 4 times \(HTTP 401\)\. Try again in a moment\./);
+        assert.doesNotMatch(assistant.content, /PRIVATE_PROVIDER_BODY|Bearer|ticket-key/);
+        assert.equal(assistant.isLocalOnly, true);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('mixed gateway and auth rejections stay bounded by both retry budgets', async () => {
+        const { app, records, requests } = authRetryHarness(call => call === 1
+            ? new Response('{}', { status: 503 }) : rejected());
+        await app.sendMessage();
+        assert.equal(requests.length, 5, 'one 503, then one request plus three auth resends');
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /HTTP 401/);
+    });
+
+    test('stopping during the 401 backoff cancels the wait and sends nothing more', async () => {
+        const { app, records, requests } = authRetryHarness(() => {
+            setTimeout(() => app.sessionStreamingStates.get('one').abortController.abort(), 5);
+            return rejected();
+        }, { delays: [60000, 60000, 60000] });
+        const started = Date.now();
+        await app.sendMessage();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.ok(Date.now() - started < 5000, 'the backoff must not hold the composer');
+        assert.equal(requests.length, 1);
+        assert.equal([...records.values()].some(message => message.role === 'assistant' && /401/.test(message.content || '')), false);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('a 401 reported after output keeps the partial reply and is never replayed', async () => {
+        const { app, records, requests } = authRetryHarness(() => new Response(
+            'data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n'
+            + 'data: {"error":{"code":401,"message":"PRIVATE_PROVIDER_BODY"}}\n\n'));
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(requests.length, 1);
+        assert.equal(assistant.content, 'Partial answer');
+        assert.ok(assistant.inferenceError);
+    });
+
+    test('a private-access issuance 401 is not resent and keeps the existing authentication copy', async () => {
+        let acquired = 0;
+        const { app, records, requests } = authRetryHarness(() => assert.fail('No inference without access'), {
+            acquireRequestAccess: async () => {
+                acquired++;
+                throw Object.assign(new Error('Invalid org signature'), { name: 'BrowserWalletHttpError', status: 401 });
+            }
+        });
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(acquired, 1);
+        assert.equal(requests.length, 0);
+        assert.match(assistant.content, /^Authentication error\./);
     });
 
     test('wide mode updates the action label and icon immediately in both directions', () => {
