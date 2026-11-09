@@ -366,11 +366,7 @@ export default class ModelPicker {
         const renderSignature = this.getRenderSignature(searchTerm);
         if (!force && this.hasRenderedOnce && renderSignature === this.lastRenderSignature) {
             this.highlightedIndex = -1;
-            const modelOptions = this.getModelOptions();
-            if (modelOptions.length > 0) {
-                this.highlightedIndex = 0;
-                this.updateHighlight(modelOptions, skipAutoScroll);
-            }
+            this.updateHighlight(this.getModelOptions(), true);
             return;
         }
 
@@ -454,12 +450,9 @@ export default class ModelPicker {
 
         this.setModelsHTML(html);
 
-        // Auto-highlight first item so user can immediately press Enter
-        const modelOptions = this.getModelOptions();
-        if (modelOptions.length > 0) {
-            this.highlightedIndex = 0;
-            this.updateHighlight(modelOptions, skipAutoScroll);
-        }
+        // Only arrow-key navigation adds a focus highlight. Enter still
+        // selects the first eligible result without making it look selected.
+        this.updateHighlight(this.getModelOptions(), true);
     }
 
     warmRender() {

@@ -1,3 +1,12 @@
+## 2026-11-09 — Model picker selection and ZDR alignment
+
+- Opening, filtering and catalog/ZDR refreshes no longer automatically highlight
+  the first eligible row. Only arrow-key navigation adds a keyboard highlight;
+  Enter still selects the first eligible result when no row has keyboard focus.
+- The ZDR header shield shares the Pinned heading’s left inset.
+- The info tooltip uses the user’s approved “unlinkable and anonymous” wording;
+  retention enforcement and the documented direct-connection limits are unchanged.
+
 ## 2026-11-08 — staging port of the inference 401 / fresh-key readiness fix (local, not deployed)
 
 Ports production commits `ca9a0797` (same-key 401 resends) and `721cd0ae`

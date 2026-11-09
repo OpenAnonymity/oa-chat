@@ -10759,7 +10759,7 @@ html[data-keyboard-nav] .oa-chart-plot:focus-visible { outline: 2px solid hsl(va
    own divider so the switch reads as part of the search header. The shield
    uses the existing status green; rows a model cannot serve under ZDR stay
    visible (so the person sees why) but are dimmed and inert. */
-.zdr-picker-row { display: flex; flex-shrink: 0; align-items: center; gap: .375rem; padding: .5rem .75rem .125rem; }
+.zdr-picker-row { display: flex; flex-shrink: 0; align-items: center; gap: .375rem; padding: .5rem .75rem .125rem 1rem; }
 .zdr-picker-title { font-size: .8125rem; font-weight: 500; color: hsl(var(--color-foreground)); }
 .zdr-picker-row .settings-info-button { margin-block: -6px; margin-left: -2px; }
 .zdr-picker-row .settings-info-button svg { width: 12px; height: 12px; }

@@ -316,3 +316,38 @@ test('unchanged catalog refresh retains rows, while pricing and search changes r
     assert.equal(writes, 4);
     assert.match(html, /No models match/);
 });
+
+test('opening, refreshing and filtering do not highlight an unselected model', () => {
+    const picker = createModelPicker();
+    const options = picker.app.state.models.map(model => {
+        const classes = new Set();
+        return { dataset: { modelName: model.name }, classes,
+            classList: { add: name => classes.add(name), remove: name => classes.delete(name) },
+            scrollIntoView() { this.scrolled = true; } };
+    });
+    picker.app.elements.modelsList = { innerHTML: '', querySelectorAll: () => options };
+    picker.renderModels();
+    assert.equal(picker.highlightedIndex, -1);
+    assert.ok(options.every(option => !option.classes.has('keyboard-highlight') && !option.scrolled));
+    // Arrow navigation deliberately highlights; cached and forced refreshes
+    // clear that focus instead of making the first result look selected.
+    picker.handleKeyboardNavigation({ key: 'ArrowDown', preventDefault() {} });
+    assert.equal(picker.highlightedIndex, 0);
+    assert.ok(options[0].classes.has('keyboard-highlight'));
+    picker.renderModels();
+    assert.equal(picker.highlightedIndex, -1);
+    assert.ok(options.every(option => !option.classes.has('keyboard-highlight')));
+    picker.handleKeyboardNavigation({ key: 'ArrowDown', preventDefault() {} });
+    picker.renderModels('', true, true);
+    assert.ok(options.every(option => !option.classes.has('keyboard-highlight')));
+    picker.renderModels('OpenAI');
+    assert.equal(picker.highlightedIndex, -1);
+    let selected;
+    picker.selectModel = model => { selected = model; };
+    picker.handleKeyboardNavigation({ key: 'Enter', preventDefault() {} });
+    assert.equal(selected, options[0].dataset.modelName);
+    picker.handleKeyboardNavigation({ key: 'ArrowDown', preventDefault() {} });
+    picker.handleKeyboardNavigation({ key: 'ArrowDown', preventDefault() {} });
+    picker.handleKeyboardNavigation({ key: 'Enter', preventDefault() {} });
+    assert.equal(selected, options[1].dataset.modelName);
+});

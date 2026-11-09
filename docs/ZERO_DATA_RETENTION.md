@@ -14,7 +14,7 @@ every OpenRouter request to providers with a zero data retention policy.
   never beside the model in the chat bar. A selected model without ZDR shows
   "· not ZDR" in the composer.
 - **Info tooltip** uses the existing `data-info-tooltip` component:
-  "OA Chat is anonymous, but model providers may still log your prompts. Turn
+  "OA Chat is unlinkable and anonymous, but model providers may still log your prompts. Turn
   this on to send prompts to providers with zero data retention policies."
 - **Setting.** Stored as chat setting `zeroDataRetention` (chatDB, not synced).
   Default off for a new installation. The controller configures the preference
@@ -91,7 +91,7 @@ every OpenRouter request to providers with a zero data retention policy.
 - **Failed saves.** The picker facade now forwards the approved error toast to
   the application; the current tab's choice remains enforced.
 - **IP address.** Without the relay, the provider sees the browser's IP for
-  direct requests. The tooltip's "OA Chat is anonymous" refers to account
+  direct requests. The tooltip's "OA Chat is unlinkable and anonymous" refers to account
   identity.
 
 - **Availability.** Restricting endpoints reduces the fallback pool and may
