@@ -16,7 +16,7 @@ every OpenRouter request to providers with a zero data retention policy.
   "· not ZDR" in the composer.
 - **Info tooltip** uses the existing `data-info-tooltip` component:
   "OA Chat is unlinkable and anonymous, but model providers may still log your prompts. Turn
-  this on to send prompts to providers with zero data retention policies."
+  this on to send prompts only to model providers with zero data retention policies."
 - **Setting.** Stored as chat setting `zeroDataRetention` (chatDB, not synced).
   Default off for a new installation. The controller configures the preference
   before event handlers can send; preflight awaits restoration. Pending, failed,
