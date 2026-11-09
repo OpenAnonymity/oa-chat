@@ -1,3 +1,9 @@
+## 2026-11-09 — Compact unavailable ZDR rows
+
+- Keep unavailable models dimmed and unselectable, but omit the visible ZDR
+  reason line. The existing reason/loading text remains screen-reader-only,
+  keeping ordinary ticket-model rows the same height. Routing is unchanged.
+
 ## 2026-11-09 — Model picker selection and ZDR alignment
 
 - Opening, filtering and catalog/ZDR refreshes no longer automatically highlight

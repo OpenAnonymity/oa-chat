@@ -522,7 +522,7 @@ export default class ModelPicker {
             ? `<span class="zdr-shield-wrap" title="Supports zero data retention" aria-label="Supports zero data retention" role="img">${zdrShieldHTML()}</span>`
             : '';
         const zdrNote = zdrBlocked
-            ? `<div class="mt-0.5 truncate text-[10px] text-muted-foreground">${zeroDataRetention.hasCatalog() ? 'No zero data retention providers' : 'Checking zero data retention providers…'}</div>`
+            ? `<span class="sr-only">${zeroDataRetention.hasCatalog() ? 'No zero data retention providers' : 'Checking zero data retention providers…'}</span>`
             : '';
 
         return `

@@ -60,7 +60,7 @@ test('with the switch on, models without a ZDR provider are listed but cannot be
     const other = picker.buildModelOptionHTML(picker.app.state.models[1]);
     assert.match(other, /aria-disabled="true"/);
     assert.match(other, /zdr-unavailable/);
-    assert.match(other, /No zero data retention providers/);
+    assert.match(other, /<span class="sr-only">No zero data retention providers<\/span>/);
     assert.doesNotMatch(picker.buildModelOptionHTML(picker.app.state.models[0]), /aria-disabled/);
 });
 

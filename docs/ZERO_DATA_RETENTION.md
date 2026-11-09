@@ -9,8 +9,9 @@ every OpenRouter request to providers with a zero data retention policy.
   shield (`--color-status-success`), whether or not the switch is on. Hovering it
   reads "Supports zero data retention".
 - **Switch on.** Models without an eligible provider stay listed but are dimmed,
-  read "No zero data retention providers", cannot be clicked, and are skipped
-  by the arrow keys and Enter. Shields appear only inside the model picker modal,
+  cannot be clicked, and are skipped
+  by the arrow keys and Enter. The reason (or catalog-loading status) is kept
+  as screen-reader-only text, without a second visible line. Shields appear only inside the model picker modal,
   never beside the model in the chat bar. A selected model without ZDR shows
   "· not ZDR" in the composer.
 - **Info tooltip** uses the existing `data-info-tooltip` component:
