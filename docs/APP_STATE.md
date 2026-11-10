@@ -1,3 +1,12 @@
+## 2026-11-10 — Chart requests and missing values
+
+Explicit plot requests now take priority over the “a sentence/table is enough”
+chart guidance. Line/bar arrays accept null gaps, retaining all categories and
+known sibling values. Null never participates in axes, marks, or interpolation;
+hover/table/Copy report “Not available”, and share/history retain null. Pies remain
+complete-data-only. No automatic extra model call or transport/payment change.
+See [CLIENT_CHARTS.md](CLIENT_CHARTS.md) and the synthetic forecast browser fixture.
+
 ## 2026-11-09 — Model shields indicate enabled ZDR
 
 - Hide model-row shields while ZDR is off. Show them only when ZDR is on and

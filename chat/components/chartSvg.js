@@ -6,7 +6,7 @@
 // audited in one read and swapped for a library later without touching the
 // message templates.
 
-import { validateChartSpec, formatChartArtifactText, normalizeChartArtifacts } from '../domain/chartArtifacts.js';
+import { validateChartSpec, formatChartArtifactText, formatChartValue, normalizeChartArtifacts } from '../domain/chartArtifacts.js';
 
 const WIDTH = 640;
 const PLOT_HEIGHT = 300;
@@ -82,6 +82,7 @@ function valueRange(spec) {
     let max = -Infinity;
     for (const series of spec.series) {
         for (const value of series.values) {
+            if (value === null) continue;
             if (value < min) min = value;
             if (value > max) max = value;
         }
@@ -154,6 +155,7 @@ function renderBars(spec) {
     const zeroY = scaleY(Math.max(lo, Math.min(hi, 0)));
     const radius = Math.min(4, barWidth / 2);
     const marks = spec.series.map((series, s) => series.values.map((value, i) => {
+        if (value === null) return '';
         const x = bandX(i) - inner / 2 + s * (barWidth + gap);
         const y = scaleY(value);
         const top = Math.min(y, zeroY);
@@ -178,11 +180,20 @@ function renderLines(spec) {
     const bandX = i => points === 1 ? (plotLeft + plotRight) / 2 : plotLeft + ((plotRight - plotLeft) * i) / (points - 1);
     const showMarkers = points <= MAX_MARKERS;
     const marks = spec.series.map((series, s) => {
-        const d = series.values.map((value, i) => `${i === 0 ? 'M' : 'L'}${round(bandX(i), 1)} ${round(scaleY(value), 1)}`).join(' ');
-        const line = `<path class="oa-chart-line" d="${d}" stroke="${seriesColor(s)}"><title>${escapeText(series.name)}</title></path>`;
-        const markers = showMarkers ? series.values.map((value, i) =>
-            `<circle class="oa-chart-marker" cx="${round(bandX(i), 1)}" cy="${round(scaleY(value), 1)}" r="3.5" fill="${seriesColor(s)}"><title>${escapeText(`${series.name} · ${spec.xLabels[i]}: ${value}`)}</title></circle>`
-        ).join('') : '';
+        const hasGaps = series.values.includes(null);
+        let connected = false;
+        const d = series.values.map((value, i) => {
+            if (value === null) { connected = false; return ''; }
+            const command = connected ? 'L' : 'M';
+            connected = true;
+            return `${command}${round(bandX(i), 1)} ${round(scaleY(value), 1)}`;
+        }).filter(Boolean).join(' ');
+        const line = d ? `<path class="oa-chart-line" d="${d}" stroke="${seriesColor(s)}"><title>${escapeText(series.name)}</title></path>` : '';
+        // Even dense series need visible markers at gaps/isolated known values.
+        const markers = series.values.map((value, i) => {
+            if (value === null || (!showMarkers && (!hasGaps || (series.values[i - 1] != null && series.values[i + 1] != null)))) return '';
+            return `<circle class="oa-chart-marker" cx="${round(bandX(i), 1)}" cy="${round(scaleY(value), 1)}" r="3.5" fill="${seriesColor(s)}"><title>${escapeText(`${series.name} · ${spec.xLabels[i]}: ${value}`)}</title></circle>`;
+        }).join('');
         return line + markers;
     }).join('');
     return `<svg class="oa-chart-svg" viewBox="0 0 ${WIDTH} ${PLOT_HEIGHT}" role="img" aria-label="${escapeText(spec.title)}">` +
@@ -241,7 +252,7 @@ function renderLegend(spec) {
 function renderTable(spec) {
     const head = `<tr><th scope="col">${escapeText(spec.xAxisTitle || '')}</th>${spec.series.map(series => `<th scope="col">${escapeText(series.name)}</th>`).join('')}</tr>`;
     const rows = spec.xLabels.map((label, i) =>
-        `<tr><th scope="row">${escapeText(label)}</th>${spec.series.map(series => `<td>${escapeText(series.values[i])}</td>`).join('')}</tr>`
+        `<tr><th scope="row">${escapeText(label)}</th>${spec.series.map(series => `<td>${escapeText(formatChartValue(series.values[i]))}</td>`).join('')}</tr>`
     ).join('');
     return `<details class="oa-chart-data"><summary>Show data</summary><div class="oa-chart-table-wrap"><table><thead>${head}</thead><tbody>${rows}</tbody></table></div></details>`;
 }

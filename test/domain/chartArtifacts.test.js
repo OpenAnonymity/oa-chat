@@ -44,7 +44,7 @@ test('a well-formed spec is accepted and cleaned', () => {
 
 test('numeric strings are read as numbers; anything non-finite is refused', () => {
     assert.deepEqual(validateChartSpec({ ...GOOD, series: [{ name: 'S', values: ['1', '2.5', 3] }] }).spec.series[0].values, [1, 2.5, 3]);
-    for (const bad of [[1, 'x', 3], [1, null, 3], [1, Infinity, 3], [1, NaN, 3], [1, '', 3]]) {
+    for (const bad of [[1, 'x', 3], [1, undefined, 3], [1, Infinity, 3], [1, NaN, 3], [1, '', 3]]) {
         assert.match(validateChartSpec({ ...GOOD, series: [{ name: 'S', values: bad }] }).error, /not a finite number/);
     }
 });
@@ -138,4 +138,20 @@ test('only catalog entries that declare tools are offered the chart tool', () =>
     assert.equal(modelSupportsClientTools({ supported_parameters: ['temperature'] }), false);
     assert.equal(modelSupportsClientTools({}), false);
     assert.equal(modelSupportsClientTools(null), false);
+});
+
+
+test('missing line/bar values retain their positions; all-missing charts and incomplete pies fail', () => {
+    for (const chartType of ['line', 'bar']) {
+        const input = { ...GOOD, chartType, series: [{ name: 'High', values: [9, 7, 5] }, { name: 'Low', values: [null, 2, null] }] };
+        const { spec } = validateChartSpec(input);
+        assert.deepEqual(spec.series[1].values, [null, 2, null]);
+        assert.deepEqual(normalizeChartArtifacts([{ version: 1, type: 'chart', spec }])[0].spec, spec);
+        assert.deepEqual(JSON.parse(createChartArtifactTranscript({ spec })[0].tool_calls[0].function.arguments), spec);
+    }
+    assert.match(validateChartSpec({ ...GOOD, series: [{ name: 'Missing', values: [null, null, null] }] }).error, /no available numeric values/);
+    assert.match(validateChartSpec({ ...GOOD, chartType: 'pie', series: [{ name: 'Shares', values: [1, null, 3] }] }).error, /not a finite number/);
+    assert.ok(validateChartSpec({ ...GOOD, chartType: 'line', series: [
+        { name: 'Known', values: [0, 2, 3] }, { name: 'Missing', values: [null, null, null] }
+    ] }).spec);
 });

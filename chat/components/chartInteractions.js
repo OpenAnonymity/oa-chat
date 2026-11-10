@@ -1,4 +1,4 @@
-import { validateChartSpec } from '../domain/chartArtifacts.js';
+import { validateChartSpec, formatChartValue } from '../domain/chartArtifacts.js';
 import { chartCartesianLayout } from './chartSvg.js';
 
 const installations = new WeakMap();
@@ -86,7 +86,7 @@ export function installChartInteractions(root) {
             const swatch = element('span', 'oa-chart-tooltip-swatch');
             swatch.style.background = color(spec.chartType === 'pie' ? index : s);
             swatch.setAttribute('aria-hidden', 'true');
-            row.append(swatch, element('span', 'oa-chart-tooltip-value', String(series.values[index])),
+            row.append(swatch, element('span', 'oa-chart-tooltip-value', formatChartValue(series.values[index])),
                 element('span', 'oa-chart-tooltip-name', series.name));
             return row;
         });
@@ -103,6 +103,7 @@ export function installChartInteractions(root) {
             overlay.replaceChildren(svgElement('line', { x1: anchorX, x2: anchorX, y1: plotTop, y2: plotBottom,
                 class: 'oa-chart-guide' }));
             if (spec.chartType === 'line') spec.series.forEach((series, s) => {
+                if (series.values[index] === null) return;
                 overlay.append(svgElement('circle', { cx: anchorX, cy: scaleY(series.values[index]), r: 4.5,
                     fill: color(s), class: 'oa-chart-active-point' }));
             });

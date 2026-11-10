@@ -27,3 +27,12 @@ test('imported share messages keep only valid chart artifacts', () => {
     assert.equal('artifacts' in bad, false);
     assert.equal('artifacts' in none, false);
 });
+
+
+test('share import preserves gaps without turning them into zero', () => {
+    const spec = { chartType: 'line', title: 'Forecast', xLabels: ['Tue', 'Wed'],
+        series: [{ name: 'High', values: [null, 0] }] };
+    const [message] = createMessagesFromPayload([{ role: 'assistant', content: '',
+        artifacts: [{ version: 1, type: 'chart', spec }] }], 'session', () => 'gap');
+    assert.deepEqual(message.artifacts[0].spec.series[0].values, [null, 0]);
+});

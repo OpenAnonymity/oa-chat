@@ -20,13 +20,22 @@ export const MAX_CHART_SPEC_BYTES = 64 * 1024;
 const MAX_TOOL_CALL_ID_LENGTH = 200;
 
 export const CHART_TOOL_SYSTEM_INSTRUCTIONS =
-    'When the answer is a set of numbers that a reader would compare or follow over time ' +
-    '(a trend, a breakdown, a comparison across categories), call render_chart with the ' +
-    'data instead of describing every value in prose. Use a separate call for each chart, up to four charts per reply. ' +
-    'Keep any accompanying text short. Use only data supplied by the user or supported by accessible sources; ' +
-    'cite sources for researched figures and never claim to have searched unless you actually did. ' +
-    'Do not call render_chart for a single number, for data you would have to invent, or when ' +
-    'a sentence or a short table already answers the question.';
+    'You can display charts by calling render_chart. When the user asks to plot, graph, chart, or ' +
+    'visualize numerical data, actually call render_chart in this reply once you have supported values. ' +
+    'A plan to draw a chart, a prose summary, or a table alone does not fulfill an explicit chart request. ' +
+    'For other requests, use charts when comparing numbers or showing a trend or breakdown helps; ' +
+    'keep simple arithmetic and single-number answers in prose. Use a separate call for each chart, ' +
+    'up to four charts per reply. Keep accompanying text short. ' +
+    'Use only data supplied by the user or supported by accessible sources; cite sources for researched ' +
+    'figures and never claim to have searched unless you actually did. For forecasts and other changing ' +
+    'data, use a consistent source/update when possible and label dates, units, and any mixed updates. ' +
+    'For line and bar charts, keep every requested category and use null for missing values at the ' +
+    'matching position in each series. Null means unavailable, not zero; do not invent, interpolate, ' +
+    'shift values, or drop a whole day just because one series is missing its value. A pie chart needs ' +
+    'complete nonnegative values. If no usable data is available, explain what is missing and ask for it; ' +
+    'do not claim a chart was created. Example: xLabels ["Tue", "Wed", "Thu"], ' +
+    'series [{"name":"High", "values":[9,7,5]}, {"name":"Low", "values":[3,null,1]}] ' +
+    'keeps Wednesday’s high and leaves a gap in its low.';
 
 export const RENDER_CHART_TOOL = Object.freeze({
     type: 'function',
@@ -34,7 +43,8 @@ export const RENDER_CHART_TOOL = Object.freeze({
         name: CHART_TOOL_NAME,
         description: 'Render one chart in the chat from the numbers provided. Use bar for comparisons ' +
             'across categories, line for values over an ordered axis such as time, pie for shares ' +
-            'of a whole (one series only).',
+            'of a whole (one complete series only). Call this tool to show the requested chart; ' +
+            'describing a chart in text does not render it. Line/bar charts support null gaps.',
         parameters: Object.freeze({
             type: 'object',
             additionalProperties: false,
@@ -58,8 +68,8 @@ export const RENDER_CHART_TOOL = Object.freeze({
                             name: Object.freeze({ type: 'string', maxLength: MAX_CHART_LABEL_LENGTH }),
                             values: Object.freeze({
                                 type: 'array', maxItems: MAX_CHART_POINTS,
-                                items: Object.freeze({ type: 'number' }),
-                                description: 'Same length as xLabels.'
+                                items: Object.freeze({ type: Object.freeze(['number', 'null']) }),
+                                description: 'Same length as xLabels. Use null for missing line/bar values; keep labels aligned. Pie values must all be numbers.'
                             })
                         })
                     })
@@ -137,6 +147,10 @@ export function validateChartSpec(value) {
         }
         const values = [];
         for (const raw of entry.values) {
+            if (raw === null && chartType !== 'pie') {
+                values.push(null);
+                continue;
+            }
             const number = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
             if (typeof number !== 'number' || !Number.isFinite(number)) {
                 return { error: `Series "${name}" contains a value that is not a finite number.` };
@@ -149,6 +163,7 @@ export function validateChartSpec(value) {
         series.push({ name, values });
     }
     if (xLabels.length === 0) return { error: 'The chart has no data points.' };
+    if (!series.some(entry => entry.values.some(Number.isFinite))) return { error: 'The chart has no available numeric values.' };
 
     const spec = { chartType, title, xLabels, series };
     const xAxisTitle = readString(value.xAxisTitle, MAX_CHART_LABEL_LENGTH);
@@ -284,6 +299,10 @@ export function createChartArtifactTranscript(artifact, index = 0) {
     ];
 }
 
+export function formatChartValue(value) {
+    return value === null ? 'Not available' : String(value);
+}
+
 /** Plain-text table for clipboard and models that cannot accept tool history. */
 export function formatChartArtifactText(value) {
     const artifact = normalizeChartArtifact(value);
@@ -292,7 +311,7 @@ export function formatChartArtifactText(value) {
     const cell = value => String(value).replace(/[\t\r\n]+/g, ' ');
     const rows = [
         [spec.xAxisTitle || 'Category', ...spec.series.map(series => series.name)],
-        ...spec.xLabels.map((label, index) => [label, ...spec.series.map(series => series.values[index])])
+        ...spec.xLabels.map((label, index) => [label, ...spec.series.map(series => formatChartValue(series.values[index]))])
     ];
     return [spec.title, spec.yAxisTitle ? `Values: ${spec.yAxisTitle}` : '',
         rows.map(row => row.map(cell).join('\t')).join('\n')].filter(Boolean).join('\n');

@@ -107,3 +107,15 @@ test('multiple charts survive Copy, sharing and tool/text history with unique re
     assert.deepEqual(history[0].tool_calls.map(c => c.id), history.slice(1).map(m => m.tool_call_id));
     assert.equal(processMessagesForApi([message], 'plain', { supportsClientTools: false })[0].content, copy);
 });
+
+
+test('Copy and history preserve a missing value distinctly from a true zero', () => {
+    const artifact = chart('Forecast'); artifact.spec.series[0].values = [null, 0];
+    const message = { role: 'assistant', content: '', artifacts: [artifact] };
+    assert.match(getMessageCopyText(message), /Jan\tNot available\nFeb\t0/);
+    const plain = processMessagesForApi([message], 'text-only', { supportsClientTools: false });
+    assert.match(plain[0].content, /Jan\tNot available\nFeb\t0/);
+    const tool = processMessagesForApi([message], 'tool-model')[0].tool_calls[0];
+    assert.deepEqual(JSON.parse(tool.function.arguments).series[0].values, [null, 0]);
+    assert.deepEqual(buildBaseSharePayload({}, [message]).messages[0].artifacts[0].spec.series[0].values, [null, 0]);
+});

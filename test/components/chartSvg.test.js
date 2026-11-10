@@ -130,3 +130,27 @@ test('pie weights do not overflow and the data table retains exact values', () =
     assert.match(bar, /<td>0\.004<\/td>/);
     assert.match(bar, /<title>S · B: 0\.004<\/title>/);
 });
+
+
+test('missing points split lines without inventing zeros or moving the remaining categories', () => {
+    const spec = { chartType: 'line', title: 'Forecast', xLabels: ['Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+        series: [{ name: 'High', values: [null, 7, null, 5, 4] }] };
+    const html = renderChartArtifact({ version: 1, type: 'chart', spec });
+    const d = html.match(/class="oa-chart-line" d="([^"]+)"/)[1];
+    assert.equal((d.match(/M/g) || []).length, 2);
+    assert.equal((d.match(/L/g) || []).length, 1);
+    assert.equal((html.match(/class="oa-chart-marker"/g) || []).length, 3);
+    assert.match(html, /High · Wed: 7/);
+    assert.equal((html.match(/<td>Not available<\/td>/g) || []).length, 2);
+    assert.doesNotMatch(html, /(?:cy|d)="[^"]*(?:NaN|Infinity|null)/);
+    const bars = renderChartArtifact({ spec: { ...spec, chartType: 'bar' } });
+    assert.equal((bars.match(/class="oa-chart-bar"/g) || []).length, 3);
+});
+
+test('a dense line keeps isolated known points visible between gaps', () => {
+    const values = Array(100).fill(null); values[50] = 8;
+    const html = renderChartArtifact({ spec: { chartType: 'line', title: 'Sparse',
+        xLabels: values.map((_, i) => String(i)), series: [{ name: 'Known', values }] } });
+    assert.equal((html.match(/class="oa-chart-marker"/g) || []).length, 1);
+    assert.match(html, /Known · 50: 8/);
+});

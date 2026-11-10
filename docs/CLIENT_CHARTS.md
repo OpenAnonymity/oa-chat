@@ -37,7 +37,9 @@ The function takes:
 Limits (`chat/domain/chartArtifacts.js`): four charts per reply, 8 series per chart, 500 points, labels
 80 characters, title 120, spec 64 KiB, tool arguments 128 KiB while
 streaming (`chat/domain/streamingToolCalls.js`), at most eight retained calls plus bounded overflow/invalid-ID errors. Every series must match the
-label count; values must be finite; a pie takes one non-negative series.
+label count; numeric values must be finite. Line/bar series may use explicit null
+for unavailable values; at least one numeric value is required across the chart.
+A pie takes one complete non-negative numeric series.
 Numeric strings are read as numbers; unknown fields are dropped.
 
 ## Streaming
@@ -153,3 +155,24 @@ reply caused by clearing a chart placeholder without inserting the error text.
 `test-browser/chart-layout.mjs` exercises two live/restored charts, exact DOM Copy,
 partial/all-invalid calls after reasoning and Quick Ask. Unit tests cover bounded
 accumulation, mixed-validity calls, copying, unique replay IDs and share/import.
+
+## Explicit chart requests and missing values (2026-11-10)
+
+The system/tool descriptions distinguish an explicit request to plot from optional
+chart suggestions: narration or a table alone does not fulfill a plot request.
+For forecasts they request dates/units and consistent source updates. This is
+provider guidance, not proof that a provider will call the tool or verify facts.
+No forced call, automatic extra inference, search setting, or retry policy changed.
+
+Line/bar values accept explicit null in place, preserving the category and the
+other series. Lines break across gaps; missing bars/markers are omitted, including
+active hover markers. Dense lines retain markers around gaps so isolated known
+points remain visible. Axis ranges exclude null. Hover, Show data, Copy and text
+history say “Not available”; zero stays zero. JSON history and share/import retain
+null. An entirely unavailable chart is rejected, and pies still require complete
+values because dropping a slice would distort shares.
+
+`test-browser/chart-gaps.mjs` covers the reported seven-day forecast shape with a
+missing final low and an interior gap, keyboard inspection, real zero, copy and
+restore. Values are synthetic. The original model request was not captured, so its
+exact failure to call/render the chart is not established from the screenshot.
