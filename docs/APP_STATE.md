@@ -1,3 +1,9 @@
+## 2026-11-09 — Model shields indicate enabled ZDR
+
+- Hide model-row shields while ZDR is off. Show them only when ZDR is on and
+  the model has an eligible endpoint. Toggle changes already re-render the
+  picker, so shields clear immediately. Request routing is unchanged.
+
 ## 2026-11-09 — Compact unavailable ZDR rows
 
 - Keep unavailable models dimmed and unselectable, but omit the visible ZDR

@@ -6,7 +6,8 @@ every OpenRouter request to providers with a zero data retention policy.
 ## Behavior
 
 - **Shield.** Each model with at least one eligible provider shows a green
-  shield (`--color-status-success`), whether or not the switch is on. Hovering it
+  shield (`--color-status-success`) only while the switch is on. With the switch
+  off, no model shields are shown and OA adds no ZDR routing restriction. Hovering it
   reads "Supports zero data retention".
 - **Switch on.** Models without an eligible provider stay listed but are dimmed,
   cannot be clicked, and are skipped
@@ -15,8 +16,9 @@ every OpenRouter request to providers with a zero data retention policy.
   never beside the model in the chat bar. A selected model without ZDR shows
   "· not ZDR" in the composer.
 - **Info tooltip** uses the existing `data-info-tooltip` component:
-  "OA Chat is unlinkable and anonymous, but model providers may still log your prompts. Turn
-  this on to send prompts only to model providers with zero data retention policies."
+  "OA Chat is unlinkable and anonymous, but model providers may still log your prompts.
+  Turning this on restricts requests to model providers with zero data retention
+  policies. When off, providers may retain your prompts."
 - **Setting.** Stored as chat setting `zeroDataRetention` (chatDB, not synced).
   Default off for a new installation. The controller configures the preference
   before event handlers can send; preflight awaits restoration. Pending, failed,

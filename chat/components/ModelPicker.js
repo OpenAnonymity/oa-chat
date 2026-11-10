@@ -514,11 +514,12 @@ export default class ModelPicker {
             </span>
         `;
 
-        // Zero data retention: a shield marks models with an eligible provider.
+        // Show a shield only while ZDR is enabled and this model has an eligible provider.
         // While the switch is on, models without one stay listed but cannot be chosen.
+        const zdrEnabled = zeroDataRetention.isEnabled();
         const supportsZdr = zeroDataRetention.supportsModel(model.id);
-        const zdrBlocked = zeroDataRetention.isEnabled() && !supportsZdr;
-        const zdrShield = supportsZdr
+        const zdrBlocked = zdrEnabled && !supportsZdr;
+        const zdrShield = zdrEnabled && supportsZdr
             ? `<span class="zdr-shield-wrap" title="Supports zero data retention" aria-label="Supports zero data retention" role="img">${zdrShieldHTML()}</span>`
             : '';
         const zdrNote = zdrBlocked

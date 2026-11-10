@@ -43,14 +43,22 @@ function createPicker() {
 
 afterEach(async () => { await zeroDataRetention.setEnabled(false); });
 
-test('a shield marks models with a ZDR provider whether or not the switch is on', async () => {
+test('model shields appear only while ZDR is enabled and disappear when turned off', async () => {
     await useList();
+    await zeroDataRetention.setEnabled(false);
     const picker = createPicker();
-    const primary = picker.buildModelOptionHTML(picker.app.state.models[0]);
-    const other = picker.buildModelOptionHTML(picker.app.state.models[1]);
-    assert.match(primary, /title="Supports zero data retention"/);
-    assert.doesNotMatch(other, /Supports zero data retention/);
-    assert.doesNotMatch(other, /aria-disabled/);
+    const eligible = () => picker.buildModelOptionHTML(picker.app.state.models[0]);
+    const ineligible = () => picker.buildModelOptionHTML(picker.app.state.models[1]);
+    assert.doesNotMatch(eligible(), /zdr-shield-wrap|Supports zero data retention/);
+    assert.doesNotMatch(ineligible(), /zdr-shield-wrap|aria-disabled/);
+    await zeroDataRetention.setEnabled(true);
+    assert.match(eligible(), /title="Supports zero data retention"/);
+    assert.doesNotMatch(eligible(), /aria-disabled/);
+    assert.doesNotMatch(ineligible(), /zdr-shield-wrap/);
+    assert.match(ineligible(), /aria-disabled="true"/);
+    await zeroDataRetention.setEnabled(false);
+    assert.doesNotMatch(eligible(), /zdr-shield-wrap/);
+    assert.doesNotMatch(ineligible(), /aria-disabled/);
 });
 
 test('with the switch on, models without a ZDR provider are listed but cannot be chosen', async () => {
