@@ -1,5 +1,7 @@
 ## 2026-11-10 — ZDR and ticket usage production candidate
 
+ZDR tooltip (2026-11-10): removed the final “When off” sentence at the user’s request. Routing, shields, 401 recovery and usage-history persistence are unchanged.
+
 The release test runner also carries the existing desktop workaround for Node 24.4 clock-test worker IPC: server-time tests run in a separate process without a nested worker. Every test still runs; product code is unchanged.
 
 - Selectively ports ZDR and the account-scoped, local-only daily ticket usage log
