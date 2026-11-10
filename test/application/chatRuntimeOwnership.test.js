@@ -39,6 +39,8 @@ const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
 const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
 const { default: RightPanel } = await import('../../chat/components/RightPanel.js');
+const { default: zeroDataRetention } = await import('../../chat/services/zeroDataRetention.js');
+const { default: CouncilController } = await import('../../chat/application/councilController.js');
 const { createModelPickerInterface, createComponentAppFacade } = await import('../../chat/ui/appInterface.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
@@ -81,6 +83,185 @@ function appHarness() {
         announceChatOperation() {}
     });
 }
+
+describe('ZDR send preflight and ownership', () => {
+    let restore;
+    let fetches;
+    const catalog = { data: [
+        { model_id: 'test/one', tag: 'safe/one', safety_retention: false },
+        { model_id: 'test/two', tag: 'safe/two', safety_retention: false }
+    ] };
+    beforeEach(async () => {
+        restore = installBrowser();
+        fetches = 0;
+        zeroDataRetention.configure({
+            settingsStore: { getSetting: async () => true, saveSetting: async () => {} },
+            fetchJson: async () => { fetches++; return catalog; }
+        });
+        await zeroDataRetention.restore();
+        await zeroDataRetention.ensureCatalog({ force: true });
+        fetches = 0;
+    });
+    afterEach(async () => { await zeroDataRetention.setEnabled(false); restore(); });
+
+    function harness() {
+        const app = appHarness();
+        app.state.models = [
+            { id: 'test/one', name: 'Allowed one' },
+            { id: 'test/two', name: 'Allowed two' },
+            { id: 'test/blocked', name: 'Blocked model' }
+        ];
+        app.state.pendingModelName = 'Allowed one';
+        app.state.sessionsById.get('one').model = 'Allowed one';
+        app.getModelsForSession = () => app.state.models;
+        app.normalizeModelName = name => name;
+        app.supportsFeature = () => true;
+        app.councilController = new CouncilController({ app, chatDB });
+        return app;
+    }
+
+    test('a pending preference preserves duplicate/Stop ownership without starting captured work', async () => {
+        const app = harness();
+        const loading = deferred();
+        zeroDataRetention.configure({ settingsStore: { getSetting: () => loading.promise, saveSetting: async () => {} } });
+        app.sendCapturedMessage = async () => assert.fail('canceled send must not start');
+        const sending = app.sendMessage();
+        const owner = app.getPendingSend('one');
+        assert.ok(owner);
+        await app.sendMessage();
+        assert.equal(app.getPendingSend('one'), owner);
+        app.stopCurrentSessionStreaming();
+        assert.equal(owner.controller.signal.aborted, true);
+        loading.resolve(true);
+        await sending;
+        assert.equal(app.getPendingSend('one'), null);
+        assert.equal(app.elements.messageInput.value, 'Original prompt');
+    });
+
+    test('failed preference reads release the send reservation and keep the draft', async () => {
+        const app = harness();
+        const notices = [];
+        app.showToast = message => notices.push(message);
+        zeroDataRetention.configure({ settingsStore: { getSetting: async () => { throw new Error('unreadable'); }, saveSetting: async () => {} } });
+        app.sendCapturedMessage = async () => assert.fail('unresolved privacy must not send');
+        await app.sendMessage();
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+        assert.equal(app.elements.messageInput.value, 'Original prompt');
+        assert.match(notices[0], /couldn't load your Zero data retention setting/);
+    });
+
+    for (const usePending of [true, false]) {
+        test(`new-chat Parallel checks its second model from ${usePending ? 'pending selection' : 'remembered defaults'}`, async () => {
+            const app = harness();
+            app.state.currentSessionId = null;
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            if (usePending) app.pendingCouncilConfig = { enabled: true, members: ['Allowed one', 'Blocked model'], outputMode: 'parallel' };
+            else { app.parallelModeEnabled = true; app.parallelSecondaryModel = 'Blocked model'; }
+            app.sendCapturedMessage = async () => assert.fail('blocked group must not reach session creation or paid access');
+            await app.sendMessage();
+            assert.match(notices[0], /Blocked model/);
+            assert.equal(app.sendSubmissionsInFlight.size, 0);
+        });
+    }
+
+    test('Council checks synthesis, Parallel ignores unused synthesis, and warm checks fetch nothing', async () => {
+        const app = harness();
+        app.state.currentSessionId = null;
+        app.pendingCouncilConfig = { enabled: true, members: ['Allowed one', 'Allowed two'], synthesisModel: 'Blocked model', outputMode: 'synthesis' };
+        const submission = { model: 'Allowed one', inferenceBackend: 'openrouter' };
+        assert.match((await app.checkZeroDataRetentionForSend(submission)).message, /Blocked model/);
+        app.pendingCouncilConfig.outputMode = 'parallel';
+        assert.equal(await app.checkZeroDataRetentionForSend(submission), null);
+        assert.equal(await app.checkZeroDataRetentionForSend(submission), null);
+        assert.equal(fetches, 0, 'warmed group checks must not add network round trips');
+    });
+
+    for (const existing of [false, true]) {
+        test(`${existing ? 'existing' : 'new'} Parallel checks the automatic secondary even with one configured member`, async () => {
+            const app = harness();
+            app.state.models = app.state.models.filter(model => model.name !== 'Allowed two');
+            if (existing) {
+                const session = app.state.sessionsById.get('one');
+                session.responseMode = 'council';
+                session.councilConfig = { enabled: true, members: ['Allowed one'], outputMode: 'parallel' };
+            } else {
+                app.state.currentSessionId = null;
+                app.parallelModeEnabled = true;
+            }
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            app.sendCapturedMessage = async () => assert.fail('inferred blocked lane must not reach paid access');
+            await app.sendMessage();
+            assert.match(notices[0], /Blocked model/);
+            assert.equal(app.sendSubmissionsInFlight.size, 0);
+        });
+    }
+
+    test('the actual newly created group is rechecked before spending', async () => {
+        const app = harness();
+        app.state.currentSessionId = null;
+        app.ensureDatabaseReady = async () => true;
+        app.createSession = async () => {
+            const session = { id: 'new', model: 'Allowed one', responseMode: 'council',
+                councilConfig: { enabled: true, members: ['Allowed one', 'Blocked model'], outputMode: 'parallel' } };
+            app.state.sessionsById.set(session.id, session);
+            return session;
+        };
+        app.preflightTurnTicketBudget = async () => assert.fail('must reject before spending');
+        await assert.rejects(app.sendCapturedMessage({ sessionId: null, generation: 0,
+            controller: new AbortController(), rawContent: 'test', files: [], model: 'Allowed one', inferenceBackend: 'openrouter' }),
+            error => error.reason === 'model' && /Blocked model/.test(error.message));
+    });
+
+    for (const eligible of [true, false]) {
+        test(`regenerate checks the saved message model before side effects (${eligible})`, async t => {
+            const app = harness();
+            const session = app.state.sessionsById.get('one');
+            session.model = eligible ? 'Blocked model' : 'Allowed one';
+            session.importedFrom = 'shared';
+            const originalModel = eligible ? 'Allowed one' : 'Blocked model';
+            t.mock.method(chatDB, 'getSessionMessages', async () => [{ id: 'u', role: 'user', model: originalModel, content: 'test' }]);
+            const effects = [];
+            app.clearMemoryApiOverrideContent = () => effects.push('memory');
+            app.markImportedSessionAsForked = async () => effects.push('fork');
+            app.updateUrlWithSession = () => {};
+            app.preflightTurnTicketBudget = async (_session, _content, options) => { effects.push(options.modelName); return false; };
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            await app.regenerateResponse();
+            assert.deepEqual(effects, eligible ? ['memory', 'fork', 'Allowed one'] : []);
+            assert.equal(notices.length, eligible ? 0 : 1);
+            assert.equal(app.regenerationJobs.size, 0);
+        });
+    }
+
+    test('Parallel lane preflight checks its saved model rather than the current group', async t => {
+        const app = harness();
+        const session = app.state.sessionsById.get('one');
+        session.model = 'Blocked model';
+        session.responseMode = 'council';
+        session.councilConfig = { enabled: true, members: ['Blocked model', 'Allowed two'], outputMode: 'parallel' };
+        t.mock.method(chatDB, 'getSessionMessages', async () => [
+            { id: 'u', role: 'user', content: 'test' },
+            { id: 'a', role: 'assistant', council: { stage1: [{ laneId: 'primary', model: 'Allowed one', modelId: 'test/one', response: 'saved' }] } }
+        ]);
+        app.reserveAccessAcquisitionHandoff = () => {};
+        let checked = false;
+        app.preflightTurnTicketBudget = async () => { checked = true; return false; };
+        app.showToast = message => assert.fail(message);
+        await app.regenerateCouncilLane('a', 'primary');
+        assert.equal(checked, true);
+    });
+
+    test('Quick Ask refuses its chosen model before runtime preparation or paid access', async () => {
+        const app = harness();
+        app.resolveModelForQuickAsk = async () => ({ modelId: 'test/blocked', modelName: 'Blocked model' });
+        app.runtime.prepareTurn = async () => assert.fail('must not prepare paid turn');
+        app.ensureQuickAskAccess = async () => assert.fail('must not acquire access');
+        await assert.rejects(app.performInlineQuickAsk('Explain this text', { sessionId: 'one' }), error => error.reason === 'model');
+    });
+});
 
 function streamHarness(stream) {
     const app = appHarness();

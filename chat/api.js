@@ -28,6 +28,7 @@ import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
+import zeroDataRetention from './services/zeroDataRetention.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { hasWithheldReasoning, reasoningTextFromDetails } from './services/reasoningParser.js';
 import { paragraphBreakBefore } from './services/streamSegments.js';
@@ -77,6 +78,10 @@ export class OpenRouterAPI {
     // Request-scoped leases isolate concurrent title/completion calls. Products
     // own credential acquisition, budget policy and cleanup, not SSE parsing.
     async withRequestAccess(token, options, operation) {
+        if (!zeroDataRetention.isReady() || zeroDataRetention.isEnabled()) {
+            const privacyError = await zeroDataRetention.checkModel(options.modelId);
+            if (privacyError) throw privacyError;
+        }
         const access = this.options.acquireRequestAccess
             ? await this.options.acquireRequestAccess(token, options)
             : this.defaultRequestAccess(token);
@@ -128,7 +133,9 @@ export class OpenRouterAPI {
             : body;
         // Composed billing adapters may reduce the allowance further, but may
         // not raise the user's 30,000-token ceiling or a smaller caller limit.
-        const finalBody = applyOutputTokenLimit(prepared, model, callerLimit);
+        // Zero data retention is applied last, after every adapter, so no
+        // composed product hook can drop or widen the provider restriction.
+        const finalBody = zeroDataRetention.applyToBody(applyOutputTokenLimit(prepared, model, callerLimit));
         validateInferenceInput(finalBody.messages, model);
         validateSerializedInferenceBody(JSON.stringify(finalBody));
         return finalBody;
@@ -142,19 +149,28 @@ export class OpenRouterAPI {
         };
     }
 
+    restrictFetchAttempt(init) {
+        if (!init.body) return init;
+        // Recheck the current preference on every retry without rerunning
+        // billing adapters or undoing a reduced output allowance.
+        return { ...init, body: JSON.stringify(zeroDataRetention.applyToBody(JSON.parse(init.body))) };
+    }
+
     fetchWithRetry(access, url, init, config) {
         return fetchWithOpenRouterCreditRecovery(
-            this.networkTransport.fetchWithRetry.bind(this.networkTransport),
+            (target, request, retryConfig) => this.networkTransport.fetchWithRetry(target, this.restrictFetchAttempt(request), retryConfig),
             url, this.prepareFetchOptions(access, init), {
                 ...config,
-                proxyConfig: access.proxyConfig || config?.proxyConfig
+                proxyConfig: access.proxyConfig || config?.proxyConfig,
+                prepareAttempt: request => this.restrictFetchAttempt(request)
             });
     }
 
     fetchWithRetryJson(access, url, init, config) {
         return this.networkTransport.fetchWithRetryJson(url, this.prepareFetchOptions(access, init), {
             ...config,
-            proxyConfig: access.proxyConfig || config?.proxyConfig
+            proxyConfig: access.proxyConfig || config?.proxyConfig,
+            prepareAttempt: request => this.restrictFetchAttempt(request)
         });
     }
 
@@ -173,13 +189,19 @@ export class OpenRouterAPI {
             request._sendCompletionStrict(messages, modelId, token, requestOptions));
     }
 
-    generateSessionTitle(prompt, token, options = {}) {
+    async generateSessionTitle(prompt, token, options = {}) {
         if (!this.extractTextContent(prompt).trim()) return Promise.resolve('');
         const requestOptions = {
             ...options,
             modelId: options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID,
             reasoningEnabled: options.reasoningEnabled ?? true
         };
+        if (!zeroDataRetention.isReady()) await zeroDataRetention.ensureReady();
+        // The title model receives the first message. With zero data retention
+        // on and no eligible provider for it, keep the local title instead.
+        if (zeroDataRetention.isEnabled() && !zeroDataRetention.supportsModel(requestOptions.modelId)) {
+            return Promise.resolve('');
+        }
         return this.withRequestAccess(token, requestOptions, request =>
             request._generateSessionTitle(prompt, token, requestOptions));
     }

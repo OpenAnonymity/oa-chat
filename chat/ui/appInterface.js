@@ -102,6 +102,7 @@ export function createModelPickerInterface(app, options = {}) {
     return {
         elements,
         state: app.state,
+        showToast: (...args) => app.showToast(...args),
         presentation: options.presentation || null,
         get reasoningEnabled() {
             return app.reasoningEnabled;

@@ -1,3 +1,15 @@
+## 2026-11-10 — ZDR and ticket usage production candidate
+
+- Selectively ports ZDR and the account-scoped, local-only daily ticket usage log
+  from staging onto `721cd0ae`. Existing 401/fresh-key recovery stays intact.
+- Excludes request timing source, collector/configuration and unrelated in-chat
+  chart code. The Account usage chart is a commercial composition feature.
+- ZDR shields appear only while enabled. Blocked rows keep screen-reader reasons.
+  Off uses ordinary routing; ZDR-preferred routing is not implemented.
+- ZDR applies at final dispatch and each 401/402 retry. Search/PDF plugin scope is
+  unchanged. Account switches isolate usage counts; sharing does not count.
+- Validation and release status: workspace deployment/zdr-usage-prod-20261110.
+
 ## 2026-11-08 — fresh-key readiness window for inference 401 (local, not deployed)
 
 Implements the fix proposed in the diagnosis note below. Details:

@@ -46,5 +46,5 @@ test('account session credentials are scoped to explicit org account APIs', asyn
     assert.match(sessionSource, /shouldDoInterceptionBasedOnUrl/);
     assert.match(sessionSource, /normalizeAccountSessionUrl\(input\)/);
     assert.doesNotMatch(sessionSource, /api\/request_key|api\/ticket\/redeem/);
-    assert.match(proxySource, /fetch\(resource, \{ \.\.\.init, credentials: 'omit' \}\)/);
+    assert.match(proxySource, /fetch\(resource, \{ \.\.\.prepareDispatch\(\), credentials: 'omit' \}\)/);
 });

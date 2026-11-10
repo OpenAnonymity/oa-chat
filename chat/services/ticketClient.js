@@ -1068,7 +1068,8 @@ class TicketClient {
 
                     return { response, data, code: normalizedCode };
                 },
-                { order: 'tail' }
+                // A share moves tickets to someone else: not usage.
+                { order: 'tail', recordUsage: false }
             );
 
             const { data, code } = result;

@@ -22,6 +22,13 @@ import {
     normalizeTicketKeyId,
     partitionTicketsByKeyId
 } from '../domain/ticketKeys.js';
+import {
+    TICKET_USAGE_KEY,
+    addTicketUsage,
+    backfillTicketUsage,
+    normalizeTicketUsageLog,
+    toTicketUsageHistory
+} from './ticketUsageLog.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -490,6 +497,9 @@ export class TicketStore {
                             value: normalizeInvalidatedTicketKeyIds(options.invalidatedKeyIds)
                         });
                     }
+                    // Commit usage with the spent-ticket archive. A failed write
+                    // must not increment the chart ahead of durable consumption.
+                    if (options.usageLog) entries.push({ key: TICKET_USAGE_KEY, value: options.usageLog });
                     await chatDB.saveSettings(entries);
                 } else {
                     await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
@@ -1025,7 +1035,9 @@ export class TicketStore {
                     ...ticket,
                     consumed_at: ticket.consumed_at || new Date().toISOString()
                 })));
+                const usageLog = await this.prepareUsage(selected.length, archived, options);
                 await this.persistTickets(remaining, updatedArchive, {
+                    usageLog,
                     skipSync: syncService.shouldDeferRedemptionSync()
                 });
                 return {
@@ -1099,10 +1111,12 @@ export class TicketStore {
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
                         const updatedActive = active.filter(ticket => !usedTokenSet.has(ticket.finalized_ticket));
+                        const usageLog = await this.prepareUsage(usedSelected.length, archived, options);
                         await this.persistTickets(
                             updatedActive,
                             updatedArchive,
                             {
+                                usageLog,
                                 skipSync:
                                     syncService.shouldDeferRedemptionSync()
                             }
@@ -1112,7 +1126,9 @@ export class TicketStore {
                             ...ticket,
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
+                        const usageLog = await this.prepareUsage(selected.length, archived, options);
                         await this.persistTickets(remaining, updatedArchive, {
+                            usageLog,
                             skipSync:
                                 syncService.shouldDeferRedemptionSync()
                         });
@@ -1120,6 +1136,50 @@ export class TicketStore {
                 }
                 throw error;
             }
+        });
+    }
+
+    async readUsageLog() {
+        if (typeof chatDB === 'undefined' || !chatDB.db) return null;
+        return normalizeTicketUsageLog(await chatDB.getSetting(TICKET_USAGE_KEY));
+    }
+
+    async writeUsageLog(log) {
+        if (typeof chatDB === 'undefined' || !chatDB.db) return;
+        await chatDB.saveSetting(TICKET_USAGE_KEY, log);
+    }
+
+    /**
+     * Prepares usage inside the ticket lock, using the pre-spend archive.
+     * persistTickets commits it atomically with consumption. Seed even for
+     * shares so a later backfill cannot misclassify those as inference usage.
+     * A failed log read never fails a spend.
+     */
+    async prepareUsage(count, archivedBeforeSpend, options = {}) {
+        if (!(count > 0)) return;
+        try {
+            const current = await this.readUsageLog();
+            if (!current) return;
+            const seeded = backfillTicketUsage(current, archivedBeforeSpend);
+            return options.recordUsage === false ? seeded : addTicketUsage(seeded, count, new Date());
+        } catch (error) {
+            console.warn('Failed to record ticket usage:', error);
+        }
+    }
+
+    /**
+     * Daily ticket usage for the Account chart: `[{ day, count }]`, oldest
+     * first. Seeds the log from the current archive the first time.
+     */
+    async getUsageHistory() {
+        return this.withLock(async () => {
+            await this.ensureDbReady();
+            const latest = await this.readUsageLog();
+            if (!latest || latest.backfilled) return toTicketUsageHistory(latest);
+            const { archived } = await this.readFromDatabase();
+            const seeded = backfillTicketUsage(latest, archived);
+            await this.writeUsageLog(seeded);
+            return toTicketUsageHistory(seeded);
         });
     }
 

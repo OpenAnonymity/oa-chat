@@ -674,6 +674,11 @@ class NetworkProxy {
     async fetch(resource, init = {}, config = {}) {
         const preferProxy = config.bypassProxy ? false : this.state.settings.enabled;
         const forceProxy = !!config.forceProxy;
+        let policyError = null;
+        const prepareDispatch = () => {
+            try { return config.prepareAttempt ? config.prepareAttempt(init) : init; }
+            catch (error) { policyError = error; throw error; }
+        };
 
         const url = typeof resource === 'string' ? resource : resource.url;
         console.log('[networkProxy.fetch] Request to:', url?.substring(0, 100), 'preferProxy:', preferProxy);
@@ -683,7 +688,7 @@ class NetworkProxy {
             this.state.transport = 'direct';
             // Don't set fallbackActive here - this is an intentional bypass, not a failure fallback
             // Use credentials: 'omit' to prevent third-party cookie storage
-            return fetch(resource, { ...init, credentials: 'omit' });
+            return fetch(resource, { ...prepareDispatch(), credentials: 'omit' });
         }
 
         // Track active proxy requests to prevent toggle during in-flight operations
@@ -707,7 +712,8 @@ class NetworkProxy {
             const captureHost = transportHints.shouldCaptureTlsForUrl(url);
             const certSubject = this.tlsInfo.certSubject?.toLowerCase() || '';
             const needsTlsCapture = !!captureHost && !certSubject.includes(captureHost.toLowerCase());
-            const fetchInit = (config.inspectTls || needsTlsCapture) ? { ...init, _libcurl_verbose: 1 } : init;
+            const dispatchInit = prepareDispatch();
+            const fetchInit = (config.inspectTls || needsTlsCapture) ? { ...dispatchInit, _libcurl_verbose: 1 } : dispatchInit;
             const response = await this.fetchThroughProxy(resource, fetchInit);
             const duration = Date.now() - startTime;
             console.log('[networkProxy.fetch] ✅ HTTPSession.fetch succeeded in', duration + 'ms', 'status:', response.status);
@@ -741,7 +747,7 @@ class NetworkProxy {
             // The request's own abort says nothing about the relay: it must
             // not flip the System Panel to "Unavailable" or send later
             // requests direct.
-            if (init.signal?.aborted) {
+            if (error === policyError || init.signal?.aborted) {
                 this.emitChange();
                 throw error;
             }
@@ -763,7 +769,7 @@ class NetworkProxy {
             // later requests can retry it instead of silently remaining direct.
             console.warn('[networkProxy.fetch] Proxy failed, retrying direct for this request:', url?.substring(0, 100));
             this.state.fallbackActive = true;
-            const directRequest = fetch(resource, { ...init, credentials: 'omit' });
+            const directRequest = fetch(resource, { ...prepareDispatch(), credentials: 'omit' });
 
             // Emit change to update UI to show failure status
             this.emitChange();
@@ -790,7 +796,7 @@ class NetworkProxy {
         return fetchRetry(url, init, {
             ...retryConfig,
             fetchFn: this.fetch.bind(this),
-            fetchConfig: proxyConfig
+            fetchConfig: { ...proxyConfig, prepareAttempt: config.prepareAttempt }
         });
     }
 
@@ -807,7 +813,7 @@ class NetworkProxy {
         return fetchRetryJson(url, init, {
             ...retryConfig,
             fetchFn: this.fetch.bind(this),
-            fetchConfig: proxyConfig
+            fetchConfig: { ...proxyConfig, prepareAttempt: config.prepareAttempt }
         });
     }
 }

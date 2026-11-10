@@ -10610,6 +10610,27 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
     .nav-btn, .message-indicator { transition: none; }
 }
 
+/* Zero data retention (model picker). The row sits under search without its
+   own divider so the switch reads as part of the search header. The shield
+   uses the existing status green; rows a model cannot serve under ZDR stay
+   visible (so the person sees why) but are dimmed and inert. */
+.zdr-picker-row { display: flex; flex-shrink: 0; align-items: center; gap: .375rem; padding: .5rem .75rem .125rem 1rem; }
+.zdr-picker-title { font-size: .8125rem; font-weight: 500; color: hsl(var(--color-foreground)); }
+.zdr-picker-row .settings-info-button { margin-block: -6px; margin-left: -2px; }
+.zdr-picker-row .settings-info-button svg { width: 12px; height: 12px; }
+.zdr-picker-row > .zdr-shield-wrap { color: hsl(var(--color-muted-foreground)); }
+.zdr-picker-row.zdr-on > .zdr-shield-wrap { color: var(--color-status-success); }
+.zdr-shield-wrap { display: inline-flex; flex-shrink: 0; align-items: center; color: var(--color-status-success); }
+.zdr-shield { width: 14px; height: 14px; }
+.zdr-name-line { display: flex; align-items: center; gap: .3125rem; min-width: 0; }
+.zdr-name-line > .truncate { min-width: 0; }
+.model-option.zdr-unavailable { opacity: .45; cursor: not-allowed; }
+.model-option.zdr-unavailable:hover { background-color: transparent; }
+.zdr-chip-note { font-size: 11px; white-space: nowrap; }
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+    .zdr-picker-row { min-height: 44px; padding-block: .25rem; }
+}
+
 /* Phone touch-layout follow-up; laptop and Electron layouts are unchanged. */
 @media (max-width: 767px) {
     /* The sheet slides; its width is fixed by the host, and its border

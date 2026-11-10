@@ -392,3 +392,31 @@ test('component app facade passes Account routing calls through to the app', () 
     facade.showSidebar?.({ persist: false });
     assert.deepEqual(calls, ['first-account', 'logged-out', 'sidebar:{"persist":false}']);
 });
+
+
+test('the real picker facade delivers a failed ZDR save toast', async () => {
+    const { default: ModelPicker } = await import('../../chat/components/ModelPicker.js');
+    const { zeroDataRetention } = await import('../../chat/services/zeroDataRetention.js');
+    const { app } = createMockApp();
+    const notices = [];
+    app.showToast = function (...args) { assert.equal(this, app); notices.push(args); };
+    for (const element of Object.values(app.elements)) element.addEventListener = () => {};
+    const listeners = {};
+    const toggle = { addEventListener: (event, handler) => { listeners[event] = handler; } };
+    const picker = new ModelPicker(createModelPickerInterface(app));
+    picker.getZdrToggle = () => toggle;
+    picker.renderZdrToggle = () => {};
+    zeroDataRetention.configure({ settingsStore: { getSetting: async () => false, saveSetting: async () => { throw new Error('quota'); } } });
+    await zeroDataRetention.restore();
+    try {
+        picker.setupEventListeners();
+        listeners.click();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(zeroDataRetention.isEnabled(), true);
+        assert.equal(notices.length, 1);
+        assert.match(notices[0][0], /couldn't save/);
+    } finally {
+        zeroDataRetention.configure({ settingsStore: { getSetting: async () => false, saveSetting: async () => {} } });
+        await zeroDataRetention.setEnabled(false);
+    }
+});
