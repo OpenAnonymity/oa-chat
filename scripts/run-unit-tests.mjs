@@ -86,12 +86,29 @@ child.on('exit', async (code, signal) => {
         process.exit(1);
     }
     if (code !== 0 || !paymentTestFiles.length) process.exit(code ?? 1);
+    // Node 24.4's test-worker IPC can fail while the server-clock suite mocks
+    // Date.now ("Unable to deserialize cloned data"). Keep every clock test
+    // in its own process, but run that process without another test worker.
+    // It still cannot leak browser globals into the remaining payment suites.
+    const clockTests = paymentTestFiles.filter(file => file.endsWith('/server-time.test.mjs'));
+    for (const file of clockTests) {
+        const clockCode = await new Promise(resolve => {
+            const clock = spawn(process.execPath, [
+                '--import', path.join(paymentTestsRoot, 'support/web-locks.mjs'),
+                '--test', '--test-force-exit', '--test-isolation=none', file
+            ], { stdio: 'inherit', cwd: repoRoot });
+            clock.on('error', error => { console.error(error); resolve(1); });
+            clock.on('exit', (code, signal) => resolve(signal ? 1 : code ?? 1));
+        });
+        if (clockCode !== 0) process.exit(clockCode);
+    }
     // The native payment tests retain their source-relative fixtures and SDK
     // package resolution. Run them in isolated processes so their browser
     // shims cannot replace the legacy suite's shared globals.
     const payments = spawn(process.execPath, [
         '--import', path.join(paymentTestsRoot, 'support/web-locks.mjs'),
-        '--test', '--test-force-exit', '--test-concurrency=1', ...paymentTestFiles
+        '--test', '--test-force-exit', '--test-concurrency=1',
+        ...paymentTestFiles.filter(file => !clockTests.includes(file))
     ], { stdio: 'inherit', cwd: repoRoot });
     payments.on('error', error => { console.error(error); process.exit(1); });
     payments.on('exit', (paymentCode, paymentSignal) => process.exit(paymentSignal ? 1 : paymentCode ?? 1));

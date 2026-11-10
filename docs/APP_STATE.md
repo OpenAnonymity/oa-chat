@@ -1,5 +1,7 @@
 ## 2026-11-10 — ZDR and ticket usage production candidate
 
+The release test runner also carries the existing desktop workaround for Node 24.4 clock-test worker IPC: server-time tests run in a separate process without a nested worker. Every test still runs; product code is unchanged.
+
 - Selectively ports ZDR and the account-scoped, local-only daily ticket usage log
   from staging onto `721cd0ae`. Existing 401/fresh-key recovery stays intact.
 - Excludes request timing source, collector/configuration and unrelated in-chat
