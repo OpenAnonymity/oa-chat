@@ -1,3 +1,15 @@
+## 2026-11-11 — Retry/Resend follows the selected model (candidate)
+
+Single-model Retry and Resend capture `session.model` at click time and pass
+`modelNameOverride` to regeneration. That model drives the privacy preflight,
+ticket checks, key eligibility/acquisition and inference. Later picker changes
+do not retarget this retry. Original prompt metadata, files, search, Memory and
+reasoning settings keep their existing behavior. Internal automatic retries
+without an override retain the original prompt model; Council still uses its
+configured lanes. No new telemetry or relaxation of privacy/ticket enforcement.
+The companion org patch repairs missing known Latest aliases in the price map.
+This entry describes a local candidate, not a completed deployment.
+
 ## 2026-11-10 — Chart requests and missing values
 
 Explicit plot requests now take priority over the “a sentence/table is enough”

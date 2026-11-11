@@ -272,3 +272,21 @@ test('foreground and ten-minute refreshes update badges without polling hidden t
         }
     }
 });
+
+
+test('a missing Latest price fails closed, then uses the refreshed exact alias price', async t => {
+    const saved = { fetch: globalThis.fetch, localStorage: globalThis.localStorage };
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    let map = { 'anthropic/claude-fable-5.2': 25 };
+    globalThis.fetch = async () => Response.json(map);
+    t.after(() => Object.assign(globalThis, saved));
+    const tiers = await import('../../chat/services/modelTiers.js?latest-alias-recovery');
+    await assert.rejects(tiers.getAccessTicketCost('~anthropic/claude-fable-latest'),
+        { code: 'MODEL_TIER_UNAVAILABLE' });
+    map = { ...map, '~anthropic/claude-fable-latest': 25, '~anthropic/claude-opus-latest': 5 };
+    assert.equal(await tiers.getAccessTicketCost('~anthropic/claude-fable-latest'), 25);
+    assert.equal(await tiers.getAccessTicketCost('~anthropic/claude-opus-latest'), 5);
+    assert.equal(await tiers.getAccessTicketCost('anthropic/claude-fable-5.2'), 25);
+    await assert.rejects(tiers.getAccessTicketCost('~unconfigured/model-latest'),
+        { code: 'MODEL_TIER_UNAVAILABLE' });
+});

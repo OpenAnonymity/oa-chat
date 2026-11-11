@@ -7584,7 +7584,10 @@ class ChatApp {
             ? messages.find(message => message.id === options.userMessageId && message.role === 'user')
             : [...messages].reverse().find(m => m.role === 'user');
         if (!lastUserMessage) return;
-        const retryModelName = this.normalizeModelName(lastUserMessage.model || session.model) || lastUserMessage.model || session.model;
+        // Explicit message actions capture the picker selection at click time.
+        // Internal retries without an override preserve the original turn model.
+        const requestedRetryModel = options.modelNameOverride || lastUserMessage.model || session.model;
+        const retryModelName = this.normalizeModelName(requestedRetryModel) || requestedRetryModel;
         const privacyError = await this.checkZeroDataRetentionForSend({
             sessionId: session.id,
             model: this.isCouncilModeActive(session) ? session.model : retryModelName,
