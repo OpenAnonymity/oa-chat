@@ -1374,6 +1374,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
         const sessionId = session.id;
+        const modelNameOverride = session.model;
         this.setMessageActionBusy(triggerButton, true);
         const mutationToken = this.app.beginSessionMutation(sessionId, { exclusive: true, interruptStreaming: true });
         if (!mutationToken) {
@@ -1401,7 +1402,7 @@ export default class ChatArea {
             const userMessageId = userMessage.id;
 
             // The app keeps the old transcript on disk until a replacement completes.
-            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken, replaceFromMessageId: messageId });
+            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken, replaceFromMessageId: messageId, modelNameOverride });
         } finally {
             this.app.endSessionMutation(sessionId, mutationToken);
             this.setMessageActionBusy(triggerButton, false);
@@ -1709,6 +1710,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
         const sessionId = session.id;
+        const modelNameOverride = session.model;
         this.setMessageActionBusy(triggerButton, true);
         const mutationToken = this.app.beginSessionMutation(sessionId, { exclusive: true, interruptStreaming: true });
         if (!mutationToken) {
@@ -1741,7 +1743,7 @@ export default class ChatArea {
             const remainingMessages = messages.slice(0, messageIndex + 1);
             await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
             await this.render();
-            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken });
+            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken, modelNameOverride });
         } finally {
             this.app.endSessionMutation(sessionId, mutationToken);
             this.setMessageActionBusy(triggerButton, false);

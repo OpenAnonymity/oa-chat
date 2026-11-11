@@ -2599,6 +2599,79 @@ describe('production ChatApp runtime ownership', () => {
         }
     }
 
+    test('explicit retry with unavailable selected pricing never streams or falls back', async () => {
+        let streams = 0;
+        const { app, records } = streamHarness(async () => { streams++; return {}; });
+        app.state.models.push({ id: 'selected-model', name: 'Selected model' });
+        records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt', model: 'Accepted model' });
+        app.hasEligibleModelAccess = (_session, model) => {
+            assert.equal(model, 'Selected model');
+            return false;
+        };
+        let purchases = 0;
+        app.acquireAndSetAccess = async (_session, options) => {
+            purchases++;
+            assert.equal(options.modelNameOverride, 'Selected model');
+            throw Object.assign(new Error('Selected model has no price'), { code: 'MODEL_TIER_UNAVAILABLE' });
+        };
+        await app.regenerateResponse({ modelNameOverride: 'Selected model' });
+        assert.equal(purchases, 1);
+        assert.equal(streams, 0);
+        assert.ok([...records.values()].some(m => m.isLocalOnly && m.content.includes('Selected model has no price')));
+        assert.equal(app.regenerationJobs.size, 0);
+    });
+
+    test('explicit retry model uses the selected model for preflight, access and inference', async () => {
+        let streamed, preflight, acquired;
+        const { app, records } = streamHarness(async (...args) => { streamed = args; return { totalTokens: 1 }; });
+        app.state.models.push({ id: 'selected-model', name: 'Selected model' });
+        app.state.sessionsById.get('one').model = 'Selected model';
+        records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt', model: 'Unavailable model',
+            searchEnabled: true, memoryMode: false, reasoningEnabled: false, reasoningEffort: 'low' });
+        app.preflightTurnTicketBudget = async (_session, _content, options) => { preflight = options; return true; };
+        app.hasEligibleModelAccess = (_session, model) => {
+            assert.equal(model, 'Selected model');
+            return false;
+        };
+        app.acquireAndSetAccess = async (_session, options) => { acquired = options.modelNameOverride; };
+        await app.regenerateResponse({ modelNameOverride: 'Selected model' });
+        assert.equal(preflight.modelName, 'Selected model');
+        assert.equal(acquired, 'Selected model');
+        assert.equal(streamed[1], 'selected-model');
+        assert.equal(streamed[6], true);
+        assert.equal(streamed[10], false);
+        assert.equal(records.get('accepted').model, 'Unavailable model', 'original prompt metadata remains historical');
+    });
+
+    for (const action of ['handleResendMessage', 'handleRegenerateMessage']) {
+        test(`${action} captures the Cmd+K model before asynchronous work`, async () => {
+            const area = Object.create(ChatArea.prototype);
+            const session = { id: 'one', model: 'Selected model' };
+            const owner = {};
+            let requested;
+            area.setMessageActionBusy = () => {};
+            area.render = async () => {};
+            area.app = {
+                getCurrentSession: () => session,
+                beginSessionMutation: () => owner,
+                endSessionMutation: () => {},
+                stopSessionStreamingAndWait: async () => { session.model = 'Later selection'; return true; },
+                isSessionDeleted: () => false,
+                data: {
+                    getSessionMessages: async () => [
+                        { id: 'question', role: 'user', model: 'Unavailable model' },
+                        { id: 'error', role: 'assistant', isLocalOnly: true }
+                    ],
+                    deleteMessage: async () => {}
+                },
+                regenerateResponse: async options => { requested = options; }
+            };
+            await area[action](action === 'handleResendMessage' ? 'question' : 'error');
+            assert.equal(requested.modelNameOverride, 'Selected model');
+            assert.equal(requested.sessionId, 'one');
+        });
+    }
+
     test('Retry uses accepted model/search/Memory/reasoning and prepares recoverable files before inference', async () => {
         let streamed;
         const { app, records } = streamHarness(async (...args) => { streamed = args; return { totalTokens: 1 }; });
@@ -3054,7 +3127,7 @@ test('regenerate action never deletes the saved transcript before requesting its
         regenerateResponse: async options => { requested = options; }
     };
     await area.handleRegenerateMessage('original');
-    assert.deepEqual(requested, { sessionId: 'one', userMessageId: 'question', mutationToken: owner, replaceFromMessageId: 'original' });
+    assert.deepEqual(requested, { sessionId: 'one', userMessageId: 'question', mutationToken: owner, replaceFromMessageId: 'original', modelNameOverride: undefined });
     assert.equal(ended, true);
 });
 
