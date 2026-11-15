@@ -1,3 +1,4 @@
+import { isPhoneAppLayout, PHONE_APP_LAYOUT_CHANGE } from '../ui/phoneAppLayout.js';
 import { motionDuration, setDisclosure } from '../ui/uiMotion.js';
 /**
  * Right Panel Component
@@ -8,6 +9,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
 import { getActivityDescription, getActivityIcon, getStatusIconClass, formatTimestamp } from '../services/networkLogRenderer.js';
+import { groupActivityTimeline } from '../services/activityTimeline.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -27,6 +29,10 @@ const DEFAULT_OPEN_MIN_WIDTH = 1100;
 const SHOW_UNDERLYING_KEY_DETAILS = true;
 
 class RightPanel {
+    getAttestationVerifier() {
+        return this.app.services.verifier;
+    }
+
     constructor(app) {
         this.app = app; // Reference to main app
         tlsSecurityModal.configureServices?.(this.app.services);
@@ -89,22 +95,7 @@ class RightPanel {
         this.proxyActionPending = false;
         this.proxyAnimating = false; // Flag to skip re-render during toggle animation
         this.lastProxyToggleTime = 0; // Rate limit for rapid toggles
-        this.proxyUnsubscribe = this.app.services.networkProxy.onChange(({ settings, status }) => {
-            const hadError = this.proxyStatus?.lastError;
-            this.proxySettings = settings;
-            this.proxyStatus = status;
-
-            // Auto-disable proxy when it fails (new error detected while enabled)
-            if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
-                this.app.services.networkProxy.updateSettings({ enabled: false });
-                return; // Will trigger another onChange with disabled state
-            }
-
-            // Skip re-render if animation is in progress (will re-render after animation)
-            if (!this.proxyAnimating) {
-                this.renderTopSectionOnly();
-            }
-        });
+        this.proxyUnsubscribe = this.app.services.networkProxy.onChange(change => this.handleProxyChange(change));
         this.accountUnsubscribe = this.app.services.account?.subscribe?.(() => {
             if (this.hasMounted) this.renderTopSectionOnly();
         }) || null;
@@ -134,8 +125,7 @@ class RightPanel {
         preferencesStore.getPreference(PREF_KEYS.rightPanelVisible, { isDesktop: this.defaultOpen })
             .then((isVisible) => {
                 if (typeof isVisible === 'boolean') {
-                    this.isVisible = isVisible;
-                    this.updatePanelVisibility();
+                    this.applyVisibilityPreference(isVisible);
                 }
             });
 
@@ -161,8 +151,7 @@ class RightPanel {
 
         preferencesStore.onChange((key, value) => {
             if (key === PREF_KEYS.rightPanelVisible && typeof value === 'boolean') {
-                this.isVisible = value;
-                this.updatePanelVisibility();
+                this.applyVisibilityPreference(value);
             }
             if (key === PREF_KEYS.ticketInfoVisible && typeof value === 'boolean') {
                 this.showTicketInfo = value;
@@ -177,9 +166,35 @@ class RightPanel {
         });
     }
 
+    applyVisibilityPreference(value) {
+        // A late read/save notification must not undo the phone user's latest
+        // rail choice. Laptop and desktop preference handling is unchanged.
+        this.isVisible = isPhoneAppLayout() && typeof this.phoneVisibilityIntent === 'boolean'
+            ? this.phoneVisibilityIntent : value;
+        this.updatePanelVisibility();
+    }
+
+    setVisibilityIntent(value) {
+        this.phoneVisibilityIntent = isPhoneAppLayout() ? value : undefined;
+        this.isVisible = value;
+    }
+
+    reconcilePhonePanels() {
+        if (isPhoneAppLayout() && this.isVisible
+            && this.app?.elements?.sidebar?.classList.contains('mobile-visible')) {
+            this.closeRightPanel({ persist: false });
+        }
+    }
+
+    /** The count shown: held steady while previous-version tickets move. */
+    readTicketCount() {
+        const tickets = this.app.services.tickets;
+        return Number((tickets.getVisibleTicketCount?.() ?? tickets.getTicketCount()) || 0);
+    }
+
     initializeState() {
         // Load initial ticket count
-        this.ticketCount = this.app.services.tickets.getTicketCount();
+        this.ticketCount = this.readTicketCount();
         // Only auto-show form when no tickets if user hasn't explicitly set a preference
         if (this.ticketCount === 0 && this.invitationFormPreference === null) {
             this.showInvitationForm = true;
@@ -219,7 +234,7 @@ class RightPanel {
         this.expiresAt = accessInfo?.expiresAt || null;
 
         // Load ALL network logs globally (not just for this session)
-        this.networkLogs = this.app.services.networkLogger.getAllLogs();
+        this.networkLogs = groupActivityTimeline(this.app.services.networkLogger.getAllLogs(), this.networkLogs);
         this.previousLogCount = this.networkLogs.length;
 
         // Only update the top section (API key/tickets) without re-rendering logs
@@ -281,7 +296,7 @@ class RightPanel {
     }
 
     getMembershipTicketToolsSnapshot() {
-        const ticketCount = Number(this.app.services.tickets.getTicketCount?.() || 0);
+        const ticketCount = Number(this.readTicketCount() || 0);
         this.ticketCount = ticketCount;
         return Object.freeze({
             ticketCount,
@@ -470,7 +485,7 @@ class RightPanel {
         // Listen for ticket updates
         window.addEventListener('tickets-updated', () => {
             const previousTicketCount = this.ticketCount;
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
             // Only auto-show form when tickets run out if user hasn't explicitly set a preference
             if (this.ticketCount === 0 && previousTicketCount > 0 && this.invitationFormPreference === null) {
                 this.showInvitationForm = true;
@@ -489,17 +504,19 @@ class RightPanel {
             // Reload ALL logs globally
             // DON'T clear expandedLogIds - preserve expansion state
             const previousCount = this.previousLogCount;
-            this.networkLogs = this.app.services.networkLogger.getAllLogs();
+            const previousLatestId = this.networkLogs[0]?.id;
+            this.networkLogs = groupActivityTimeline(this.app.services.networkLogger.getAllLogs(), this.networkLogs);
             this.previousLogCount = this.networkLogs.length;
+            const hasNewRow = this.networkLogs[0]?.id !== previousLatestId;
 
             // Use incremental update to preserve scroll and expansion state
-            this.renderLogsOnly(false, previousCount); // Don't preserve scroll - we'll scroll to bottom
+            this.renderLogsOnly(!hasNewRow, previousCount);
 
             // Auto-scroll to bottom to show newest activity (instant for immediate feedback)
-            this.scrollToBottomInstant();
+            if (hasNewRow) this.scrollToBottomInstant();
 
             // Notify app about new log for floating panel
-            if (this.app.floatingPanel && this.networkLogs.length > 0) {
+            if (hasNewRow && this.app.floatingPanel && this.networkLogs.length > 0) {
                 const latestLog = this.networkLogs[0];
                 this.app.floatingPanel.updateWithLog(latestLog);
             }
@@ -509,6 +526,9 @@ class RightPanel {
     setupResponsive() {
         // The sheet's scrim (phones only, by CSS) closes it like a tap outside.
         document.getElementById('right-panel-scrim')?.addEventListener('click', () => this.closeRightPanel());
+        // Rotation back to phone portrait can activate the new layout without
+        // crossing the legacy 1100px breakpoint. Keep the visible chat list.
+        window.addEventListener(PHONE_APP_LAYOUT_CHANGE, () => this.reconcilePhonePanels());
 
         // Handle window resize - only update layout mode, NOT visibility
         // User's panel visibility choice is preserved across all screen sizes
@@ -618,7 +638,7 @@ class RightPanel {
     }
 
     show() {
-        this.isVisible = true;
+        this.setVisibilityIntent(true);
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, true);
         this.updatePanelVisibility();
         // Predict final width: panel is opening, main area will be NARROWER
@@ -628,7 +648,7 @@ class RightPanel {
     }
 
     hide() {
-        this.isVisible = false;
+        this.setVisibilityIntent(false);
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
@@ -639,7 +659,7 @@ class RightPanel {
     toggle() {
         // Toggle the right panel visibility
         const wasVisible = this.isVisible;
-        this.isVisible = !this.isVisible;
+        this.setVisibilityIntent(!this.isVisible);
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, this.isVisible);
         this.updatePanelVisibility();
         // Predict final width based on toggle direction
@@ -647,10 +667,10 @@ class RightPanel {
         this.app?.updateToolbarDivider(this.isDesktop ? (wasVisible ? RIGHT_PANEL_WIDTH : -RIGHT_PANEL_WIDTH) : 0);
     }
 
-    closeRightPanel() {
+    closeRightPanel({ persist = true } = {}) {
         // Close the right panel (works in both desktop and mobile)
-        this.isVisible = false;
-        preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
+        this.setVisibilityIntent(false);
+        if (persist) preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
         // Only affects width while the panel is inline (>=1100px); the sheet overlays
@@ -672,6 +692,12 @@ class RightPanel {
 
         if (this.isDesktop && this.lastAppliedVisibility !== this.isVisible) {
             this.app?.preserveChatBottomDuringWidthChange?.();
+        }
+
+        // Automatic phone rail hand-off is local UI state, not a saved preference.
+        if (this.isVisible && isPhoneAppLayout()
+            && this.app?.elements?.sidebar?.classList.contains('mobile-visible')) {
+            this.app.hideSidebar({ persist: false });
         }
 
         // Data attribute for CSS initial load protection
@@ -778,7 +804,7 @@ class RightPanel {
 
             this.smoothProgress.stop();
             this.registrationProgress = null;
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
 
             if (this.pendingInvitationSource) {
                 const ticketCount = this.getInvitationTicketCount(invitationCode) ?? this.pendingInvitationTickets;
@@ -815,7 +841,12 @@ class RightPanel {
             this.registrationError = this.getTicketCodeRegistrationError(error);
             this.smoothProgress.stop();
             this.registrationProgress = null;
-            if (options.throwOnError) throw new Error(this.registrationError);
+            if (options.throwOnError) {
+                // Keep the org's code (e.g. TRIAL_PAUSED) for the caller.
+                const failure = new Error(this.registrationError);
+                if (typeof error?.code === 'string') failure.code = error.code;
+                throw failure;
+            }
             return null;
         } finally {
             this.isRegistering = false;
@@ -858,7 +889,7 @@ class RightPanel {
             const payload = JSON.parse(rawText);
             const result = await this.app.services.tickets.importTickets(payload);
 
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
             this.loadNextTicket();
 
             const totalAdded = result.addedActive + result.addedArchived;
@@ -981,7 +1012,7 @@ class RightPanel {
 
         try {
             const result = await this.app.services.tickets.splitTickets(normalizedCount);
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
             this.loadNextTicket();
             const splitResult = Object.freeze({
                 code: result.code,
@@ -1545,11 +1576,18 @@ class RightPanel {
      * Generate the expanded details HTML for a log entry
      */
     generateExpandedDetailsHTML(log) {
+        if (log.action === 'ticket-sweep-summary') {
+            return `<div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 p-3">
+                <div class="text-foreground leading-relaxed">${this.escapeHtml(getActivityDescription(log, true))}</div>
+                <div class="mt-1 text-muted-foreground">Last checked ${formatTimestamp(log.lastCheckTimestamp)}. Count covers checks retained in this tab’s activity log.</div>
+            </div>`;
+        }
         return `
             <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
                     <!-- Detailed description -->
                     <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
                         <div class="text-foreground leading-relaxed">${log.status === 'pending' || log.status === 'queued' ? getActivityDescription(log, true) : this.escapeHtml(getActivityDescription(log, true))}</div>
+                        ${log.verificationChecks > 1 ? `<div class="mt-1 text-muted-foreground">${log.verificationChecks} checks · Last checked ${formatTimestamp(log.lastCheckTimestamp)}. Repeated unavailable results are grouped here.</div>` : ''}
                     </div>
 
                 <!-- Technical Details -->
@@ -1777,6 +1815,28 @@ class RightPanel {
         const session = this.getSessionInfo(sessionId);
         if (!session) return null;
         return this.app.services.inference.getAccessInfo(session)?.token || null;
+    }
+
+    /**
+     * The key label for a timeline entry: the key that entry ran under, named
+     * for the entry's own session. An entry that recorded its key (keyRef) is
+     * labelled from that session's ephemeral key ids, so it keeps its label
+     * after the session moves to a new key; an older entry without one shows
+     * the session's current key. Never the current conversation's key.
+     */
+    getLogKeyLabel(log) {
+        const session = this.getSessionInfo(log?.sessionId);
+        if (!session) return null;
+        const inference = this.app.services.inference;
+        const keyRef = typeof log?.keyRef === 'string' ? log.keyRef : '';
+        const token = inference.getAccessInfo(session)?.token || null;
+        if (keyRef) {
+            const ephemeralId = inference.findEphemeralKeyId?.(session, keyRef);
+            if (ephemeralId) return inference.formatEphemeralKeyId(ephemeralId);
+            if (token && token.endsWith(keyRef)) return inference.maskAccessToken(session, token);
+            return `...${keyRef}`;
+        }
+        return token ? inference.maskAccessToken(session, token) : null;
     }
 
     /**
@@ -2529,8 +2589,8 @@ class RightPanel {
         if (!settings?.enabled && this.proxyFailureDismissed) {
             return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
         }
-        // A failed connection may have automatically switched off. Keep the
-        // warning visible until the user retries or explicitly disables it.
+        // A request failure is status, not permission to change the relay
+        // preference. Keep the warning until recovery or an explicit disable.
         if (status?.fallbackActive || status?.lastError || this.proxyActionError) {
             return { state: 'unavailable', label: 'Unavailable', textClass: 'text-amber-600 dark:text-amber-400' };
         }
@@ -2539,6 +2599,9 @@ class RightPanel {
         }
         if (status?.connectionVerified && status?.usingProxy) {
             return { state: 'connected', label: 'Connected through proxy', textClass: 'text-status-success' };
+        }
+        if (status?.connectOnNextRequest) {
+            return { state: 'ready', label: 'Proxy connects on your next request', textClass: 'text-blue-600 dark:text-blue-400' };
         }
         if (status?.ready) {
             return { state: 'ready', label: 'Proxy ready; connection verified on the next request', textClass: 'text-blue-600 dark:text-blue-400' };
@@ -2574,7 +2637,10 @@ class RightPanel {
         const tlsInfo = this.app.services.networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
 
-        return `<div class="p-3 space-y-2">
+        // The key tracks the proxy controls; help visibility updates in place.
+        // A top-section update with the same key leaves this section attached,
+        // so its pulse, tooltip and a press in progress all survive.
+        return `<div id="proxy-section" class="p-3 space-y-2" data-proxy-key="${this.escapeHtmlAttribute(this.proxySectionKey(settings, status))}">
                 <!-- Header Row: Title + Toggle -->
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
@@ -2720,13 +2786,70 @@ class RightPanel {
         }
     }
 
+    /** What the proxy section shows. Request counts change on every relayed
+     *  request (and again when its stream ends); none of that is visible. */
+    proxyPresentationKey(settings = this.proxySettings, status = this.proxyStatus) {
+        return JSON.stringify([!!settings?.enabled, this.getProxyStatusMeta(settings, status).state]);
+    }
+
+    /** Proxy controls that need a render; help visibility is updated in place by setOpenHelp. */
+    proxySectionKey(settings = this.proxySettings, status = this.proxyStatus) {
+        const meta = this.getProxyStatusMeta(settings, status);
+        const tlsInfo = this.app.services.networkProxy.getTlsInfo?.() || {};
+        return JSON.stringify([!!settings?.enabled, meta.state, meta.label,
+            tlsInfo.version !== null && tlsInfo.version !== undefined, !!this.proxyActionPending]);
+    }
+
+    /** An in-place status update changes what the section depends on; record it. */
+    syncProxySectionKey() {
+        document.getElementById('proxy-section')?.setAttribute('data-proxy-key', this.proxySectionKey());
+    }
+
+    handleProxyChange({ settings, status }) {
+        const before = this.proxyPresentationKey();
+        const enabledBefore = !!this.proxySettings?.enabled;
+        this.proxySettings = settings;
+        this.proxyStatus = status;
+
+        // Render failures without mutating settings or interrupting other
+        // requests. The transport owns the existing per-request fallback policy.
+
+        this.updateProxyToggleBusy();
+        // Skip re-render if animation is in progress (will re-render after animation)
+        if (this.proxyAnimating || this.proxyPresentationKey() === before) return;
+        // Only switching the relay on or off changes the section's layout.
+        // A status change redraws the icon and the feedback row in place, so
+        // the panel doesn't remount (and flicker) while the proxy connects.
+        const icon = document.querySelector('.oa-proxy-status-icon');
+        if (enabledBefore === !!settings?.enabled && icon) {
+            const focused = icon === document.activeElement;
+            icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
+            if (focused) document.querySelector('.oa-proxy-status-icon')?.focus?.();
+            this.syncProxySectionKey();
+            this.updateProxyFeedback();
+            return;
+        }
+        this.renderTopSectionOnly();
+    }
+
+    /** The relay can't be switched off mid-stream, so the switch says so
+     *  before it is pressed instead of answering with an error toast. */
+    updateProxyToggleBusy() {
+        const toggle = document.getElementById('proxy-toggle-btn');
+        if (!toggle) return;
+        const busy = !!this.proxySettings?.enabled && !!this.app.services.networkProxy.hasActiveRequests?.();
+        toggle.toggleAttribute('data-busy', busy);
+        toggle.setAttribute('aria-disabled', String(busy));
+        toggle.title = busy ? 'You can turn the relay off when the reply finishes' : (this.proxySettings?.enabled ? 'Disable relay' : 'Enable relay');
+    }
+
     async handleProxyToggle({ retry = false } = {}) {
         if (this.destroyed || this.proxyActionPending) return;
 
         // Block toggle when there are active proxy requests (e.g., streaming response)
         if (this.app.services.networkProxy.hasActiveRequests()) {
             console.warn('[RightPanel] Cannot toggle proxy - requests in progress');
-            this.app?.showToast?.('Cannot turn proxy off while data is transmitting', 'error');
+            this.app?.showToast?.('You can turn the relay off when the reply finishes.', 'info');
             return;
         }
 
@@ -2760,6 +2883,7 @@ class RightPanel {
 
         const icon = document.querySelector('.oa-proxy-status-icon');
         if (icon) icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
+        this.syncProxySectionKey();
         this.updateProxyFeedback();
         try {
             if (retry && this.proxySettings.enabled) await this.app.services.networkProxy.reconnect();
@@ -2767,7 +2891,7 @@ class RightPanel {
         } catch (error) {
             // Show toast for active request errors (race condition protection)
             if (error.message?.includes('requests are in progress')) {
-                this.app?.showToast?.('Cannot change proxy while data is streaming', 'error');
+                this.app?.showToast?.('You can turn the relay off when the reply finishes.', 'info');
             }
             this.proxyActionError = error.message;
             this.proxyFailureDismissed = false;
@@ -3056,9 +3180,10 @@ class RightPanel {
             };
             // While still connecting when a turn ends, take another: the
             // motion is continuous, and always ends on a whole turn.
-            proxyRetry.querySelector('.oa-proxy-retry-turns')?.addEventListener('transitionend', event => {
+            const turns = proxyRetry.querySelector('.oa-proxy-retry-turns');
+            if (turns) turns.ontransitionend = event => {
                 if (event.propertyName === 'transform') this.onProxyRetryTurnEnd();
-            });
+            };
         }
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
@@ -3068,6 +3193,7 @@ class RightPanel {
         const learnMore = document.getElementById('verifier-attestation-learn-more');
         if (learnMore) {
             learnMore.onclick = () => verifierAttestationModal.open({
+                verifier: this.getAttestationVerifier(),
                 session: this.currentSession || null,
                 accessInfo: this.apiKeyInfo || null,
                 stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
@@ -3081,6 +3207,7 @@ class RightPanel {
                 const accessInfo = this.getLaneAttestationAccessInfo(row?.access);
                 if (!accessInfo) return;
                 verifierAttestationModal.open({
+                    verifier: this.getAttestationVerifier(),
                     session: this.currentSession || null,
                     accessInfo,
                     stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null
@@ -3104,15 +3231,52 @@ class RightPanel {
             return;
         }
 
-        // Generate and update only the top section HTML
+        // Generate and update only the top section HTML. This runs on every
+        // account notification and every wallet change; most of them change
+        // nothing here. Markup that is identical to the last render leaves the
+        // DOM alone — replacing it would restart the status icon's pulse,
+        // drop a tooltip, and lose a click whose press landed on the old node.
+        const html = this.generateTopSectionHTML();
+        const previousProxySection = topSection.querySelector('#proxy-section');
+        // Retry/toggle updates the live controls before its request settles.
+        // Matching the last HTML string alone can leave those controls stuck
+        // in their temporary state when the request returns to the old status.
+        const proxyUnchanged = !!previousProxySection
+            && previousProxySection.dataset.proxyKey === this.proxySectionKey();
+        if (html === this.lastTopSectionHtml && this.lastTopSectionNode === topSection && proxyUnchanged) {
+            this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
+            this.attachTopSectionEventListeners();
+            this.ensureLaneExpirationTimer();
+            return;
+        }
         const proxyFeedback = topSection.querySelector('#proxy-failure-notice');
         const proxyRetryFocused = proxyFeedback?.contains(document.activeElement);
-        topSection.innerHTML = this.generateTopSectionHTML();
-        // Keep the retry animation and its timers alive across unrelated updates.
-        if (proxyFeedback) {
-            topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
-            if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
+        if (proxyUnchanged && previousProxySection.parentNode === topSection) {
+            const template = document.createElement('template');
+            template.innerHTML = html;
+            const nextProxySection = template.content.querySelector('#proxy-section');
+            // Keep the proxy continuously attached. Removing and reinserting
+            // the same node still loses focus/native clicks and restarts CSS
+            // animation; update only the siblings around it.
+            for (const child of [...topSection.childNodes]) {
+                if (child !== previousProxySection) child.remove();
+            }
+            let beforeProxy = true;
+            for (const child of [...template.content.childNodes]) {
+                if (child === nextProxySection) beforeProxy = false;
+                else topSection.insertBefore(child, beforeProxy ? previousProxySection : null);
+            }
+        } else {
+            topSection.innerHTML = html;
+            // A real proxy presentation change may replace the controls;
+            // keep the retry animation and its timers across that change.
+            if (proxyFeedback) {
+                topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
+                if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
+            }
         }
+        this.lastTopSectionHtml = html;
+        this.lastTopSectionNode = topSection;
         this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
@@ -3195,8 +3359,8 @@ class RightPanel {
         // Calculate how many new logs were added
         const newLogsCount = this.networkLogs.length - previousLogCount;
 
-        // Track session changes for separators
-        let lastSessionId = null;
+        // Track session (and key) changes for separators
+        let lastGroupKey = null;
 
         return logsToShow.map((log, index) => {
             const isExpanded = this.expandedLogIds.has(log.id);
@@ -3220,15 +3384,16 @@ class RightPanel {
             // For grouping purposes, treat system events as a special "system" session
             const effectiveSessionId = isSystemEvent ? 'system' : log.sessionId;
 
-            // Check if we need a session separator
-            const needsSeparator = effectiveSessionId !== lastSessionId;
+            // A separator opens a new session, or the same session on a new key
+            const keyLabel = isSystemEvent ? null : this.getLogKeyLabel(log);
+            const groupKey = isSystemEvent ? 'system' : `${effectiveSessionId}|${keyLabel || ''}`;
+            const needsSeparator = groupKey !== lastGroupKey;
             const sessionTitleRaw = this.getSessionTitle(log.sessionId);
             const sessionTitleAttr = this.escapeHtmlAttribute(sessionTitleRaw);
             const sessionTitleDisplayRaw = sessionTitleRaw.length > 14 ? sessionTitleRaw.substring(0, 14) + '...' : sessionTitleRaw;
             const sessionTitleDisplay = this.escapeHtml(sessionTitleDisplayRaw);
             const isCurrentSess = this.isCurrentSession(log.sessionId);
-            const sessionKey = this.getSessionKey(log.sessionId);
-            lastSessionId = effectiveSessionId;
+            lastGroupKey = groupKey;
 
             let sessionSeparator = '';
             if (needsSeparator) {
@@ -3248,7 +3413,7 @@ class RightPanel {
                     `;
                 } else if (log.sessionId) {
                     // Chat session separator
-                    const keyDisplay = sessionKey ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.escapeHtml(this.maskApiKey(sessionKey))}</span>` : '';
+                    const keyDisplay = keyLabel ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.escapeHtml(keyLabel)}</span>` : '';
                     sessionSeparator = `
                         <div class="session-separator mb-2 mt-2">
                             <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap ${isCurrentSess ? 'border-foreground bg-primary/10' : 'border-border'}">
@@ -3308,6 +3473,9 @@ class RightPanel {
         if (!panel) return;
 
         const hasApiKey = !!this.apiKey;
+        // A full render replaces the top section too; the next partial
+        // render must not take the old markup for the current one.
+        this.lastTopSectionHtml = null;
 
         panel.innerHTML = `
             <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->

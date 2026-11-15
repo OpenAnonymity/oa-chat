@@ -13,6 +13,7 @@ export default class MessageNavigation {
         this.clickedIndex = null; // Tracks user-clicked bar, null = use viewport-based detection
         this.awaitingScrollEnd = false; // True while waiting for programmatic scroll to finish
         this.scrollEndTimer = null;
+        this.scrollFrame = null;
 
         this.init();
     }
@@ -248,12 +249,13 @@ export default class MessageNavigation {
 
         let closestIndex = 0;
         let closestDistance = Infinity;
+        const messageIndices = new Map(this.messages.map((message, index) => [message.id, index]));
 
         messageElements.forEach((el, index) => {
             const messageId = el.dataset.messageId;
-            const msgIndex = this.messages.findIndex(m => m.id === messageId);
+            const msgIndex = messageIndices.get(messageId);
 
-            if (msgIndex !== -1) {
+            if (msgIndex !== undefined) {
                 const rect = el.getBoundingClientRect();
                 const elementMiddle = el.offsetTop + (rect.height / 2);
                 const distance = Math.abs(elementMiddle - viewportMiddle);
@@ -273,13 +275,12 @@ export default class MessageNavigation {
         const activeIndex = this.clickedIndex !== null ? this.clickedIndex : this.currentMessageIndex;
         const indicators = document.querySelectorAll('.message-indicator');
         indicators.forEach((indicator, index) => {
-            if (index === activeIndex) {
-                indicator.classList.add('active');
-                indicator.setAttribute('aria-current', 'true');
-            } else {
-                indicator.classList.remove('active');
-                indicator.setAttribute('aria-current', 'false');
+            const active = index === activeIndex;
+            if (indicator.classList.contains('active') !== active) {
+                indicator.classList.toggle('active', active);
             }
+            const value = String(active);
+            if (indicator.getAttribute('aria-current') !== value) indicator.setAttribute('aria-current', value);
         });
     }
 
@@ -359,6 +360,8 @@ export default class MessageNavigation {
         this.clickedIndex = null;
         this.awaitingScrollEnd = false;
         clearTimeout(this.scrollEndTimer);
+        if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
+        this.scrollFrame = null;
     }
 
     // Track scroll position to update current message
@@ -375,8 +378,14 @@ export default class MessageNavigation {
             return;
         }
 
-        // User is scrolling manually - clear clicked state
-        this.clickedIndex = null;
-        this.updateCurrentMessageIndex();
+        // Coalesce wheel/touch bursts, and avoid repeated layout measurements
+        // and indicator mutations between paint frames in long conversations.
+        if (this.scrollFrame !== null) return;
+        this.scrollFrame = requestAnimationFrame(() => {
+            this.scrollFrame = null;
+            if (!this.isVisible || this.isNavigating || this.awaitingScrollEnd) return;
+            this.clickedIndex = null;
+            this.updateCurrentMessageIndex();
+        });
     }
 }

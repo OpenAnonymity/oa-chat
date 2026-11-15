@@ -17,7 +17,7 @@ test('buildAnonymousResponseBlocks labels responses without model identities', (
     assert.doesNotMatch(blocks, /OpenAI|Anthropic|GPT|Claude/);
 });
 
-test('buildCouncilSynthesisPrompt asks for concise anonymous review', () => {
+test('buildCouncilSynthesisPrompt preserves concise review and final answer without a winner directive', () => {
     const prompt = buildCouncilSynthesisPrompt({
         userQuery: 'Which answer is better?',
         responses: [
@@ -33,7 +33,9 @@ test('buildCouncilSynthesisPrompt asks for concise anonymous review', () => {
     assert.match(prompt, /material differences, errors, missing caveats, and useful synthesis/i);
     assert.match(prompt, /concise final answer/i);
     assert.match(prompt, /Do not mention model names, provider names, or hidden identities/i);
-    assert.match(prompt, /If one response is clearly stronger/i);
+    assert.match(prompt, /Focus on specific differences, useful contributions, and limitations; avoid declaring an overall winner/i);
+    assert.match(prompt, /If both are incomplete, synthesize the best answer and state the missing caveats/i);
+    assert.doesNotMatch(prompt, /If one response is clearly stronger|do not write a separate replacement answer/i);
     assert.match(prompt, /Do not assign scores, grades, or ranked lists/i);
     assert.match(prompt, /Do not use chatty phrasing/i);
     assert.match(prompt, /Keep the review concise and useful/i);

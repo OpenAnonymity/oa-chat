@@ -4,6 +4,7 @@
  */
 
 import storageEvents from './storageEvents.js';
+import { reportDiagnostic } from './diagnostics.js';
 import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
 import { PREF_KEYS } from './preferencesStore.js';
@@ -21,6 +22,13 @@ import {
     normalizeTicketKeyId,
     partitionTicketsByKeyId
 } from '../domain/ticketKeys.js';
+import {
+    TICKET_USAGE_KEY,
+    addTicketUsage,
+    backfillTicketUsage,
+    normalizeTicketUsageLog,
+    toTicketUsageHistory
+} from './ticketUsageLog.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
@@ -41,6 +49,12 @@ export class TicketStore {
         this.scopeStorageUnsubscribe = null;
         this.syncUnsubscribe = null;
         this.hasMarkedTicketHistory = false;
+        // Key IDs whose tickets stay in the wallet but must not be spent
+        // (tickets from the previous production org waiting to be moved).
+        this.heldKeyIds = new Set();
+        // Held tickets that cannot move (over the transfer allowance, or not
+        // valid): kept, but neither counted as usable nor as moving.
+        this.strandedTickets = new Set();
     }
 
     async init() {
@@ -92,6 +106,7 @@ export class TicketStore {
                     }
                     if (payload.event === 'blob_received' && (
                         payload.data?.type === 'tickets' ||
+                        payload.data?.type === 'ticket-removals' ||
                         payload.data?.type === 'ticket-invalidations' ||
                         payload.data?.type === 'ticket-invalidation'
                     )) {
@@ -449,7 +464,9 @@ export class TicketStore {
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
-            if (options.requireDurable) throw error;
+            // While storage is reconnecting an empty result could be written
+            // back over the real wallet by the caller's next save.
+            if (options.requireDurable || chatDB.connectionLost) throw error;
             return {
                 active: [],
                 archived: [],
@@ -480,6 +497,9 @@ export class TicketStore {
                             value: normalizeInvalidatedTicketKeyIds(options.invalidatedKeyIds)
                         });
                     }
+                    // Commit usage with the spent-ticket archive. A failed write
+                    // must not increment the chart ahead of durable consumption.
+                    if (options.usageLog) entries.push({ key: TICKET_USAGE_KEY, value: options.usageLog });
                     await chatDB.saveSettings(entries);
                 } else {
                     await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
@@ -500,6 +520,7 @@ export class TicketStore {
                 persisted = true;
             } catch (error) {
                 console.warn('Failed to persist tickets:', error);
+                reportDiagnostic('storage.failed', { store: 'tickets', op: 'write' });
                 if (options.requireDurable) throw error;
             }
         }
@@ -664,7 +685,92 @@ export class TicketStore {
     peekTickets(count = 1) {
         this.ensureInit();
         if (count <= 0) return [];
-        return this.tickets.slice(0, count);
+        return this.spendable(this.tickets).slice(0, count);
+    }
+
+    /** Hold back tickets under these key IDs from spending (not from storage). */
+    setHeldKeyIds(keyIds = []) {
+        const next = new Set(
+            (Array.isArray(keyIds) ? keyIds : [])
+                .map(normalizeTicketKeyId)
+                .filter(Boolean)
+        );
+        const changed = next.size !== this.heldKeyIds.size ||
+            [...next].some(keyId => !this.heldKeyIds.has(keyId));
+        this.heldKeyIds = next;
+        if (changed) this.emitUpdate();
+    }
+
+    isHeld(ticket) {
+        return this.heldKeyIds.size > 0 && this.heldKeyIds.has(getTicketKeyId(ticket));
+    }
+
+    spendable(tickets) {
+        return this.heldKeyIds.size > 0
+            ? tickets.filter(ticket => !this.isHeld(ticket))
+            : tickets;
+    }
+
+    getHeldCount() {
+        this.ensureInit();
+        return this.heldKeyIds.size > 0
+            ? this.tickets.filter(ticket => this.isHeld(ticket) && !this.isStranded(ticket)).length
+            : 0;
+    }
+
+    /** Mark held tickets that cannot move; they stay held, apart from the count. */
+    setStrandedTickets(values = []) {
+        const next = new Set((Array.isArray(values) ? values : []).filter(value => typeof value === 'string' && value));
+        const changed = next.size !== this.strandedTickets.size ||
+            [...next].some(value => !this.strandedTickets.has(value));
+        this.strandedTickets = next;
+        if (changed) this.emitUpdate();
+    }
+
+    isStranded(ticket) {
+        return this.strandedTickets.size > 0 && this.isHeld(ticket) &&
+            this.strandedTickets.has(ticket?.finalized_ticket);
+    }
+
+    getStrandedCount() {
+        this.ensureInit();
+        return this.strandedTickets.size > 0
+            ? this.tickets.filter(ticket => this.isStranded(ticket)).length
+            : 0;
+    }
+
+    /**
+     * Remove specific tickets for good (they were moved elsewhere). Tombstones
+     * keep sync and other tabs from bringing them back.
+     */
+    async removeTickets(tickets, options = {}) {
+        const values = new Set(
+            (Array.isArray(tickets) ? tickets : [])
+                .map(ticket => ticket?.finalized_ticket)
+                .filter(Boolean)
+        );
+        if (values.size === 0) return 0;
+        return this.withLock(async () => {
+            await this.ensureDbReady();
+            const stored = await this.readFromDatabase();
+            const removed = [...stored.active, ...stored.archived]
+                .filter(ticket => values.has(ticket?.finalized_ticket));
+            const nextTombstones = mergeTicketTombstones(
+                stored.tombstones,
+                await createTicketTombstones(removed)
+            );
+            await this.persistTickets(
+                stored.active.filter(ticket => !values.has(ticket?.finalized_ticket)),
+                stored.archived.filter(ticket => !values.has(ticket?.finalized_ticket)),
+                {
+                    tombstones: nextTombstones,
+                    invalidatedKeyIds: stored.invalidatedKeyIds
+                }
+            );
+            return removed.length;
+        }, Object.hasOwn(options, 'expectedAccountId')
+            ? { expectedAccountId: options.expectedAccountId || null }
+            : undefined);
     }
 
     peekTicket() {
@@ -892,25 +998,32 @@ export class TicketStore {
                 throw error;
             }
 
-            if (active.length === 0) {
+            // Held tickets (previous-org tickets waiting to be moved) stay in
+            // the wallet but are never selected.
+            const spendable = this.spendable(active);
+
+            if (spendable.length === 0) {
                 const error = new Error('No inference tickets available. Please register with an invitation code first.');
                 error.code = 'NO_TICKETS';
+                error.availableTickets = 0;
+                error.heldTickets = active.length - spendable.length;
                 throw error;
             }
 
-            if (active.length < count) {
-                const error = new Error(`Not enough tickets. Need ${count}, but only ${active.length} available.`);
+            if (spendable.length < count) {
+                const error = new Error(`Not enough tickets. Need ${count}, but only ${spendable.length} available.`);
                 error.code = 'INSUFFICIENT_TICKETS';
+                error.availableTickets = spendable.length;
+                error.heldTickets = active.length - spendable.length;
                 throw error;
             }
 
             const order = options.order === 'tail' ? 'tail' : 'head';
             const selected = order === 'tail'
-                ? active.slice(active.length - count)
-                : active.slice(0, count);
-            const remaining = order === 'tail'
-                ? active.slice(0, active.length - count)
-                : active.slice(count);
+                ? spendable.slice(spendable.length - count)
+                : spendable.slice(0, count);
+            const selectedValues = new Set(selected.map(ticket => ticket.finalized_ticket));
+            const remaining = active.filter(ticket => !selectedValues.has(ticket.finalized_ticket));
 
             try {
                 const result = await handler({
@@ -922,7 +1035,9 @@ export class TicketStore {
                     ...ticket,
                     consumed_at: ticket.consumed_at || new Date().toISOString()
                 })));
+                const usageLog = await this.prepareUsage(selected.length, archived, options);
                 await this.persistTickets(remaining, updatedArchive, {
+                    usageLog,
                     skipSync: syncService.shouldDeferRedemptionSync()
                 });
                 return {
@@ -996,10 +1111,12 @@ export class TicketStore {
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
                         const updatedActive = active.filter(ticket => !usedTokenSet.has(ticket.finalized_ticket));
+                        const usageLog = await this.prepareUsage(usedSelected.length, archived, options);
                         await this.persistTickets(
                             updatedActive,
                             updatedArchive,
                             {
+                                usageLog,
                                 skipSync:
                                     syncService.shouldDeferRedemptionSync()
                             }
@@ -1009,7 +1126,9 @@ export class TicketStore {
                             ...ticket,
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
+                        const usageLog = await this.prepareUsage(selected.length, archived, options);
                         await this.persistTickets(remaining, updatedArchive, {
+                            usageLog,
                             skipSync:
                                 syncService.shouldDeferRedemptionSync()
                         });
@@ -1017,6 +1136,50 @@ export class TicketStore {
                 }
                 throw error;
             }
+        });
+    }
+
+    async readUsageLog() {
+        if (typeof chatDB === 'undefined' || !chatDB.db) return null;
+        return normalizeTicketUsageLog(await chatDB.getSetting(TICKET_USAGE_KEY));
+    }
+
+    async writeUsageLog(log) {
+        if (typeof chatDB === 'undefined' || !chatDB.db) return;
+        await chatDB.saveSetting(TICKET_USAGE_KEY, log);
+    }
+
+    /**
+     * Prepares usage inside the ticket lock, using the pre-spend archive.
+     * persistTickets commits it atomically with consumption. Seed even for
+     * shares so a later backfill cannot misclassify those as inference usage.
+     * A failed log read never fails a spend.
+     */
+    async prepareUsage(count, archivedBeforeSpend, options = {}) {
+        if (!(count > 0)) return;
+        try {
+            const current = await this.readUsageLog();
+            if (!current) return;
+            const seeded = backfillTicketUsage(current, archivedBeforeSpend);
+            return options.recordUsage === false ? seeded : addTicketUsage(seeded, count, new Date());
+        } catch (error) {
+            console.warn('Failed to record ticket usage:', error);
+        }
+    }
+
+    /**
+     * Daily ticket usage for the Account chart: `[{ day, count }]`, oldest
+     * first. Seeds the log from the current archive the first time.
+     */
+    async getUsageHistory() {
+        return this.withLock(async () => {
+            await this.ensureDbReady();
+            const latest = await this.readUsageLog();
+            if (!latest || latest.backfilled) return toTicketUsageHistory(latest);
+            const { archived } = await this.readFromDatabase();
+            const seeded = backfillTicketUsage(latest, archived);
+            await this.writeUsageLog(seeded);
+            return toTicketUsageHistory(seeded);
         });
     }
 

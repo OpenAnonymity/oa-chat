@@ -30,13 +30,16 @@ import { ORG_API_BASE, ORG_AUTH_ORIGIN } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 import sessionService from './sessionService.js';
+import { isAmbiguousAccountFailure, toFriendlyAccountError } from '../domain/accountErrors.js';
+import { reportDiagnostic, unlockFailureOutcome } from './diagnostics.js';
 import storageEvents from './storageEvents.js';
-import syncService from './encryptedSyncService.js';
+import syncService, { SYNC_ACCOUNT_SCOPE_KEY as SYNC_ACCOUNT_SCOPE_SETTING } from './encryptedSyncService.js';
 import {
     createEncryptionKeyWrapper,
     createEncryptionKeyWrapperFromPrf,
     unlockEncryptionKeyring,
-    unlockEncryptionKeyringFromPrf
+    unlockEncryptionKeyringFromPrf,
+    getPrelaunchPasskeyRpId
 } from './encryptionPasskey.js';
 import { withAccountDataLock, ACCOUNT_LOGIN_PENDING_KEY } from './accountDataLock.js';
 
@@ -354,6 +357,8 @@ function buildCreationOptions(data, accountId, prfInput, username = null) {
         userVerification: 'required',
         ...publicKey.authenticatorSelection
     };
+    // Prefer the device in use without excluding phones or security keys.
+    publicKey.hints ??= ['client-device'];
     publicKey.attestation = publicKey.attestation || 'none';
     publicKey.timeout = publicKey.timeout || 60000;
 
@@ -390,6 +395,7 @@ function buildRequestOptions(data, prfInput) {
     }
 
     publicKey.userVerification = publicKey.userVerification || 'required';
+    publicKey.hints ??= ['client-device'];
     publicKey.timeout = publicKey.timeout || 60000;
 
     publicKey.extensions = {
@@ -450,10 +456,14 @@ async function fetchJson(
     body,
     {
         timeoutMs = ACCOUNT_REQUEST_TIMEOUT_MS,
-        method = 'POST'
+        method = 'POST',
+        signal
     } = {}
 ) {
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) controller.abort();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     let response;
     let data = null;
@@ -472,6 +482,7 @@ async function fetchJson(
         try {
             data = await response.json();
         } catch (error) {
+            if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
             if (controller.signal.aborted) {
                 const timeout = new Error(`Account request timed out after ${timeoutMs}ms`);
                 timeout.name = 'TimeoutError';
@@ -482,6 +493,7 @@ async function fetchJson(
         }
     } finally {
         clearTimeout(timeoutId);
+        signal?.removeEventListener('abort', cancel);
     }
     if (!response.ok) {
         // Detect token invalidation (e.g., after recovery on another device)
@@ -593,16 +605,7 @@ export function waitForOAuthPopup(popup, provider, {
 /** The word the person types to delete their account; the org checks the same literal. */
 export const DELETE_ACCOUNT_CONFIRMATION = 'DELETE';
 
-export function toFriendlyAccountError(error) {
-    if (!error) return 'Unexpected error';
-    if (error.name === 'AbortError') return 'Request timed out, please try again';
-    if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled';
-    if (error.code === 'ENCRYPTION_PASSKEY_NOT_AVAILABLE') return error.message;
-    if (error.code === 'ACCOUNT_KEY_PERSIST_FAILED') return error.message;
-    if (error.name === 'OperationError') return 'Invalid recovery code, please check and try again';
-    if (error.name === 'TokenInvalidatedError') return 'Session expired, please sign in again';
-    return error.message || 'Unexpected error';
-}
+export { isAmbiguousAccountFailure, toFriendlyAccountError };
 
 const toFriendlyError = toFriendlyAccountError;
 
@@ -693,6 +696,62 @@ export async function bootstrapDesktopOAuthSession(
     return session;
 }
 
+// Fields every account record written by this client carries (some may be
+// null). The previous production client (oa-chat origin/prod 420e4cb) wrote
+// only { accountId, credentialId, recoveryConfirmed, updatedAt }.
+const CURRENT_ACCOUNT_RECORD_FIELDS = Object.freeze([
+    'username',
+    'encryptionCredentialId',
+    'encryptionMode',
+    'googleLinked',
+    'lastOAuthProvider',
+    'oauthEmail'
+]);
+
+/** True for an account record that only the previous client could have written. */
+export function isPreviousVersionAccountRecord(settings) {
+    if (!settings || typeof settings !== 'object' || !settings.accountId) return false;
+    return !CURRENT_ACCOUNT_RECORD_FIELDS.some(field => Object.prototype.hasOwnProperty.call(settings, field));
+}
+
+export const SAVED_ACCOUNT_MISMATCH = 'SAVED_ACCOUNT_MISMATCH';
+
+function savedAccountMismatchError(state = {}) {
+    const saved = state.username
+        ? `\u201c${state.username}\u201d`
+        : state.oauthEmail || state.email || 'another account';
+    const error = new Error(`This browser remembers ${saved}. Forget it to create a new account.`);
+    error.code = SAVED_ACCOUNT_MISMATCH;
+    return error;
+}
+
+// A username reservation lives on the server for about a minute. The dialog
+// holds it in memory for a retry with the same name; this copy carries it
+// across a reload or a trip Back to the landing page, so that retry is not
+// refused as "unavailable". It holds only what /auth/init returned (account
+// number, name, challenge), plus the public credential and encrypted wrapper
+// after credential creation. Never stores plaintext keys or PRF output.
+const HELD_REGISTRATION_STORAGE_KEY = 'oa-held-username-registration-v1';
+export const HELD_REGISTRATION_MS = 55000;
+
+function readHeldRegistration() {
+    try {
+        const saved = JSON.parse(globalThis.sessionStorage?.getItem(HELD_REGISTRATION_STORAGE_KEY) || 'null');
+        return saved && typeof saved === 'object' ? saved : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeHeldRegistration(value) {
+    try {
+        if (value) globalThis.sessionStorage?.setItem(HELD_REGISTRATION_STORAGE_KEY, JSON.stringify(value));
+        else globalThis.sessionStorage?.removeItem(HELD_REGISTRATION_STORAGE_KEY);
+    } catch {
+        // Storage may be blocked; the in-memory hold still covers this page.
+    }
+}
+
 class AccountService {
     constructor() {
         this.state = {
@@ -716,6 +775,9 @@ class AccountService {
             accountHandoffPending: false,
             // Becomes true after this account's first encrypted sync has settled successfully.
             ticketSyncReady: false,
+            // True when that first sync of this initialization failed: a send
+            // short of tickets stops waiting for it and reports the shortage.
+            ticketSyncFailed: false,
             googleLinked: false,
             oauthProvider: null,
             oauthEmail: null,
@@ -747,9 +809,16 @@ class AccountService {
         this.syncDerivationKey = null;
         this.syncIdKey = null;
         this.localAccountContinuity = false;
+        // Host policy (configure): forget accounts saved by the previous client.
+        this.releasePreviousVersionAccounts = false;
+        this.releasedPreviousVersionAccount = false;
+        this.previousVersionRelease = null;
         // Invalidates async scope activation/sync work across lock, logout,
         // account switching, and a newer initialization attempt.
         this.syncInitializationGeneration = 0;
+        // The scope activation (initializeSync) now in flight, if any: a send
+        // during start-up waits for it instead of restarting the account.
+        this.syncInitializationInFlight = null;
 
         sessionService.onSessionExpired(() => this.handleTokenInvalidation());
 
@@ -856,6 +925,100 @@ class AccountService {
 
     getMasterKey() {
         return this.masterKey ? new Uint8Array(this.masterKey) : null;
+    }
+
+    // --- Phone pairing (docs/PHONE_PAIRING.md) ------------------------------
+    // The raw master key is zeroed after every unlock; only non-extractable
+    // CryptoKeys stay. So "Approve with Touch ID" is a real re-unlock: the
+    // same passkey prompt this account uses, with the result handed to the
+    // pairing session for one message and then zeroed by the caller.
+
+    /** 'google' (PRF keyring) or 'username' (passkey login), or null. */
+    pairingAccountKind() {
+        if (!this.state.accountId || !this.state.sessionVerified || this.state.busy) return null;
+        if (this.state.encryptionMode === 'PRF' && this.state.googleLinked) return 'google';
+        if (this.state.encryptionMode === 'LEGACY_PASSKEY' && this.state.username) return 'username';
+        return null;
+    }
+
+    /**
+     * Unwraps and returns the raw 32-byte master key after a fresh passkey
+     * prompt. The caller zeroes it. Never changes account state; a different
+     * account answering the prompt is refused.
+     */
+    async revealMasterKeyForPairing({ signal } = {}) {
+        const kind = this.pairingAccountKind();
+        if (!kind) throw new Error('Sign in and unlock before adding a phone');
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        const isCurrent = () => this.state.accountId === expectedAccountId && this.loginGeneration === generation && !signal?.aborted;
+
+        if (kind === 'google') {
+            const keyring = await this.fetchOAuthKeyring();
+            if (!isCurrent()) throw new Error('The account changed');
+            const unlocked = await unlockEncryptionKeyring((keyring.wrappers || []).map(wrapper => ({ ...wrapper })), { signal });
+            if (!isCurrent()) {
+                unlocked.masterKey.fill(0);
+                throw new Error('The account changed');
+            }
+            return unlocked.masterKey;
+        }
+
+        throw new Error('Username pairing requires server-verified approval');
+    }
+
+    /**
+     * The pairing session's org requests, with the session cookie. Paths are
+     * restricted to the tunnel so this cannot become a general org client.
+     */
+    pairingRequest(path, { method = 'POST', body = null, signal } = {}) {
+        if (!/^\/auth\/pairing(\/[A-Za-z0-9_-]{22}(\/computer)?)?$/.test(String(path))) {
+            throw new TypeError('Pairing requests are restricted to /auth/pairing');
+        }
+        return fetchJson(path, body, { method, signal });
+    }
+
+    /** A fresh, tunnel-bound server assertion approves enrollment and unwraps locally. */
+    async approveUsernamePairing({ tunnelId, signal } = {}) {
+        if (this.pairingAccountKind() !== 'username') throw new Error('Username account required');
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        const check = () => {
+            if (signal?.aborted || this.loginGeneration !== generation
+                || this.state.accountId !== expectedAccountId || this.pairingAccountKind() !== 'username') {
+                throw new DOMException('Pairing cancelled or account changed', 'AbortError');
+            }
+        };
+        check();
+        const challenge = await fetchJson('/auth/credentials/grant/challenge', { tunnelId }, { signal });
+        check();
+        const prfInput = await digestAccountId(expectedAccountId);
+        check();
+        const assertion = await navigator.credentials.get({ publicKey: buildRequestOptions(challenge, prfInput), signal });
+        check();
+        if (!assertion) throw new DOMException('Passkey request cancelled', 'AbortError');
+        const prfBytes = getPrfOutput(assertion);
+        if (!prfBytes) throw new Error('This passkey cannot unlock the encrypted data');
+        let masterKey = null;
+        try {
+            const approved = await fetchJson('/auth/credentials/grant', {
+                tunnelId, challengeId: challenge.challengeId, assertion: assertionToJSON(assertion)
+            }, { signal });
+            check();
+            if (normalizeAccountId(approved.accountId) !== expectedAccountId || !/^[A-Za-z0-9_-]{43}$/.test(approved.grant)) {
+                throw new Error('Pairing approval does not match this account');
+            }
+            const wrappingKey = await importAesKey(prfBytes);
+            check();
+            masterKey = await decryptBytes(wrappingKey, decodeWrappedKey(approved.wrappedKeyPasskey));
+            check();
+            return { masterKey, grant: approved.grant };
+        } catch (error) {
+            masterKey?.fill(0);
+            throw error;
+        } finally {
+            prfBytes.fill(0);
+        }
     }
 
     /**
@@ -1156,6 +1319,103 @@ class AccountService {
         });
     }
 
+    /**
+     * Host policy, set once before init(). With releasePreviousVersionAccounts
+     * an account saved by the previous production client is forgotten on first
+     * load: its accounts were not carried over to this org, so the saved record
+     * could only turn every sign-up into a failing login.
+     */
+    configure({ releasePreviousVersionAccounts } = {}) {
+        if (releasePreviousVersionAccounts !== undefined) {
+            this.releasePreviousVersionAccounts = releasePreviousVersionAccounts === true;
+            // The wallet and preferences pick their data scope from the saved
+            // account; they wait for the release so they never open under the
+            // account being forgotten.
+            syncService.setLocalScopeGate(this.releasePreviousVersionAccounts
+                ? () => this.releasePreviousVersionAccountIfNeeded()
+                : null);
+        }
+    }
+
+    /** The release check, once per page; shared by init() and the scope gate. */
+    releasePreviousVersionAccountIfNeeded() {
+        if (!this.releasePreviousVersionAccounts || !chatDB) return Promise.resolve(false);
+        if (!this.previousVersionRelease) {
+            this.previousVersionRelease = (async () => {
+                if (!chatDB.db && typeof chatDB.init === 'function') await chatDB.init();
+                const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
+                if (!settings?.accountId || !(await this.shouldReleasePreviousVersionAccount(settings))) return false;
+                const released = await this.releasePreviousVersionAccount(settings);
+                if (!released) {
+                    // A sibling tab may have completed the same atomic release.
+                    // Recheck durable ownership before resetting this tab's scope.
+                    const current = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+                    if (current?.accountId || await chatDB.getSetting(SYNC_ACCOUNT_SCOPE_SETTING) ||
+                        await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)) return false;
+                }
+                // Something may have read the saved account for its data scope
+                // before the host configured this (a preference read at
+                // startup). Drop that scope, and let stores that opened under
+                // it reopen under the anonymous one. Not awaited: listeners may
+                // bootstrap the scope, which waits on this promise.
+                if (syncService.getLocalAccountScope() === settings.accountId) {
+                    syncService.setLocalAccountScope(null);
+                    void syncService.notifyAccountScopeChanged(null);
+                }
+                return true;
+            })().catch(error => {
+                console.warn('[AccountService] Could not forget an account saved by the previous version:', error);
+                return false;
+            });
+        }
+        return this.previousVersionRelease;
+    }
+
+    async shouldReleasePreviousVersionAccount(settings) {
+        if (!this.releasePreviousVersionAccounts || !isPreviousVersionAccountRecord(settings)) {
+            return false;
+        }
+        // Anything this client writes for an account means it has been here:
+        // an unlocked key bundle, an account data scope, or a login in flight.
+        // A read that fails keeps the account: releasing is never a guess.
+        try {
+            const [bundle, scope, loginPending] = await Promise.all([
+                chatDB.getSetting(ACCOUNT_KEY_BUNDLE),
+                chatDB.getSetting(SYNC_ACCOUNT_SCOPE_SETTING),
+                chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)
+            ]);
+            return !bundle && !scope && !loginPending;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Forget a previous-version account the way Forget saved account does,
+     * locally only: its session belonged to the previous org, so there is no
+     * server sign-out. The wallet, chats and settings stay; a new account on
+     * this browser adopts the wallet and the ticket move runs after sign-up.
+     */
+    async releasePreviousVersionAccount(settings) {
+        return withAccountDataLock(async () => {
+            const current = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+            if (current?.accountId !== settings.accountId ||
+                !await this.shouldReleasePreviousVersionAccount(current)) return false;
+            const removed = await chatDB.deleteSettingsIfUnchanged([
+                { key: ACCOUNT_SETTINGS_KEY, value: current },
+                { key: ACCOUNT_KEY_BUNDLE, value: null },
+                { key: SYNC_ACCOUNT_SCOPE_SETTING, value: null },
+                { key: ACCOUNT_LOGIN_PENDING_KEY, value: null }
+            ], [ACCOUNT_SETTINGS_KEY, ACCOUNT_KEY_BUNDLE, ACCOUNT_MASTER_CRYPTO_KEY,
+                ACCOUNT_MASTER_KEY_BYTES, ACCOUNT_SYNC_DERIVATION_KEY, ACCOUNT_SYNC_ID_KEY]);
+            if (!removed) return false;
+            this.resetSavedAccountState();
+            this.releasedPreviousVersionAccount = true;
+            console.info('[AccountService] Forgot an account saved by the previous version; tickets and chats stay.');
+            return true;
+        });
+    }
+
     async init() {
         if (this.state.isReady) return;
         this.listenForSignOutElsewhere();
@@ -1169,6 +1429,7 @@ class AccountService {
             if (!chatDB.db && typeof chatDB.init === 'function') {
                 await chatDB.init();
             }
+            await this.releasePreviousVersionAccountIfNeeded();
             // Load account settings (accountId, credentialId, etc.)
             const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
             if (settings?.accountId) {
@@ -1252,6 +1513,10 @@ class AccountService {
             this.updateStatus();
             this.notify();
             this.completeAuthBootstrap();
+            // The wallet scope and encrypted sync gate the first send. Start
+            // them now; the identity refresh below is cosmetic and must not
+            // hold them behind its burst-protection delay.
+            this.initializeSync(false).catch(() => {});
 
             // Existing cached identities can refresh quietly after the prior
             // burst-protection delay. Older settings without an email migrate
@@ -1271,8 +1536,6 @@ class AccountService {
             ) return;
             await this.persistSettings({ onlyIfCurrent: true });
             this.notify();
-            // Initialize sync for restored session
-            this.initializeSync(false).catch(() => {});
             // If verification failed, local data remains usable until re-authentication.
         } catch (error) {
             console.warn('[AccountService] Background session verification failed:', error);
@@ -1291,9 +1554,15 @@ class AccountService {
         if (!this.state.sessionVerified) {
             throw new Error('Sign in before unlocking encrypted data');
         }
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
         const keyring = await fetchJson('/auth/keyring', null, {
             method: 'GET'
         });
+        if (!this.state.sessionVerified || this.state.accountId !== expectedAccountId ||
+            this.loginGeneration !== generation) {
+            throw new Error('The account changed while loading its encrypted keys.');
+        }
         if (
             this.state.accountId &&
             normalizeAccountId(keyring.accountId) !== this.state.accountId
@@ -1410,7 +1679,17 @@ class AccountService {
 
     async persistSettings({ onlyIfCurrent = false } = {}) {
         if (!chatDB) return;
-        const payload = {
+        const payload = this.accountSettingsPayload();
+        await withAccountDataLock(async () => {
+            if (onlyIfCurrent) {
+                await syncService.assertAccountBinding(payload.accountId);
+            }
+            await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
+        });
+    }
+
+    accountSettingsPayload() {
+        return {
             accountId: this.state.accountId,
             username: this.state.username,
             credentialId: this.state.credentialId,
@@ -1422,12 +1701,108 @@ class AccountService {
             oauthEmail: this.state.oauthEmail,
             updatedAt: Date.now()
         };
-        await withAccountDataLock(async () => {
-            if (onlyIfCurrent) {
-                await syncService.assertAccountBinding(payload.accountId);
-            }
-            await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
-        });
+    }
+
+    /**
+     * The browser closed chat storage under this tab and it was reopened.
+     * A plain close leaves every record in place; the wallet scope and sync
+     * restart so they read the reopened database. Only when the reopen had to
+     * create the database again (the browser removed it) and the account's
+     * record is therefore missing, the record and key bundle this tab holds
+     * in memory are written back, so the next focus or reload does not ask
+     * for a new sign-in. A record missing after a plain close was removed by
+     * someone (a sign-out elsewhere) and is left alone, as are a sign-in in
+     * progress elsewhere, a different saved account and a session that no
+     * longer exists in this browser.
+     */
+    recoverAfterStorageReconnect() {
+        if (this.storageRecoveryInFlight) return this.storageRecoveryInFlight;
+        this.handledStorageReconnect = chatDB?.reconnectCount || 0;
+        const run = this.runStorageReconnectRecovery()
+            .catch(error => {
+                console.warn('[AccountService] Account recovery after storage reconnect failed:', error);
+                return false;
+            })
+            .then(async result => {
+                if (this.storageRecoveryInFlight === run) this.storageRecoveryInFlight = null;
+                // Another reconnect while this ran gets its own pass.
+                if ((chatDB?.reconnectCount || 0) !== this.handledStorageReconnect) {
+                    return this.recoverAfterStorageReconnect();
+                }
+                return result;
+            });
+        this.storageRecoveryInFlight = run;
+        return run;
+    }
+
+    async runStorageReconnectRecovery() {
+        const accountId = normalizeAccountId(this.state.accountId);
+        if (!chatDB || !accountId || this.state.sessionVerified !== true ||
+            !this.cryptoKey || !this.syncDerivationKey || !this.syncIdKey) return false;
+        // Work on the reopened database; this pass covers that reconnect.
+        await chatDB.connection?.();
+        const reconnect = chatDB.reconnectCount || 0;
+        this.handledStorageReconnect = reconnect;
+        const databaseWasRecreated = reconnect > 0 && chatDB.resetReconnectCount === reconnect;
+        const generation = this.loginGeneration;
+        const isCurrent = () => generation === this.loginGeneration &&
+            normalizeAccountId(this.state.accountId) === accountId &&
+            this.state.sessionVerified === true;
+        const readRecord = async () => {
+            const saved = await chatDB.getSettingsSnapshot([
+                ACCOUNT_SETTINGS_KEY, ACCOUNT_LOGIN_PENDING_KEY
+            ]);
+            return {
+                pending: !!saved[ACCOUNT_LOGIN_PENDING_KEY],
+                savedAccountId: normalizeAccountId(saved[ACCOUNT_SETTINGS_KEY]?.accountId)
+            };
+        };
+        const first = await readRecord();
+        if (first.pending || (first.savedAccountId && first.savedAccountId !== accountId)) return false;
+        if (!first.savedAccountId) {
+            if (!databaseWasRecreated) return false;
+            const wrote = await withAccountDataLock(async () => {
+                const again = await readRecord();
+                if (again.pending || again.savedAccountId || !isCurrent()) return false;
+                // A surviving cookie can belong to another account if this
+                // tab missed its sign-in broadcast before storage was reset.
+                // Session existence alone cannot authorize restoring old keys.
+                if (!await sessionService.verifySession().catch(() => false)) return false;
+                const identity = await fetchJson('/auth/keyring', null, { method: 'GET' }).catch(() => null);
+                if (!isCurrent() || normalizeAccountId(identity?.accountId) !== accountId) return false;
+                const latest = await readRecord();
+                if (latest.pending || latest.savedAccountId || !isCurrent()) return false;
+                // One write: never a record without its key bundle.
+                await chatDB.updateSettings([
+                    { key: ACCOUNT_SETTINGS_KEY, value: this.accountSettingsPayload() },
+                    {
+                        key: ACCOUNT_KEY_BUNDLE,
+                        value: {
+                            accountId,
+                            cryptoKey: this.cryptoKey,
+                            derivationKey: this.syncDerivationKey,
+                            idKey: this.syncIdKey,
+                            version: 1
+                        }
+                    }
+                ]);
+                return true;
+            });
+            if (!wrote || !isCurrent()) return false;
+        }
+        if (!isCurrent()) return false;
+        // Never cancel a sync start already under way (its caller would treat
+        // the cancellation as an account change); start one only if it fails.
+        // A start that began before this reconnect activated the scope in
+        // the old database; it is awaited, then a fresh one runs.
+        const inFlight = this.syncInitializationInFlight;
+        const startedAfterReconnect = this.syncInitializationReconnect === (chatDB?.reconnectCount || 0);
+        if (inFlight) {
+            const ok = await inFlight.catch(() => false) === true;
+            if (ok && startedAfterReconnect) return true;
+        }
+        if (!isCurrent()) return false;
+        return await this.initializeSync(false).catch(() => false) === true;
     }
 
     clearErrors() {
@@ -1451,13 +1826,44 @@ class AccountService {
         const username = validateUsername(usernameInput);
         // A saved partition must be unlocked or explicitly forgotten, never
         // replaced by a new reservation just because the user edited the name.
-        if (this.state.accountId || this.localAccountContinuity) return { kind: 'login' };
+        const savedAccount = Boolean(this.state.accountId || this.localAccountContinuity);
+        if (savedAccount && this.state.username === username) return { kind: 'login' };
         try {
             const data = await fetchJson('/auth/challenge', { username });
+            if (readHeldRegistration()?.username === username) writeHeldRegistration(null);
             return { kind: 'login', challenge: { username, data } };
         } catch (error) {
             // This is the pre-ceremony lookup only, never a failed assertion.
             if (error.status !== 401 || error.code !== 'AUTHENTICATION_FAILED') throw error;
+        }
+        const held = readHeldRegistration();
+        if (!savedAccount && held?.username === username && held.registerRequest) {
+            // Retry the exact credential/wrapper after an ambiguous finish.
+            // Never create a second credential for this user handle.
+            try {
+                await fetchJson('/auth/register', held.registerRequest);
+            } catch (error) {
+                if (isAmbiguousAccountFailure(error)) throw error;
+                // A concurrent/lost successful finish can reject its replay.
+                // Check for the active account before abandoning the hold.
+                try {
+                    const data = await fetchJson('/auth/challenge', { username });
+                    writeHeldRegistration(null);
+                    return { kind: 'login', challenge: { username, data } };
+                } catch (lookupError) {
+                    if (lookupError.status !== 401 || lookupError.code !== 'AUTHENTICATION_FAILED') throw lookupError;
+                }
+                writeHeldRegistration(null);
+                throw new Error('Your account setup expired. Please try again to create your passkey.');
+            }
+            writeHeldRegistration(null);
+            return { kind: 'login' };
+        }
+        if (savedAccount) {
+            // A new name on a browser that remembers another account: say so,
+            // and offer the way out (Forget), instead of a login for a name
+            // that does not exist ("Authentication failed", forever).
+            throw savedAccountMismatchError(this.state);
         }
         if (lookupOnly) return { kind: 'register' };
         try {
@@ -1511,10 +1917,19 @@ class AccountService {
             username: confirmedUsername,
             masterKey,
             initData,       // Store server response for passkey registration
+            reservedAt: Date.now(),
             credential: null,
             prfBytes: null,
             recoveryCode: null
         };
+        if (confirmedUsername) {
+            writeHeldRegistration({
+                username: confirmedUsername,
+                accountId,
+                initData,
+                at: this.pendingAccount.reservedAt
+            });
+        }
 
         return accountId;
     }
@@ -1546,46 +1961,81 @@ class AccountService {
             username
         );
 
-        // Trigger passkey creation (user interaction required)
+        // Trigger passkey creation (user interaction required). Closing the
+        // dialog ends the ceremony too (abortPasskeyCeremony), so a sheet the
+        // page no longer waits for cannot keep the next attempt busy.
         let credential;
+        const ceremony = typeof AbortController === 'function' ? new AbortController() : null;
+        this.passkeyCeremony = ceremony;
         try {
-            credential = await navigator.credentials.create({ publicKey });
-        } catch (error) {
-            if (this.pendingAccount !== pending) return false;
-            // User cancelled or other WebAuthn error - don't clear pending account
-            // so they can retry with the same account number
-            if (error.name === 'NotAllowedError') {
-                this.state.error = 'Passkey creation was cancelled';
+            try {
+                credential = await navigator.credentials.create(ceremony ? { publicKey, signal: ceremony.signal } : { publicKey });
+            } catch (error) {
+                if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+                // User cancelled or other WebAuthn error - don't clear pending account
+                // so they can retry with the same account number
+                if (error.name === 'NotAllowedError') {
+                    this.state.error = 'Passkey creation was cancelled';
+                    this.notify();
+                    return false;
+                }
+                this.state.error = toFriendlyError(error) || 'Passkey creation failed';
                 this.notify();
                 return false;
             }
-            this.state.error = error.message || 'Passkey creation failed';
-            this.notify();
-            return false;
+
+            if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+            if (!credential) {
+                this.state.error = 'Passkey creation failed';
+                this.notify();
+                return false;
+            }
+
+            // Extract PRF output. Some authenticators (security keys, some
+            // password managers) only report that PRF is enabled when the passkey
+            // is created and give the value on the first use: ask once, locally.
+            let prfBytes = getPrfOutput(credential);
+            if (!prfBytes && credential.getClientExtensionResults?.()?.prf?.enabled === true) {
+                try {
+                    const assertion = await navigator.credentials.get({
+                        ...(ceremony ? { signal: ceremony.signal } : {}),
+                        publicKey: {
+                            challenge: crypto.getRandomValues(new Uint8Array(32)),
+                            rpId: publicKey.rp?.id || undefined,
+                            allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
+                            userVerification: 'required',
+                            hints: publicKey.hints,
+                            timeout: 60000,
+                            extensions: { prf: { eval: { first: prfInput } } }
+                        }
+                    });
+                    prfBytes = getPrfOutput(assertion);
+                } catch (error) {
+                    if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+                    this.state.error = error?.name === 'NotAllowedError'
+                        ? 'Passkey creation was cancelled'
+                        : toFriendlyError(error);
+                    this.notify();
+                    return false;
+                }
+                if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+            }
+            if (!prfBytes) {
+                this.state.prfSupported = false;
+                this.state.error = 'This passkey storage option doesn’t support account encryption. Choose another option to save your passkey.';
+                this.notify();
+                return false;
+            }
+            this.state.prfSupported = true;
+
+            // Store credential for later registration
+            pending.credential = credential;
+            pending.prfBytes = prfBytes;
+
+            return true;
+        } finally {
+            if (this.passkeyCeremony === ceremony) this.passkeyCeremony = null;
         }
-
-        if (this.pendingAccount !== pending) return false;
-        if (!credential) {
-            this.state.error = 'Passkey creation failed';
-            this.notify();
-            return false;
-        }
-
-        // Extract PRF output
-        const prfBytes = getPrfOutput(credential);
-        if (!prfBytes) {
-            this.state.prfSupported = false;
-            this.state.error = 'Passkey did not return PRF output, your authenticator may not support this feature';
-            this.notify();
-            return false;
-        }
-        this.state.prfSupported = true;
-
-        // Store credential for later registration
-        pending.credential = credential;
-        pending.prfBytes = prfBytes;
-
-        return true;
     }
 
     /** Generate the retained recovery code for a legacy account-number account. */
@@ -1656,17 +2106,39 @@ class AccountService {
 
         // Register with server
         assertCurrent();
-        await fetchJson('/auth/register', {
+        const registerRequest = {
             accountId,
             username: username || undefined,
             credential: credentialToJSON(credential),
             wrappedKeyPasskey: wrappedPasskey,
             wrappedKeyRecovery: wrappedRecovery || undefined,
             recoveryCodeHash: recoveryCodeHash || undefined
-        });
+        };
+        if (username) {
+            // Only the encrypted wrapper and public WebAuthn response persist;
+            // never the master key or PRF bytes. Persist before the request.
+            const held = { username, accountId, initData: pending.initData,
+                at: pending.reservedAt, registerRequest };
+            writeHeldRegistration(held);
+            const persisted = readHeldRegistration();
+            if (persisted?.accountId !== accountId || JSON.stringify(persisted.registerRequest) !== JSON.stringify(registerRequest)) {
+                throw new Error('Allow this site to save account setup, then try again.');
+            }
+        }
+        await fetchJson('/auth/register', registerRequest);
+        if (username) writeHeldRegistration(null);
         assertCurrent();
         const sessionVerified = await sessionService.doesSessionExist();
         assertCurrent();
+        if (username && !sessionVerified) {
+            // The account exists, but this browser kept no session (cookies
+            // blocked for the site). Saying "created" here would leave a
+            // signed-out page that looks signed in.
+            const error = new Error('Your account was created, but this browser didn\u2019t keep you signed in. Allow cookies for this site, then sign in with your passkey.');
+            error.code = 'SESSION_NOT_ESTABLISHED';
+            error.accountCreated = true;
+            throw error;
+        }
 
         // Success - update state
         this.masterKey = masterKey;
@@ -1691,6 +2163,7 @@ class AccountService {
 
         // Initialize and enable sync for new account
         await this.initializeSync(true);
+        this.broadcastAccountReady(accountId);
 
         return true;
     }
@@ -1702,7 +2175,17 @@ class AccountService {
      *   Recovery callers can await the first sync and observe failures so they can
      *   retry. Startup callers keep the historical fire-and-forget behavior.
      */
-    async initializeSync(
+    initializeSync(enableForNewAccount = false, options = {}) {
+        this.syncInitializationReconnect = chatDB?.reconnectCount || 0;
+        const run = this.runSyncInitialization(enableForNewAccount, options);
+        this.syncInitializationInFlight = run;
+        run.catch(() => {}).finally(() => {
+            if (this.syncInitializationInFlight === run) this.syncInitializationInFlight = null;
+        });
+        return run;
+    }
+
+    async runSyncInitialization(
         enableForNewAccount = false,
         { awaitInitialSync = false, throwOnFailure = false } = {}
     ) {
@@ -1720,8 +2203,9 @@ class AccountService {
             }
         };
         let accountScopeActivated = false;
-        if (this.state.ticketSyncReady) {
+        if (this.state.ticketSyncReady || this.state.ticketSyncFailed) {
             this.state.ticketSyncReady = false;
+            this.state.ticketSyncFailed = false;
             this.notify();
         }
         try {
@@ -1793,6 +2277,10 @@ class AccountService {
             } else {
                 void initialSync.catch(err => {
                     console.warn('[AccountService] Initial sync failed:', err);
+                    if (this.syncInitializationGeneration !== initializationGeneration
+                        || this.state.accountId !== expectedAccountId || this.state.ticketSyncReady) return;
+                    this.state.ticketSyncFailed = true;
+                    this.notify();
                 });
             }
             return true;
@@ -1817,6 +2305,60 @@ class AccountService {
      * Cancel pending account creation and cleanup.
      * Zeros out the master key for security.
      */
+    /** End a passkey sheet the page no longer waits for (the dialog closed). */
+    abortPasskeyCeremony() {
+        const ceremony = this.passkeyCeremony;
+        this.passkeyCeremony = null;
+        try { ceremony?.abort(); } catch { /* already settled */ }
+    }
+
+    /** When the pending username reservation was made (ms), for holds. */
+    getPendingReservedAt() {
+        return this.pendingAccount?.reservedAt || null;
+    }
+
+    /**
+     * Pick up this browser's own reservation of `usernameInput` after the page
+     * was reloaded or left: the server still holds the name (and its
+     * challenge) for about a minute and would refuse a new reservation.
+     * Returns { username, accountId, at } and makes it the pending account,
+     * or null when there is nothing usable to resume.
+     */
+    resumeHeldRegistration(usernameInput) {
+        const saved = readHeldRegistration();
+        if (!saved || saved.registerRequest) return null;
+        let username;
+        try {
+            username = validateUsername(usernameInput);
+        } catch {
+            return null;
+        }
+        const accountId = normalizeAccountId(saved.accountId);
+        const fresh = Number.isFinite(saved.at) && Date.now() - saved.at < HELD_REGISTRATION_MS;
+        if (!fresh || !accountId || !saved.initData) {
+            writeHeldRegistration(null);
+            return null;
+        }
+        if (saved.username !== username || this.state.accountId || this.localAccountContinuity) return null;
+        this.cancelPendingAccount();
+        this.pendingAccount = {
+            accountId,
+            username,
+            masterKey: crypto.getRandomValues(new Uint8Array(32)),
+            initData: saved.initData,
+            reservedAt: saved.at,
+            credential: null,
+            prfBytes: null,
+            recoveryCode: null
+        };
+        return { username, accountId, at: saved.at };
+    }
+
+    /** The server refused this reservation: nothing to resume. */
+    forgetHeldRegistration() {
+        writeHeldRegistration(null);
+    }
+
     cancelPendingAccount() {
         this.pendingAccountGeneration += 1;
         if (this.pendingAccount?.masterKey) {
@@ -1849,19 +2391,73 @@ class AccountService {
     // Google OAuth Authentication
     // =========================================================================
 
-    /**
-     * `completionToken`: the landing page already ran the provider popup
-     * (it had the click, so popup blockers allowed it) and handed the
-     * one-time completion token over in the URL fragment; finish the
-     * session from it here without opening a second popup.
-     */
+    /** Serialize the cookie exchange with account data writers. Until the new
+     * identity is saved atomically, a durable marker blocks the previous keys. */
+    async completeBrowserOAuthSession(provider, token, { isCurrent, onStarted }) {
+        return withAccountDataLock(async () => {
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            await chatDB.saveSetting(ACCOUNT_LOGIN_PENDING_KEY, { provider });
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            onStarted();
+            ++this.syncInitializationGeneration;
+            syncService.clearCredentials();
+            this.setState({ sessionVerified: false, accountScopeReady: false, ticketSyncReady: false });
+            storageEvents.init();
+            storageEvents.broadcast(ACCOUNT_LOGIN_EVENT, { provider });
+            const session = await bootstrapOAuthSession(provider, token);
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            const accountId = normalizeAccountId(session.accountId);
+            if (!accountId || oauthSessionNeedsEmailRefresh(session)) {
+                throw new Error('Google sign-in could not be confirmed. Please try again.');
+            }
+            const saved = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            const sameAccount = saved?.accountId === accountId;
+            const settings = {
+                ...(sameAccount ? saved : {}), accountId, username: null,
+                credentialId: sameAccount ? saved.credentialId || null : null,
+                encryptionCredentialId: sameAccount ? saved.encryptionCredentialId || null : null,
+                encryptionMode: session.encryptionMode || (sameAccount ? inferPersistedEncryptionMode(saved) : null),
+                recoveryConfirmed: sameAccount && Boolean(saved.recoveryConfirmed),
+                googleLinked: true, lastOAuthProvider: provider, oauthEmail: session.email || null,
+                updatedAt: Date.now()
+            };
+            await chatDB.updateSettings([{ key: ACCOUNT_SETTINGS_KEY, value: settings }], [
+                ACCOUNT_LOGIN_PENDING_KEY,
+                ...(!sameAccount ? [ACCOUNT_KEY_BUNDLE, ACCOUNT_MASTER_CRYPTO_KEY,
+                    ACCOUNT_MASTER_KEY_BYTES, ACCOUNT_SYNC_DERIVATION_KEY, ACCOUNT_SYNC_ID_KEY] : [])
+            ]);
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            if (this.state.accountId !== accountId) {
+                this.masterKey?.fill(0);
+                this.masterKey = this.cryptoKey = this.syncDerivationKey = this.syncIdKey = null;
+                this.keyringWrappers = [];
+                this.recoveryPayload = null;
+            }
+            this.localAccountContinuity = sameAccount;
+            this.state.recoveryConfirmed = settings.recoveryConfirmed;
+            this.state.recoveryCode = null;
+            this.state.recoveryRequired = false;
+            this.state.encryptionMode = settings.encryptionMode;
+            this.state.username = null;
+            this.state.credentialId = settings.credentialId;
+            this.state.encryptionCredentialId = settings.encryptionCredentialId;
+            return session;
+        });
+    }
+
+    /** Complete a landing-page token without a second popup, or start a new
+     * popup from the click. Ordinary Google login may switch accounts. */
     async authenticateWithOAuth(provider, { link = false, completionToken = null } = {}) {
         const providerConfig = getOAuthProvider(provider);
         const isDesktopOAuth = window.electronAPI?.isElectron === true;
         const handoffToken = !isDesktopOAuth && !link && completionToken
             ? String(completionToken)
             : null;
-        if (this.state.busy) return null;
+        if (this.state.busy) {
+            this.setError('Could not finish signing in. Another sign-in is in progress. Please try again.');
+            return null;
+        }
         if (link) {
             this.setError(
                 `${providerConfig.label} uses a separate privacy partition and cannot be connected to an existing OA account`
@@ -1900,6 +2496,14 @@ class AccountService {
             }
         }
 
+        const oauthOperation = {};
+        this.oauthLoginOperation = oauthOperation;
+        const authGeneration = this.loginGeneration || 0;
+        const isCurrent = () => (this.loginGeneration || 0) === authGeneration;
+        let exchangeStarted = false;
+        const exchange = token => this.completeBrowserOAuthSession(provider, token, {
+            isCurrent, onStarted: () => { exchangeStarted = true; }
+        });
         const previousAccountId = this.state.accountId;
         const previousCredentialId = this.state.credentialId;
         const previousEncryptionCredentialId =
@@ -1926,6 +2530,7 @@ class AccountService {
                 syncService.clearCredentials();
                 await syncService.deactivateAccountScope(previousAccountId);
                 await syncService.clearAll();
+                if (!isCurrent()) return null;
             }
             let session;
             if (isDesktopOAuth) {
@@ -1934,15 +2539,14 @@ class AccountService {
                     previousAccountId
                 );
             } else if (handoffToken) {
-                session = await bootstrapOAuthSession(provider, handoffToken);
+                session = await exchange(handoffToken);
             } else {
                 popup.document.title = `Connecting to ${providerConfig.label}...`;
                 popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
 
                 const startData = await fetchJson(`/auth/${provider}/start`, {
                     mode: link ? 'link' : 'login',
-                    returnOrigin: window.location.origin,
-                    expectedAccountId: link ? undefined : previousAccountId || undefined
+                    returnOrigin: window.location.origin
                 });
                 if (!startData.authorizationUrl) {
                     throw new Error(
@@ -1953,11 +2557,9 @@ class AccountService {
                 const completionToken = await waitForOAuthPopup(popup, provider, {
                     authorizationUrl: startData.authorizationUrl
                 });
-                session = await bootstrapOAuthSession(
-                    provider,
-                    completionToken
-                );
+                session = await exchange(completionToken);
             }
+            if (!isCurrent()) return null;
             const accountId = normalizeAccountId(session.accountId);
             if (!accountId) {
                 throw new Error(
@@ -1969,7 +2571,7 @@ class AccountService {
                     `Continue with ${providerConfig.label} again so OA can label your encryption passkey`
                 );
             }
-            if (!link && previousAccountId && accountId !== previousAccountId) {
+            if (isDesktopOAuth && !link && previousAccountId && accountId !== previousAccountId) {
                 throw new Error(
                     `This ${providerConfig.label} login belongs to a different OA account. ` +
                     'Log out locally before switching accounts.'
@@ -1987,7 +2589,10 @@ class AccountService {
                 this.state.busy = false;
                 this.state.action = null;
                 this.state.sessionVerified = true;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'linked', accountId };
@@ -2000,18 +2605,18 @@ class AccountService {
             this.state.encryptionMode = session.encryptionMode ||
                 this.state.encryptionMode;
             this.state.sessionVerified = true;
-            this.state.busy = false;
-            this.state.action = null;
             this.state.error = null;
 
-            const localSettings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
-            this.localAccountContinuity =
+            const localSettings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+            if (!isCurrent()) return null;
+            if (isDesktopOAuth) this.localAccountContinuity =
                 localSettings?.accountId === accountId;
             const hasLocalKey =
                 this.state.encryptionMode !== 'LEGACY_SSO' &&
                 localSettings?.accountId === accountId
                 ? await this.loadMasterKey()
                 : false;
+            if (!isCurrent()) return null;
             if (hasLocalKey) {
                 this.state.credentialId = localSettings?.credentialId || null;
                 this.state.encryptionCredentialId =
@@ -2024,17 +2629,23 @@ class AccountService {
                 this.state.oauthRecoveryRequired = false;
                 this.state.oauthKeyringRequired = false;
                 this.state.oauthLegacyPasskeyRequired = false;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
                 this.updateStatus();
                 this.notify();
                 await this.initializeSync(false);
+                if (!isCurrent()) return null;
+                this.setState({ busy: false, action: null });
+                this.broadcastAccountReady(accountId);
                 return { status: 'unlocked', accountId };
             }
 
-            await this.clearPersistedMasterKey();
+            await this.clearPersistedMasterKey(accountId, { isCurrent });
+            if (!isCurrent()) return null;
             this.state.credentialId = null;
             this.state.encryptionCredentialId = null;
             const keyring = await this.fetchOAuthKeyring();
+            if (!isCurrent()) return null;
             const mode = keyring.encryptionMode;
             const desktopPasskey = isDesktopOAuth
                 ? session.desktopPasskey
@@ -2058,7 +2669,10 @@ class AccountService {
                     }
                 }
                 this.state.oauthKeyringRequired = true;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'keyring_unlock', accountId };
@@ -2066,7 +2680,10 @@ class AccountService {
 
             if (mode === 'LEGACY_PASSKEY') {
                 this.state.oauthLegacyPasskeyRequired = true;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'legacy_passkey', accountId };
@@ -2078,7 +2695,10 @@ class AccountService {
                 this.state.oauthSetupRequired = false;
                 this.state.oauthRecoveryRequired = true;
                 this.state.oauthKeyringRequired = false;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'migration', accountId };
@@ -2115,7 +2735,10 @@ class AccountService {
             }
 
             this.state.oauthSetupRequired = true;
-            await this.persistSettings();
+            await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+            if (!isCurrent()) return null;
+            this.state.busy = false;
+            this.state.action = null;
             this.updateStatus();
             this.notify();
             return { status: 'keyring_setup', accountId };
@@ -2125,6 +2748,17 @@ class AccountService {
             } catch (closeError) {
                 // Ignore popup cleanup failures.
             }
+            if (!isCurrent()) return null;
+            if (exchangeStarted) {
+                // An uncertain exchange must never restore old keys against new
+                // cookies. Its marker remains until a later successful sign-in.
+                this.lock({ accountChanged: true });
+                this.setState({ busy: false, action: null,
+                    oauthSetupRequired: false, oauthRecoveryRequired: false,
+                    oauthKeyringRequired: false, oauthLegacyPasskeyRequired: false,
+                    error: toFriendlyOAuthError(error) });
+                return null;
+            }
             const restorePreviousAccount = !link &&
                 this.state.accountId &&
                 this.state.accountId !== previousAccountId &&
@@ -2133,6 +2767,7 @@ class AccountService {
             if (syncSuspended && this.getSyncKeyMaterial()) {
                 previousSessionRestored = await sessionService.verifySession()
                     .catch(() => false);
+                if (!isCurrent()) return null;
             }
             this.setState({
                 accountId: restorePreviousAccount ? previousAccountId : this.state.accountId,
@@ -2172,6 +2807,16 @@ class AccountService {
                 await this.initializeSync(false);
             }
             return null;
+        } finally {
+            // A cross-tab handoff cancels this operation without running its
+            // normal success/error UI. Relinquish only this operation's busy
+            // state, never a newer sign-in's state.
+            if (this.oauthLoginOperation === oauthOperation) {
+                this.oauthLoginOperation = null;
+                if (!isCurrent() && this.state.action === `${provider}_login`) {
+                    this.setState({ busy: false, action: null });
+                }
+            }
         }
     }
 
@@ -2179,15 +2824,18 @@ class AccountService {
         return this.authenticateWithOAuth('google', options);
     }
 
-    async finishOAuthKeyUnlock(masterKey, credentialId, { newAccount = false } = {}) {
-        const expectedAccountId = this.state.accountId;
-        const unlockGeneration = this.syncInitializationGeneration;
+    async finishOAuthKeyUnlock(masterKey, credentialId, {
+        newAccount = false,
+        expectedAccountId = this.state.accountId,
+        unlockGeneration = this.syncInitializationGeneration
+    } = {}) {
         const unlockIsCurrent = () => (
             this.syncInitializationGeneration === unlockGeneration &&
             this.state.accountId === expectedAccountId &&
             this.state.sessionVerified === true
         );
         try {
+            if (!unlockIsCurrent()) return false;
             try {
                 const persisted = await this.persistMasterKey(
                     masterKey,
@@ -2254,7 +2902,7 @@ class AccountService {
                 void this.initializeSync(newAccount, {
                     awaitInitialSync: true,
                     throwOnFailure: true
-                }).catch(retryError => {
+                }).then(() => this.broadcastAccountReady(expectedAccountId)).catch(retryError => {
                     console.warn(
                         '[Account] Encrypted data restoration retry paused:',
                         String(retryError?.code || retryError?.name || 'UNKNOWN')
@@ -2262,6 +2910,12 @@ class AccountService {
                 });
             }, 1000);
         }
+        if (
+            this.syncInitializationGeneration !== expectedInitializationGeneration ||
+            this.state.accountId !== expectedAccountId ||
+            this.state.sessionVerified !== true
+        ) return false;
+        this.broadcastAccountReady(expectedAccountId);
         return true;
     }
 
@@ -2321,8 +2975,121 @@ class AccountService {
         return this.setupOAuthKeyring();
     }
 
-    async unlockOAuthKeyring(keyring = null) {
-        if (this.state.busy) return false;
+    canUsePrelaunchPasskey() {
+        return Boolean(getPrelaunchPasskeyRpId() && this.state.sessionVerified &&
+            this.state.oauthKeyringRequired && this.state.oauthProvider === 'google' &&
+            this.state.encryptionMode === 'PRF' && !this.state.oauthSetupRequired &&
+            !this.state.oauthRecoveryRequired && !this.state.oauthLegacyPasskeyRequired &&
+            this.keyringWrappers.length);
+    }
+
+    // Invoke the native prompt directly from a fresh click, after any storage
+    // awaits. The recovered key stays only in the waiting call's closure.
+    confirmPasskeyUpgrade(prompt, { signal, isCurrent }) {
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                signal.removeEventListener('abort', abort);
+                if (this.passkeyUpgradeContinuation === proceed) this.passkeyUpgradeContinuation = null;
+            };
+            const abort = () => {
+                cleanup();
+                reject(new DOMException('Passkey update cancelled', 'AbortError'));
+            };
+            const proceed = () => {
+                cleanup();
+                if (signal.aborted || !isCurrent()) return abort();
+                this.setState({ action: 'google_key_migration', error: null });
+                try { resolve(prompt()); } catch (error) { reject(error); }
+            };
+            if (signal.aborted || !isCurrent()) return abort();
+            signal.addEventListener('abort', abort, { once: true });
+            this.passkeyUpgradeContinuation = proceed;
+            this.setState({ action: 'google_key_migration_ready', error: null });
+        });
+    }
+
+    continuePasskeyUpgrade() {
+        this.passkeyUpgradeContinuation?.();
+    }
+
+    /** Add, never replace, a current-domain wrapper for the recovered master key.
+     * The encrypted pending wrapper survives reload/lost replies; no raw key does. */
+    async addCurrentDomainPasskey(keyring, masterKey, { expectedAccountId, isCurrent, signal }) {
+        if (!getPrelaunchPasskeyRpId() || keyring.accountBinding !== true) {
+            throw new Error('Passkey migration is not available here.');
+        }
+        const journalKey = `account-passkey-upgrade:${expectedAccountId}`;
+        const assertCurrent = () => {
+            if (!isCurrent()) throw new Error('Account changed while saving the passkey. Please sign in again.');
+        };
+        const locked = handler => withAccountDataLock(async () => {
+            assertCurrent();
+            await syncService.assertAccountBinding(expectedAccountId);
+            assertCurrent();
+            return handler();
+        });
+        const pending = await locked(() => chatDB.getSetting(journalKey));
+        assertCurrent();
+        let wrapper;
+        if (pending) {
+            if (pending.accountId !== expectedAccountId || pending.wrapper?.type !== 'PASSKEY' ||
+                pending.wrapper?.version !== 1 || typeof pending.wrapper?.credentialId !== 'string' ||
+                typeof pending.wrapper?.wrappedKey !== 'string') {
+                throw new Error('The saved passkey update could not be read. Your earlier passkey still works.');
+            }
+            wrapper = pending.wrapper;
+            // Confirm the durable retry wraps this exact account key before
+            // it is uploaded, even after switching accounts or reloading.
+            const retry = await this.confirmPasskeyUpgrade(
+                () => unlockEncryptionKeyring([wrapper], { signal }), { signal, isCurrent });
+            try {
+                if (retry.masterKey.length !== masterKey.length ||
+                    !retry.masterKey.every((value, index) => value === masterKey[index])) {
+                    throw new Error('The saved passkey update belongs to different encrypted data.');
+                }
+            } finally { retry.masterKey.fill(0); }
+        } else {
+            wrapper = await this.confirmPasskeyUpgrade(
+                () => createEncryptionKeyWrapper(masterKey, this.state.oauthEmail,
+                    keyring.wrappers.map(item => item.credentialId), { signal }), { signal, isCurrent });
+            assertCurrent();
+            const saved = await locked(() => chatDB.compareAndSetSetting(journalKey, null,
+                { accountId: expectedAccountId, wrapper }));
+            if (!saved) {
+                throw new Error('Another window is updating this account’s passkey. Finish there, then try again here.');
+            }
+        }
+        assertCurrent();
+        return locked(async () => {
+            await fetchJson('/auth/keyring', { ...wrapper, operation: 'ADD', expectedAccountId });
+            assertCurrent();
+            const confirmed = await this.fetchOAuthKeyring();
+            assertCurrent();
+            if (!confirmed.wrappers?.some(item => item.credentialId === wrapper.credentialId &&
+                item.wrappedKey === wrapper.wrappedKey)) {
+                throw new Error('The new passkey could not be confirmed. Please try again.');
+            }
+            await chatDB.deleteSettingsIfUnchanged([
+                { key: journalKey, value: { accountId: expectedAccountId, wrapper } }
+            ], [journalKey]);
+            return wrapper.credentialId;
+        });
+    }
+
+    async unlockOAuthKeyring(keyring = null, { usePrelaunchPasskey = false } = {}) {
+        if (this.state.busy || !this.state.accountId || !this.state.sessionVerified) return false;
+        if (usePrelaunchPasskey && !this.canUsePrelaunchPasskey()) return false;
+        const operation = {};
+        this.oauthUnlockOperation = operation;
+        const ceremony = new AbortController();
+        this.passkeyCeremony = ceremony;
+        let masterKey;
+        const expectedAccountId = this.state.accountId;
+        const unlockGeneration = this.syncInitializationGeneration;
+        const loginGeneration = this.loginGeneration;
+        const isCurrent = () => this.state.accountId === expectedAccountId &&
+            this.syncInitializationGeneration === unlockGeneration &&
+            this.loginGeneration === loginGeneration && this.state.sessionVerified && !ceremony.signal.aborted;
         this.setState({
             busy: true,
             action: `${this.state.oauthProvider || 'oauth'}_key_unlock`,
@@ -2331,19 +3098,43 @@ class AccountService {
         try {
             if (!keyring) {
                 keyring = await this.fetchOAuthKeyring();
-            } else if (Array.isArray(keyring.wrappers)) {
-                this.keyringWrappers = keyring.wrappers;
             }
-            const { credentialId, masterKey } = await unlockEncryptionKeyring(
-                this.keyringWrappers
+            if (!isCurrent()) return false;
+            if (normalizeAccountId(keyring.accountId) !== expectedAccountId) {
+                throw new Error('The encrypted keyring belongs to a different account');
+            }
+            if (usePrelaunchPasskey && keyring.accountBinding !== true) {
+                throw new Error('Passkey migration is still being enabled. Please try again shortly.');
+            }
+            const unlocked = await unlockEncryptionKeyring(
+                (keyring.wrappers || []).map(wrapper => ({ ...wrapper })),
+                { usePrelaunchPasskey, signal: ceremony.signal }
             );
+            masterKey = unlocked.masterKey;
+            let credentialId = unlocked.credentialId;
+            if (!isCurrent()) {
+                masterKey.fill(0);
+                return false;
+            }
+            if (usePrelaunchPasskey) {
+                credentialId = await this.addCurrentDomainPasskey(keyring, masterKey, {
+                    expectedAccountId, isCurrent, signal: ceremony.signal
+                });
+                if (!isCurrent()) return false;
+            }
             this.setState({
                 action: `${this.state.oauthProvider || 'oauth'}_key_restoring`,
                 error: null
             });
-            if (!await this.finishOAuthKeyUnlock(masterKey, credentialId)) return false;
+            if (!await this.finishOAuthKeyUnlock(masterKey, credentialId, {
+                expectedAccountId, unlockGeneration
+            })) return false;
             return true;
         } catch (error) {
+            if (!isCurrent()) return false;
+            reportDiagnostic('unlock.failed', {
+                outcome: unlockFailureOutcome(error), account: 'google', prelaunch: usePrelaunchPasskey === true
+            });
             this.setState({
                 busy: false,
                 action: null,
@@ -2351,6 +3142,16 @@ class AccountService {
                 error: toFriendlyError(error)
             });
             return false;
+        } finally {
+            masterKey?.fill(0);
+            if (this.passkeyCeremony === ceremony) this.passkeyCeremony = null;
+            if (this.oauthUnlockOperation === operation) {
+                this.oauthUnlockOperation = null;
+                if ((ceremony.signal.aborted || !isCurrent()) &&
+                    /_key_(?:unlock|migration(?:_ready)?|restoring)$/.test(this.state.action || '')) {
+                    this.setState({ busy: false, action: null });
+                }
+            }
         }
     }
 
@@ -2502,6 +3303,7 @@ class AccountService {
             
             // Initialize and enable sync for new account
             await this.initializeSync(true);
+            this.broadcastAccountReady(accountId);
             
             return true;
         } catch (error) {
@@ -2660,6 +3462,9 @@ class AccountService {
             // Record failed attempt for rate limiting (unless silent)
             if (!silent) {
                 this.recordFailedAttempt();
+            }
+            if (!silent) {
+                reportDiagnostic('unlock.failed', { outcome: unlockFailureOutcome(error), account: 'username', prelaunch: false });
             }
 
             const message = toFriendlyError(error);
@@ -2912,6 +3717,7 @@ class AccountService {
      * User can re-unlock with passkey without needing to re-login to server.
      */
     lock({ accountChanged = false } = {}) {
+        this.abortPasskeyCeremony();
         this.loginGeneration = (this.loginGeneration || 0) + 1;
         this.syncInitializationGeneration += 1;
         if (this.masterKey) {
@@ -3013,6 +3819,21 @@ class AccountService {
         );
     }
 
+    /** Publish only a completed, locally usable binding; receiving tabs load
+     * its saved key themselves. Never broadcast keys or an obsolete account. */
+    broadcastAccountReady(expectedAccountId) {
+        if (!expectedAccountId || this.state.accountId !== expectedAccountId ||
+            this.state.sessionVerified !== true || this.state.accountScopeReady !== true) return;
+        try {
+            storageEvents.init();
+            storageEvents.broadcast(ACCOUNT_LOGIN_COMPLETE_EVENT, { accountId: expectedAccountId });
+        } catch (error) {
+            // Focus/send reconciliation remains the fallback. A notification
+            // failure must not undo an otherwise successful authentication.
+            console.warn('[AccountService] Could not announce completed sign-in:', error);
+        }
+    }
+
     /** Log out in one tab ends the session for every tab of this browser. */
     broadcastSignedOut() {
         if (!this.state.accountId) return;
@@ -3043,11 +3864,53 @@ class AccountService {
         this.lock({ accountChanged: true });
     }
 
+    async sharedAccountBindingIsCurrent() {
+        const accountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        // Readiness this tab is still producing itself (the session check,
+        // the wallet scope activation, the first encrypted sync) is not a
+        // change made in another window. A send or a focus during start-up
+        // must not lock the account and restore it from the key bundle.
+        const startingUp = () => this.state.authBootstrapComplete !== true
+            || Boolean(this.syncInitializationInFlight);
+        const locallyReady = () => accountId && this.state.accountId === accountId
+            && this.loginGeneration === generation && !this.state.accountHandoffPending
+            && this.getSyncKeyMaterial() && syncService.getLocalAccountScope() === accountId
+            && (this.state.sessionVerified === true || this.state.authBootstrapComplete !== true)
+            && (this.state.accountScopeReady === true || startingUp());
+        if (!locallyReady()) return false;
+        const saved = await chatDB.getSettingsSnapshot([
+            ACCOUNT_SETTINGS_KEY, ACCOUNT_LOGIN_PENDING_KEY, SYNC_ACCOUNT_SCOPE_SETTING
+        ]);
+        return Boolean(locallyReady()
+            && !saved[ACCOUNT_LOGIN_PENDING_KEY]
+            && normalizeAccountId(saved[ACCOUNT_SETTINGS_KEY]?.accountId) === accountId
+            && saved[SYNC_ACCOUNT_SCOPE_SETTING] === accountId);
+    }
+
     async restoreSharedAccount() {
+        // Reopen storage first if the browser closed it: reopening starts the
+        // account recovery, and this check must wait for it. Reading a
+        // recreated database before its account record is back would sign
+        // this tab out. Storage that cannot open is not an account change.
+        try {
+            await chatDB?.connection?.();
+        } catch {
+            return;
+        }
+        if ((chatDB?.reconnectCount || 0) !== (this.handledStorageReconnect || 0)) {
+            void this.recoverAfterStorageReconnect();
+        }
+        if (this.storageRecoveryInFlight) await this.storageRecoveryInFlight;
         if (this.state.busy && !this.state.accountHandoffPending) return;
         let generation;
         let restored = false;
         try {
+            // A stable account needs only a coherent read of the shared binding,
+            // not the exclusive lock held across encrypted network sync. Actual
+            // handoffs still use that lock, and ticket selection/commit retain
+            // their own locked account-scope checks before anything is spent.
+            if (await this.sharedAccountBindingIsCurrent()) return;
             await withAccountDataLock(async () => {
                 const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
                 const pending = await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY);
@@ -3113,6 +3976,12 @@ class AccountService {
             this.setState({ accountHandoffPending: false });
         } catch (error) {
             if (generation !== undefined && generation !== this.loginGeneration) return;
+            // Storage closing under this check says nothing about the account;
+            // the next focus or send checks again on the reopened database.
+            if (chatDB?.connectionLost) {
+                this.setState({ accountHandoffPending: false });
+                return;
+            }
             this.lock({ accountChanged: true });
             this.setState({ accountHandoffPending: false });
         }
@@ -3137,6 +4006,8 @@ class AccountService {
             };
             globalThis.window?.addEventListener?.('focus', onFocus);
             globalThis.document?.addEventListener?.('visibilitychange', onVisible);
+            const onStorageReconnected = () => { void this.recoverAfterStorageReconnect(); };
+            globalThis.window?.addEventListener?.('oa-db-reconnected', onStorageReconnected);
             const stopLogoutListener = storageEvents.on(ACCOUNT_SIGNED_OUT_EVENT, payload => {
                 const accountId = payload?.accountId;
                 if (!accountId || this.state.accountId !== accountId) return;
@@ -3149,14 +4020,15 @@ class AccountService {
                 stopLoginListener(); stopCompleteListener(); stopLogoutListener();
                 globalThis.window?.removeEventListener?.('focus', onFocus);
                 globalThis.document?.removeEventListener?.('visibilitychange', onVisible);
+                globalThis.window?.removeEventListener?.('oa-db-reconnected', onStorageReconnected);
             };
         } catch (error) {
             console.warn('[AccountService] Could not listen for sign-out in other tabs:', error);
         }
     }
 
-    async clearLocalAccount() {
-        await this.logout();  // Use logout instead of lock for full cleanup
+    /** Forget the saved account's identity in memory (Forget saved account). */
+    resetSavedAccountState() {
         this.cancelPendingOAuthAccount();
         this.state.accountId = null;
         this.state.username = null;
@@ -3178,29 +4050,17 @@ class AccountService {
         this.recoveryPayload = null;
         this.keyringWrappers = [];
         this.localAccountContinuity = false;
+    }
+
+    async clearLocalAccount() {
+        await this.logout();  // Use logout instead of lock for full cleanup
+        this.resetSavedAccountState();
         // Delete account settings from IndexedDB (not just set to null)
         if (chatDB) {
             await chatDB.deleteSetting(ACCOUNT_SETTINGS_KEY).catch(() => {});
         }
         this.updateStatus();
         this.notify();
-    }
-
-    async maybeAutoUnlock() {
-        // Skip if already unlocked (session restored from IndexedDB)
-        if (this.getSyncKeyMaterial()) return;
-        
-        if (!this.state.accountId || !this.state.passkeySupported || this.state.busy) return;
-        if (this.state.googleLinked) return;
-        if (typeof PublicKeyCredential?.isConditionalMediationAvailable !== 'function') return;
-        const supportsConditional = await PublicKeyCredential.isConditionalMediationAvailable();
-        if (!supportsConditional) return;
-        const options = { mediation: 'silent', silent: true };
-        if (this.state.username) {
-            await this.unlockWithUsername(this.state.username, options);
-        } else {
-            await this.unlockWithPasskey(this.state.accountId, options);
-        }
     }
 
     formatAccountId(accountId) {

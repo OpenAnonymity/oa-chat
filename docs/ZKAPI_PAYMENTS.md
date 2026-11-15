@@ -1,3 +1,110 @@
+## zkAPI server time for private keys (2026-11-06)
+
+Device clocks hours or days off, or changed or suspended mid-request, could
+make every new private-key proof fail with "request_time is outside the
+accepted freshness window", trip the local ETH/USD quote check, or have the
+host verifier reject a freshly minted key. The fix is backwards compatible:
+
+- **Server (zkapi `32b97d1` + additive change):** `GET /v2/time` returns
+  `server_time_ms`, `chain_id`, `protocol_version` and the existing fixed
+  window (300 s age, 30 s future), with `Cache-Control: no-store` and no state
+  or identifiers. Request and proof formats and admission bounds are
+  unchanged. `/expire` additionally answers `expired_unaccepted` for an exact,
+  unreserved request whose `request_time` is past the age window. A future
+  `request_time` alone never expires a proof, although an independently
+  expired or superseded quote still can. The issuance lock and exact binding
+  are unchanged. Old clients get this recovery with no update.
+- **Client (`server-time-v1`, the fourth hash-checked patch on pinned SDK
+  `3342c95`, after `wallet-recovery-v1`, `proof-cache-integrity-v1` and
+  `provider-verification-v1`):** new request timestamps, new-quote checks,
+  lease validity, key reuse and checkout use a monotonic anchor of
+  `/v2/time` (a lower bound), never a global `Date.now` override. Samples are
+  bounded (5 s round trip, 30 s for request time), memory-only per deployment
+  and page load, and are resampled after an OS suspend or a clock change
+  larger than the 2-second wall-vs-monotonic discontinuity tolerance. The prover loads before
+  `request_time` is chosen. Host verification receives a strict `now` that
+  fails closed after a discontinuity, plus a bounded `refreshNow`. The SDK
+  rechecks lease expiry against a fresh sample after asynchronous
+  verification. A failure keeps the exact journal and never starts a second
+  authorization by itself.
+- **Compatibility:** an old client on a new server is unchanged. A new client
+  on a new server resists skew. A new client on an old server falls back to
+  the device clock **only** on 404/405. 401/403, 5xx, malformed data and
+  transport failures block a new key instead. Browser-skew protection
+  therefore requires the new server endpoint. A dev server without the
+  `/zkapi-deployment/` rewrite also reads as legacy, because the production
+  rewrite's 404 is authoritative for this endpoint.
+- **Recovery:** saved journals stay byte-identical. The exact `/expire`
+  handshake and signed-receipt installation check the saved quote structurally
+  only, so a failed time endpoint or a slow device never blocks them. Only an
+  exactly bound server acknowledgement (`expired_unaccepted` or
+  `superseded_unaccepted`) or a signed receipt clears a journal.
+- **Host gates:** the note-expiry and key-reuse pre-send gates and
+  interrupted-access ownership deadlines use the SDK server clock. The
+  pre-send gates fall back to the legacy device check if it is unavailable,
+  because the SDK still refuses a new key without trusted time. Ticket
+  verification and account clocks are untouched: the verifier accepts an
+  explicit `now` only from the zkAPI adapter.
+- **Packaging:** `.vercelignore` now ships all four patch files. Before, a
+  source upload dropped the proof-cache, provider-verification and new patch
+  files. A test derives the required files from the patcher's imports.
+
+Rollout: deploy the server first (old clients keep working), then the client.
+
+## Withdrawal fee preflight and OA isolation (2026-09-30)
+
+Send ETH and MetaMask withdrawals check public fee data and the pending ETH balance before
+settling chat access, reserving server clearance, or preparing a withdrawal.
+The review shows a conservative fee reserve, available ETH, and a rounded-up
+six-decimal top-up. The fee-paying address appears only with that explanation
+when more ETH is needed. Deposit receipts and public-return controls stay off
+the withdrawal screen. Mutual close describes one server-approved transaction;
+escape describes the wait and two separately paid transactions.
+
+Exact calldata/gas is unavailable before server clearance and proof generation.
+The reserve therefore covers the SDK's supported per-transaction gas ceiling at
+current Low fee rates, twice for escape. The reserve is not an exact fee or a
+charge; actual unused ETH remains browser-held. Escape finalization fees may
+change during the safety window. This intentionally overestimates rather than
+starting an underfunded close. MetaMask uses twice the current gas price as
+headroom against the same SDK gas ceiling, checks the connected account and chain
+again, and still presents its own final transaction fee. Its reviewed reserve is
+rechecked in the SDK before settlement/clearance; a changed account, higher reserve,
+or insufficient pending ETH balance stops that attempt.
+
+Wallet mutations require Web Locks. Unsupported browsers fail closed instead of
+using a tab-local lock that could overwrite another tab's recovery journal.
+Tests explicitly install a Node-only lock harness; production has no fallback.
+
+Escape with an outstanding chat lease/receipt is **not server independent** in the
+pinned protocol. The SDK now checks this under its wallet lock before connecting
+the funding wallet or attempting recovery, preserves the lease/journal, and raises
+`escape_settlement_required`. The UI offers a separate Update chat balance action.
+A settled escape does not call server settlement/recovery. True offline escape
+with an unfinished lease still requires a protocol-level recovery design; never
+work around it by deleting a saved request or skipping its receipt.
+
+Fresh withdrawals show the irreversible-close warning only after Continue, with
+Continue and Cancel. A failed/underfunded background quote returns that review to
+the fee form with retry/top-up controls. History has a top back arrow; copying a
+fee address highlights only keyboard focus, not its container. Top-up instructions
+use a single Send amount line.
+
+Read-only checks refresh every 15 seconds; failed, stale, wrong-scope or pending
+checks cannot enable the action. A click checks again, and an increased reserve
+requires another review/click even with ample funds. The action checks again
+before any SDK work and caps its signed fee liability to the approved allowance.
+A market move or another tab spending ETH can still interrupt an in-flight
+withdrawal; preserve recovery, show neutral funding guidance, and never retry
+without an explicit action. Non-review recovery paths retain actionable top-up
+amount/address errors. No fee read creates a withdrawal or signs/broadcasts.
+
+In mixed OA/zkAPI mode, both restoration and explicit/asynchronous open requests
+require zkAPI mode after initial conversation restoration. Saved tab intent never
+overrides OA mode. Navigating to OA hides an open private dialog, even while an
+already-authorized operation finishes; it neither cancels nor forgets SDK work.
+Returning to zkAPI can recover the saved view. SDK records remain untouched.
+
 ## Recovery review (2026-09-29)
 
 The [browser payment recovery review](ZKAPI_RECOVERY_REVIEW.md) records the
@@ -18,8 +125,8 @@ an upstream revision contains equivalent fixes.
 
 ## Payment-flow feedback (2026-09-28)
 
-The two choices read **MetaMask** and **Send Ethereum**. MetaMask actions name
-MetaMask. The September 29 compact funding layout keeps the **Send** total,
+The two choices read **Ethereum wallet** and **Send to address**. The initial
+deposit fee, source-account row and Continue action use Ethereum wallet. The September 29 compact funding layout keeps the **Send** total,
 address, QR and **Deposit** action visible, with a short numeric summary such as
 `Deposit ≈ $5 · Fee allowance ≈ $X`. The fee allowance is the quoted maximum
 reserve including the optional buffer, not an actual fee charged. Exact ETH
@@ -79,7 +186,7 @@ the user’s own wallet address separately.
 
 ## 2026-09-22: Repeated reloads during deposit confirmation
 
-- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. Explicit same-tab intent can restore after navigation to an OA chat; unrelated SDK records still respect the zkAPI-mode gate. Restoration never submits or retries transactions.
+- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. All restoration, including explicit same-tab intent, respects the zkAPI-mode gate. Restoration never submits or retries transactions.
 
 ## 2026-09-21: Withdrawal reload and disclosure continuity
 
@@ -802,9 +909,35 @@ investigation. Service recovery was not confirmed at that time. Public asset
 and deployment checks must be distinguished from live verifier and inference
 readiness checks.
 
+### Proving-key cache integrity failure (2026-10-01)
+
+The staging browser's reported SHA-256 error was a separate, confirmed stale
+HTTP-cache problem. Its worker fetched the stable `/zkapi/proofs/request.pk`
+URL with `cache: 'force-cache'`, which could reuse an older circuit's bytes
+even when the server required revalidation. An asset-only check in the affected
+browser returned 5,654,800 cached bytes with SHA-256
+`faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e`;
+the same URL with `cache: 'reload'` returned the current 5,935,783-byte key with
+SHA-256 `c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584`.
+The reload refreshed only public proof bytes and did not modify the wallet.
+
+Independent public downloads from both staging and Sepolia matched their
+reviewed request pin above and the 7,783,719-byte withdrawal pin
+`8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668`.
+This was not a mismatched deployed circuit or a verifier response.
+
+The pinned-SDK compatibility patch versions public proof URLs with their
+expected SHA-256, then retries one integrity mismatch using `cache: 'reload'`.
+Both attempts retain the digest check; a second mismatch still blocks proof
+generation. Verified keys still coalesce in worker memory, and failed loads
+remain retryable. Requests omit account cookies. Builds record this patch
+separately from the existing wallet-recovery patch and validate every source
+hash before modifying the installed SDK. This source repair requires a new
+frontend deployment; live verifier acceptance remains a separate check.
+
 ## Wallet methods: MetaMask and Send to an address
 
-The web app offers exactly two choices: **MetaMask** first, then **Send Ethereum**. Native-ETH deployments hold ETH and display its current USD value;
+The web app offers exactly two choices: **Ethereum wallet** first, then **Send to address**. Native-ETH deployments hold ETH and display its current USD value;
 this is not fixed dollar credit. MetaMask keeps the existing deposit/withdrawal
 flow, with a payable ETH deposit instead of token minting and approval.
 
@@ -820,7 +953,7 @@ are never overwritten; a one-time password conversion retains their exact key,
 address, nonce and signed journal. New account setup never offers a password.
 
 The balance and welcome dialogs share one deposit amount field above the
-MetaMask / Send Ethereum choice. Both methods use the same USD/ETH currency
+Ethereum wallet / Send to address choice. Both methods use the same USD/ETH currency
 button and keep the exact ETH principal when switching methods or display
 units. MetaMask's amount control does not create a browser funding account;
 only selecting Send Ethereum starts that method's address and fee checks.
@@ -1436,3 +1569,105 @@ privacy: [PRIVACY_MODEL.md](PRIVACY_MODEL.md#sponsored-withdrawals-the-network-f
   on its row in Payment history with "Collect payout" (free), "Collect with my
   wallet" or "Claim payout", and keeps the version that can deliver it loaded.
 - **Deposits are unaffected.** This is about the exit only.
+
+### Withdrawal recovery clarity (2026-09-30)
+
+Send attempts with a withdrawal-reserved balance stay in chat and explain that
+Balance details holds recovery; they never reopen the dialog automatically.
+Funds remain blocked until the SDK resolves the withdrawal. A mutual-close server
+reservation cannot be cancelled, even without a transaction hash. Its dismissal
+is **Close** and explains that the withdrawal stays saved; **Cancel** is reserved
+for an unsubmitted escape with no reservation or unresolved submission history.
+The fresh mutual form discloses this before approval. Send ETH still checks its
+network-fee reserve before settling access or requesting server clearance.
+
+The balance card labels reserved funds directly, without a Withdrawing pill.
+The fee-address disclosure explains the browser-held ETH separately from private
+chat funds and omits a previous deposit's fee. Expiry help uses OA's shared
+`oa-panel-help` typography in both locations, with concise private-balance expiry
+copy (the service may claim the original deposit after expiry). Normal empty-key
+status inherits OA's wording after settlement; active settlement errors stay visible.
+
+### Compact fees and retryable fee reads (2026-09-30)
+
+The fee card keeps the reserve, available ETH and a short explanation visible;
+there is no reserve disclosure. Funded quotes refresh automatically. Check again
+appears on failure, and shortfalls retain the copyable address and Check for ETH.
+Ethereum block/history reads retry one complete anchored pair before failing.
+Validation is unchanged; no signing or broadcast is automatically retried. An
+`address_fee_data` failure is a neutral pause. A successful scoped fee read clears
+only that warning, without submitting or hiding an unrelated error.
+
+Set aside is no longer offered in the withdrawal dialog. The SDK can park
+prepared withdrawals, but its atomic guard does not cover all ambiguous-history
+states or bind the clicked UI identity across tabs. Removing this action avoids
+moving an unresolved or different balance from a stale dialog. Close preserves
+the withdrawal for later. Existing parked records remain accessible in history.
+Both methods share three progress markers; Send ETH uses browser-send wording.
+
+### Help behavior and withdrawal review layout (2026-09-30)
+
+Private billing and expiry explanations omit internal headings. System Panel help
+participates in OA's single-open controller alongside access-key and proxy help,
+including outside-click and Escape dismissal. The balance dialog coordinates its
+expiry help and billing guide, dismisses outside clicks, and removes document
+listeners on rerender/close. Escape closes help first before closing the dialog.
+
+The withdrawal amount includes ETH as well as available USD pricing. The mutual
+close warning appears at final confirmation, before settlement or reservation,
+and explicitly says that rejecting MetaMask afterward cannot undo approval.
+Review is read-only; confirmation is single-use and tied to the current note,
+amount, method and destination. Fee checks preload from an open balance
+view; direct withdrawal entry keeps amount/status/action slots in place while
+loading. All submission gates still require a fresh funded quote. A shortfall
+shows **Add ETH**, which deliberately expands the copyable network/address
+instructions. Fee details never auto-submit. **Pause update** replaces Stop
+waiting in settlement feedback and explains that sending requires retrying the
+balance update; stopping does not discard recovery. Refresh says Balance updated.
+
+Balance readiness no longer adds a pill in the System Panel or balance dialog.
+Error/attention states use different outlined icons alongside text, while expiry
+and claim status remain in the existing explanatory lines. Expiry clock ticks
+still update the expired-balance notice without reintroducing a readiness badge.
+
+On reload, the saved withdrawal appears while the SDK reconciles Ethereum state.
+The page says Checking saved withdrawal, disables transaction actions and hides
+the header X while retaining a clearly labelled Close action. Close preserves
+recovery. Finishing initialization does not automatically continue a withdrawal;
+the user clicks Continue after the check finishes. Startup reconciliation itself
+is unchanged and may still take time, particularly through MetaMask RPC.
+
+## Deposit progress and interrupted fee checks (2026-09-30)
+
+A saved deposit quote is not evidence of submission. During a live deposit, the
+SDK’s private-vault check retains preparation progress. Actual submission status
+or the SDK’s submitted/uncertain recovery phase selects the Ethereum step.
+Unsubmitted address fee failures retain an explicit “Deposit not sent” outcome
+and next action. Recovery records, authorized fee limits and explicit retry
+requirements are unchanged. A confirmed deposit awaiting its balance projection
+continues to suppress a second deposit.
+
+## Receipt fee presentation (2026-09-30)
+
+The selected fee summary shows required ETH minus already available ETH, followed
+by the amount still needed. Add ETH names that amount and opens the existing
+address and balance-check controls. Its conservative display rounding preserves
+the visible subtraction; fully funded boundary cases gain precision rather than
+a false shortfall. The original exact quote still gates withdrawal, and this
+presentation change does not authorize signing or automatic withdrawal.
+
+The selected Inline top-up details use the existing app theme and display the
+network and full fee-paying address with a copy icon and Check now. Once opened,
+they remain visible when funded; the status comes from the real scoped fee
+quote. Clipboard failure leaves the address selectable with an inline message.
+
+Withdrawal review has compact type, spacing and receipt rows. The desktop frame
+keeps its width when Add ETH expands below the receipt. The original stacked
+Inline arrangement is used on all screens, with scroll retained when needed. Escape wording uses the configured
+duration in “It takes … to finish.” Fee and destination gates are unchanged.
+
+Add ETH reveals its stacked panel and, after the modal settles, scrolls its own
+content only when the controls would be clipped. User navigation, close and fee
+scope changes cancel pending scrolling. Polling never replays this click intent.
+Reduced motion uses immediate visibility; withdrawal page changes share the
+modal transition timing without affecting validation, signing or recovery.

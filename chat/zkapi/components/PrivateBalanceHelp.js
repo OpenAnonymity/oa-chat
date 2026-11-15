@@ -4,13 +4,11 @@ import { copyTokens, versionCopy } from '../versioning/copy.mjs';
 const HELP = {
     billing: {
         label: 'How private billing works',
-        title: 'How private billing works',
-        text: 'No account or Google sign-in is required to fund your wallet or chat with zkAPI. Your deposit becomes a private prepaid balance. Each chat gets a temporary key with a spending cap; your device proves the balance covers it without revealing the amount. Only verified usage is deducted, and your wallet address never reaches a model request.'
+        text: 'Your deposit becomes a private prepaid balance. Each chat gets a temporary key with a spending cap; your device proves the balance covers it without revealing the amount. Only verified usage is deducted, and your wallet address never reaches a model request.'
     },
     expiry: {
         label: 'What happens when my private balance expires?',
-        title: 'Withdraw before this deadline',
-        text: 'This deadline belongs to your private balance, not a temporary chat key. Expiry does not automatically refund funds. Withdraw before the deadline to return unused funds to an address you choose; used funds go to the service. After the deadline, the service treasury can claim the full original deposit.'
+        text: 'Withdraw your unused balance before it expires. Funds are not returned automatically. After expiry, the service can claim the full original deposit.'
     },
     // Only offered where a build carries more than one protocol version. The
     // text here is what is true of every such build; the one that names the
@@ -52,14 +50,6 @@ export function privateBalanceExpired(note, now = Date.now()) {
 export function updatePrivateBalanceExpiryState(root, note, now = Date.now()) {
     if (!root?.querySelector || !note) return;
     const expired = privateBalanceExpired(note, now);
-    const badge = root.querySelector('[data-private-balance-readiness]');
-    if (badge) {
-        badge.textContent = expired ? 'expired' : 'ready';
-        badge.classList.toggle('badge-status-success', !expired);
-        for (const name of ['bg-amber-100', 'text-amber-800', 'dark:bg-amber-500/15', 'dark:text-amber-200']) {
-            badge.classList.toggle(name, expired);
-        }
-    }
     const notice = root.querySelector('[data-private-balance-expired-notice]');
     if (notice && notice.hidden !== !expired) notice.hidden = !expired;
 }
@@ -79,8 +69,8 @@ export function privateBalanceHelpContent(scope, kind, open = false, detail = nu
     const title = typeof detail?.title === 'string' && detail.title ? detail.title : help.title;
     const text = typeof detail?.body === 'string' && detail.body ? detail.body : help.text;
     return `<div id="zkapi-${scope}-${kind}-help" data-zkapi-help-content="${kind}" ${open ? '' : 'hidden'}>
-        <div class="mt-2 rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
-            <p class="font-medium text-foreground">${title}</p><p class="mt-1">${text}</p>
+        <div class="oa-panel-help mt-2">
+            ${title ? `<p class="font-medium text-foreground">${title}</p>` : ''}<p>${text}</p>
         </div>
     </div>`;
 }
@@ -91,26 +81,79 @@ export function privateBalanceHelpContent(scope, kind, open = false, detail = nu
 export function privateBalanceGuide(kind, open = false) {
     const help = HELP[kind];
     const text = kind === 'billing'
-        ? 'No account or Google sign-in is required to fund your wallet or chat with zkAPI. Your deposit funds a private prepaid balance that is charged only for verified usage, while your wallet address stays separate from the requests sent to models.'
+        ? 'Your deposit funds a private prepaid balance that is charged only for verified usage, while your wallet address stays separate from the requests sent to models.'
         : help.text;
     return fundingDisclosure({ key: kind, label: help.label, open,
         attributes: `data-zkapi-help-guide="${kind}"`, body: `<p class="zkapi-guide-lead">${text}</p>` });
 }
 
 export function attachPrivateBalanceHelp(root, owner) {
+    owner.disposePrivateBalanceHelp?.();
     if (!root?.querySelectorAll) return;
-    for (const button of root.querySelectorAll('[data-zkapi-help]')) {
+    const buttons = [...root.querySelectorAll('[data-zkapi-help]')];
+    const guide = root.querySelector('[data-zkapi-help-guide="billing"]');
+    const doc = root.ownerDocument;
+    const close = (except = null) => {
+        const state = owner.privateBalanceHelpOpen ||= {};
+        for (const button of buttons) {
+            const kind = button.dataset.zkapiHelp;
+            if (kind === except) continue;
+            state[kind] = false;
+            setDisclosure(root.querySelector(`[data-zkapi-help-content="${kind}"]`), false);
+            button.setAttribute('aria-expanded', 'false');
+        }
+        if (guide && except !== 'billing') {
+            state.billing = false;
+            guide.dataset.open = 'false';
+            guide.querySelector('.t-acc-head')?.setAttribute('aria-expanded', 'false');
+            const panel = guide.querySelector('.t-acc-panel');
+            if (panel) panel.inert = true;
+        }
+    };
+    for (const button of buttons) {
         button.addEventListener('click', () => {
             const kind = button.dataset.zkapiHelp;
             if (!HELP[kind]) return;
+            // The System Panel shares OA's controller, including its outside
+            // click and Escape handling for key/proxy explanations.
+            if (owner.togglePanelHelp) {
+                owner.togglePanelHelp({ billing: 'zkapiBillingHelp', expiry: 'zkapiExpiryHelp', version: 'zkapiVersionHelp' }[kind]);
+                return;
+            }
             const content = root.querySelector(`[data-zkapi-help-content="${kind}"]`);
             if (!content) return;
             const state = owner.privateBalanceHelpOpen ||= {};
-            state[kind] = !state[kind];
-            setDisclosure(content, state[kind]);
-            button.setAttribute('aria-expanded', String(state[kind]));
+            const open = !state[kind];
+            close();
+            state[kind] = open;
+            setDisclosure(content, open);
+            button.setAttribute('aria-expanded', String(open));
         });
     }
+    if (owner.togglePanelHelp || !doc?.addEventListener) return;
+    const guideClick = () => { if (guide.dataset.open === 'true') close('billing'); };
+    guide?.querySelector('.t-acc-head')?.addEventListener('click', guideClick);
+    const outside = event => {
+        if (buttons.some(button => button.contains(event.target)
+            || root.querySelector(`[data-zkapi-help-content="${button.dataset.zkapiHelp}"]`)?.contains(event.target))
+            || guide?.contains(event.target)) return;
+        close();
+    };
+    const escape = event => {
+        if (event.key !== 'Escape' || event.defaultPrevented || !root.contains(event.target)) return;
+        const open = buttons.find(button => owner.privateBalanceHelpOpen?.[button.dataset.zkapiHelp]);
+        if (!open && guide?.dataset.open !== 'true') return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        close();
+        (open || guide?.querySelector('.t-acc-head'))?.focus({ preventScroll: true });
+    };
+    doc.addEventListener('click', outside);
+    doc.addEventListener('keydown', escape, true);
+    owner.disposePrivateBalanceHelp = () => {
+        doc.removeEventListener('click', outside);
+        doc.removeEventListener('keydown', escape, true);
+        guide?.querySelector('.t-acc-head')?.removeEventListener('click', guideClick);
+    };
 }
 
 export function capturePrivateBalanceHelpFocus(root) {

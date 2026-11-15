@@ -1,3 +1,5 @@
+import { trackFeatureUsage } from '../../services/featureUsage.js';
+
 export const PAYMENT_MODES = Object.freeze({ tickets: 'openrouter', zkapi: 'zkapi' });
 export const PAYMENT_MODE_PREFERENCE = 'oa-payment-mode';
 
@@ -40,12 +42,13 @@ export function createPaymentModeRuntimeCore({ zkRuntime, inferenceService, acqu
                     ? value.cancelSessionWork(sessionId) : undefined
             });
         },
-        async changeMode(mode) {
+        async changeMode(mode, { userAction = false } = {}) {
             if (!Object.hasOwn(PAYMENT_MODES, mode)) throw new Error('Choose Tickets or zkAPI.');
             if (!context) throw new Error('Chat is still loading. Please try again.');
             if (runtime.isModeLocked()) throw new Error('Finish or stop the current response before switching payment methods.');
             const owner = context;
             const session = context.getCurrentSession();
+            const previousMode = modeFor(session);
             const generation = ++selectionGeneration;
             switching = true;
             context.refreshPresentation();
@@ -53,6 +56,11 @@ export function createPaymentModeRuntimeCore({ zkRuntime, inferenceService, acqu
                 await context.changeSessionBackend(PAYMENT_MODES[mode]);
                 inferenceService.setDefaultBackendId(PAYMENT_MODES[mode]);
                 try { preferenceStorage?.setItem(PAYMENT_MODE_PREFERENCE, mode); } catch { /* Session choice is still durable. */ }
+                // Count the accepted explicit choice before optional funding checks.
+                // Host-driven mode changes (such as billing returns) are not choices.
+                if (userAction === true && previousMode !== mode) {
+                    trackFeatureUsage(mode === 'zkapi' ? 'payment_selected_zkapi' : 'payment_selected_oa');
+                }
             } finally {
                 switching = false;
                 context.refreshPresentation();

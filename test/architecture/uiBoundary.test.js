@@ -178,9 +178,9 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Parallel/Council typing indicators should hide the redundant text label'
     );
     assert.equal(
-        source.includes("const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);"),
+        source.includes("const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting', 'error']);"),
         true,
-        'completed and in-progress lane/synthesis statuses should be hidden while important non-complete statuses can remain visible'
+        'completed, in-progress and failed lane/synthesis statuses should be hidden (a failed lane explains itself in its body) while other non-complete statuses can remain visible'
     );
     assert.equal(
         source.includes('!hiddenStatuses.has(normalizedStatus)'),
@@ -218,9 +218,14 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council synthesis should identify the selected synthesis model as the Council model and pass provider metadata'
     );
     assert.equal(
-        source.includes("buildCouncilModelLabel(entry.responseModel || entry.model || entry.modelId || '', { modelId: entry.responseModel ? '' : (entry.modelId || '') })"),
+        source.includes("buildCouncilModelLabel(laneResponseModel || entry.model || entry.modelId || '', { modelId: laneResponseModel ? '' : (entry.modelId || '') })"),
         true,
         'Stage 1 lane labels should remain plain model labels and pass provider metadata'
+    );
+    assert.equal(
+        source.includes("const laneResponseModel = councilLaneResponseModel(entry);"),
+        true,
+        'Stage 1 lane labels show a reported model only when it is a concrete id (a stored "unknown" is skipped)'
     );
     assert.equal(
         source.includes('function inferProvider'),
@@ -463,11 +468,6 @@ test('parallel composer keeps the Council model picker out of the input bar', ()
         chatInputSource.includes('this.councilReviewModelSelect = councilReviewModelSelect'),
         true,
         'Council review model should use the same settings select pattern as scrubber and memory models'
-    );
-    assert.equal(
-        chatInputSource.includes('const label = this.getFullModelHoverName(value);'),
-        true,
-        'Council review model select labels should omit provider/company names while preserving raw model values'
     );
 });
 

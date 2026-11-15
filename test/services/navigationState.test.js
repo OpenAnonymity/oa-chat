@@ -34,8 +34,10 @@ test('conversation navigation round-trips without adding chat identifiers to bil
 test('explicit deep links bypass saved selection and missing conversations restore New Chat', async () => {
     const tab = storage();
     saveNavigationSelection('deleted', tab);
-    assert.equal(await restoreNavigationSelection({ storage: tab, search: '?s=explicit',
-        loadSession: () => { throw new Error('ordinary link routing must resolve this'); } }), null);
+    for (const search of ['?c=explicit', '?s=explicit']) {
+        assert.equal(await restoreNavigationSelection({ storage: tab, search,
+            loadSession: () => { throw new Error('ordinary link routing must resolve this'); } }), null);
+    }
     assert.equal((await restoreNavigationSelection({ storage: tab, loadSession: async () => false })).kind, 'new-chat');
     assert.equal(tab.getItem('oa-current-session'), null);
 });

@@ -41,9 +41,9 @@ export function createComponentDataInterface(options = {}) {
         deleteMessage: (messageId) => db.deleteMessage(messageId),
         deleteSessionMessages: (sessionId) => db.deleteSessionMessages(sessionId),
         saveSession: (session) => db.saveSession(session),
-        async saveSessionWithMessages(session, messages) {
+        async saveSessionWithMessages(session, messages, ...options) {
             if (typeof db.saveSessionWithMessages === 'function') {
-                await db.saveSessionWithMessages(session, messages);
+                await db.saveSessionWithMessages(session, messages, ...options);
                 return;
             }
 
@@ -102,6 +102,7 @@ export function createModelPickerInterface(app, options = {}) {
     return {
         elements,
         state: app.state,
+        showToast: (...args) => app.showToast(...args),
         presentation: options.presentation || null,
         get reasoningEnabled() {
             return app.reasoningEnabled;
@@ -189,6 +190,7 @@ export function createSidebarInterface(app, options = {}) {
         toggleSessionStar: (sessionId) => app.toggleSessionStar(sessionId),
         deleteSession: (sessionId) => app.deleteSession(sessionId),
         switchSession: (sessionId) => app.switchSession(sessionId),
+        isMobileView: () => app.isMobileView(),
         shareCurrentSession: () => app.shareCurrentSession(),
         copySessionLink: () => app.copySessionLink(),
         deleteCurrentSessionShare: () => app.deleteCurrentSessionShare(),
@@ -250,6 +252,7 @@ const COMPONENT_APP_KEYS = new Set([
     'getFallbackModelEntry',
     'getFilteredSessions',
     'getMessageTemplateOptions',
+    'hideSidebar',
     'getPromptSlideUpMessageIdForSession',
     'getPendingCouncilConfig',
     'getSessionListEmptyText',

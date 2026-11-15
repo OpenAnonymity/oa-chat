@@ -20,12 +20,37 @@ Lock, logout, account-switch, and token-invalidation boundaries cancel both
 pending synchronization and the in-memory commit of an older key-persistence
 operation, so stale async work cannot repopulate a replacement account.
 
+## Switching Google accounts in the browser
+
+Ordinary Google sign-in may replace a remembered username or Google account.
+It is not account linking: the previous account's tickets remain in its local
+account scope. Before exchanging the one-time OAuth completion token, the
+client snapshots the old scope, takes the shared account-data lock and writes
+an `account-login-pending` marker. Other tabs stop using the previous keys.
+The verified new identity is committed atomically with removal of mismatched
+local keys; only a key bundle belonging to the same account may be reused.
+A lost exchange response or failed storage commit keeps the marker so reload
+cannot restore old keys against new session cookies. Signing in again completes
+the handoff. Late responses cannot overwrite a newer account's UI.
+
+Fresh passkeys are created for the current domain. The browser decides whether
+Touch ID, another local authenticator, or a phone is available. A credential
+created for the temporary pre-launch hostname remains scoped to that hostname;
+changing the current site's RP does not migrate that existing credential.
+The explicit Google encryption-passkey recovery described below preserves its
+key material; it does not recreate accounts or move username credentials.
+
 ## New-account flow
 
 After Google sign-in, the app shows the same brief passkey explanation as
 username setup, then opens the native creation prompt automatically once.
 If the browser refuses or the user cancels, an explicit retry button remains.
 This removes an extra UI click; it does not remove encryption-passkey setup.
+
+The automatic attempt belongs only to the fresh Google sign-in flow. If setup
+remains unfinished on a later ordinary visit or Account reopen, the card shows
+**Create passkey** and waits for a click. Restoring a Google session does not
+grant permission to open the native creation sheet on every page load.
 
 
 1. The org completes OAuth and maps the provider's stable subject to an internal
@@ -57,7 +82,7 @@ wrap/unwrap operations used by the ordinary browser flow.
 
 ## Username-account flow
 
-Google and username entry share the same passkey explanation and automatic
+New Google and username accounts share the same passkey explanation and automatic
 continuation. New username accounts briefly show the explanation before creation;
 returning accounts proceed to unlock. A refused prompt exposes a manual retry.
 Username Unlock fetches a fresh challenge rather than holding the initial lookup
@@ -85,7 +110,52 @@ Username and Google identities are separate account types and cannot be linked
 in this version. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for the full
 protocol and compatibility contract.
 
+## A phone that holds none of the account's passkeys
+
+A passkey created in Chrome on a Mac, in Windows Hello or in a desktop-only
+password manager never reaches an iPhone's iCloud Keychain. The iOS app asks
+only for credentials already on the device
+(`preferImmediatelyAvailableCredentials`), so such a phone is not sent to the
+system's cross-device QR, which a computer cannot answer; it shows its own
+"Your passkey isn't on this phone yet" state instead. The planned remedy, a
+computer with the wallet unlocked giving the phone a passkey over an OA
+pairing QR, is specified in [PHONE_PAIRING.md](PHONE_PAIRING.md). Phones whose
+passkey synced through iCloud Keychain are unaffected by either.
+
 ## Returning-device flow
+
+Returning Google accounts show **Use saved passkey** after OAuth succeeds, rather
+than automatically starting an assertion. The user explicitly chooses before a
+native phone/security-key picker can obscure recovery. New-account setup is unchanged.
+On `https://chat.openanonymity.ai` only, **Move passkey to this site** is also
+available immediately when an existing PRF keyring qualifies; no failed prompt is
+required first. The choice is hidden while a ceremony is active. This action requests the
+same credential allowlist and PRF input with the fixed RP ID
+`oa-production-20260917.vercel.app`. That hostname must keep serving
+`/.well-known/webauthn` with `application/json` and an origins list containing
+only the final production origin. The browser validates the Related Origin
+Request; no arbitrary RP from server responses, local storage or query strings
+is accepted. Unsupported browsers or missing association metadata fail closed.
+
+After recovering the existing encryption key, **Save passkey for this site**
+creates a new current-origin passkey and appends a wrapper for that exact key. Its
+native prompt starts synchronously from a fresh click, after the storage reads,
+so it does not rely on activation surviving the old passkey prompt. No account,
+ticket, or old wrapper is replaced. Subsequent sign-ins can use the new passkey
+on the final hostname. Keep ownership of the preview hostname and its association
+endpoint while other affected accounts still need recovery. The recovery option
+is not proof that a particular credential was created on the preview hostname.
+
+The server must advertise `accountBinding: true` before recovery starts. The
+append includes `expectedAccountId`; a changed session is rejected before writing.
+An account-owned local journal saves only the encrypted wrapper before upload.
+After reload or a lost reply, retry unlocks that wrapper on the current origin,
+compares its recovered key with the original, and reuses the idempotent append.
+Confirmation must find the same wrapper in the same account's keyring before the
+journal is cleared. Both native prompts share an abort signal; closing the dialog,
+locking, or switching accounts cancels them. Account and login-generation checks
+also reject late results. Cancellation leaves the original passkey and tickets
+intact. New accounts still create credentials on their current origin directly.
 
 After OAuth authentication, the browser reads `GET /auth/keyring`, supplies the
 returned credential IDs as `allowCredentials`, evaluates the PRF locally, and

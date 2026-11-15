@@ -32,10 +32,15 @@ const { default: preferencesStore } = await import('../../chat/services/preferen
 const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
+const { OpenRouterAPI } = await import('../../chat/api.js');
+const readiness = await import('../../chat/services/inference/keyReadiness.js');
+const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
 const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
 const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
 const { default: RightPanel } = await import('../../chat/components/RightPanel.js');
+const { default: zeroDataRetention } = await import('../../chat/services/zeroDataRetention.js');
+const { default: CouncilController } = await import('../../chat/application/councilController.js');
 const { createModelPickerInterface, createComponentAppFacade } = await import('../../chat/ui/appInterface.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
@@ -78,6 +83,185 @@ function appHarness() {
         announceChatOperation() {}
     });
 }
+
+describe('ZDR send preflight and ownership', () => {
+    let restore;
+    let fetches;
+    const catalog = { data: [
+        { model_id: 'test/one', tag: 'safe/one', safety_retention: false },
+        { model_id: 'test/two', tag: 'safe/two', safety_retention: false }
+    ] };
+    beforeEach(async () => {
+        restore = installBrowser();
+        fetches = 0;
+        zeroDataRetention.configure({
+            settingsStore: { getSetting: async () => true, saveSetting: async () => {} },
+            fetchJson: async () => { fetches++; return catalog; }
+        });
+        await zeroDataRetention.restore();
+        await zeroDataRetention.ensureCatalog({ force: true });
+        fetches = 0;
+    });
+    afterEach(async () => { await zeroDataRetention.setEnabled(false); restore(); });
+
+    function harness() {
+        const app = appHarness();
+        app.state.models = [
+            { id: 'test/one', name: 'Allowed one' },
+            { id: 'test/two', name: 'Allowed two' },
+            { id: 'test/blocked', name: 'Blocked model' }
+        ];
+        app.state.pendingModelName = 'Allowed one';
+        app.state.sessionsById.get('one').model = 'Allowed one';
+        app.getModelsForSession = () => app.state.models;
+        app.normalizeModelName = name => name;
+        app.supportsFeature = () => true;
+        app.councilController = new CouncilController({ app, chatDB });
+        return app;
+    }
+
+    test('a pending preference preserves duplicate/Stop ownership without starting captured work', async () => {
+        const app = harness();
+        const loading = deferred();
+        zeroDataRetention.configure({ settingsStore: { getSetting: () => loading.promise, saveSetting: async () => {} } });
+        app.sendCapturedMessage = async () => assert.fail('canceled send must not start');
+        const sending = app.sendMessage();
+        const owner = app.getPendingSend('one');
+        assert.ok(owner);
+        await app.sendMessage();
+        assert.equal(app.getPendingSend('one'), owner);
+        app.stopCurrentSessionStreaming();
+        assert.equal(owner.controller.signal.aborted, true);
+        loading.resolve(true);
+        await sending;
+        assert.equal(app.getPendingSend('one'), null);
+        assert.equal(app.elements.messageInput.value, 'Original prompt');
+    });
+
+    test('failed preference reads release the send reservation and keep the draft', async () => {
+        const app = harness();
+        const notices = [];
+        app.showToast = message => notices.push(message);
+        zeroDataRetention.configure({ settingsStore: { getSetting: async () => { throw new Error('unreadable'); }, saveSetting: async () => {} } });
+        app.sendCapturedMessage = async () => assert.fail('unresolved privacy must not send');
+        await app.sendMessage();
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+        assert.equal(app.elements.messageInput.value, 'Original prompt');
+        assert.match(notices[0], /couldn't load your Zero data retention setting/);
+    });
+
+    for (const usePending of [true, false]) {
+        test(`new-chat Parallel checks its second model from ${usePending ? 'pending selection' : 'remembered defaults'}`, async () => {
+            const app = harness();
+            app.state.currentSessionId = null;
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            if (usePending) app.pendingCouncilConfig = { enabled: true, members: ['Allowed one', 'Blocked model'], outputMode: 'parallel' };
+            else { app.parallelModeEnabled = true; app.parallelSecondaryModel = 'Blocked model'; }
+            app.sendCapturedMessage = async () => assert.fail('blocked group must not reach session creation or paid access');
+            await app.sendMessage();
+            assert.match(notices[0], /Blocked model/);
+            assert.equal(app.sendSubmissionsInFlight.size, 0);
+        });
+    }
+
+    test('Council checks synthesis, Parallel ignores unused synthesis, and warm checks fetch nothing', async () => {
+        const app = harness();
+        app.state.currentSessionId = null;
+        app.pendingCouncilConfig = { enabled: true, members: ['Allowed one', 'Allowed two'], synthesisModel: 'Blocked model', outputMode: 'synthesis' };
+        const submission = { model: 'Allowed one', inferenceBackend: 'openrouter' };
+        assert.match((await app.checkZeroDataRetentionForSend(submission)).message, /Blocked model/);
+        app.pendingCouncilConfig.outputMode = 'parallel';
+        assert.equal(await app.checkZeroDataRetentionForSend(submission), null);
+        assert.equal(await app.checkZeroDataRetentionForSend(submission), null);
+        assert.equal(fetches, 0, 'warmed group checks must not add network round trips');
+    });
+
+    for (const existing of [false, true]) {
+        test(`${existing ? 'existing' : 'new'} Parallel checks the automatic secondary even with one configured member`, async () => {
+            const app = harness();
+            app.state.models = app.state.models.filter(model => model.name !== 'Allowed two');
+            if (existing) {
+                const session = app.state.sessionsById.get('one');
+                session.responseMode = 'council';
+                session.councilConfig = { enabled: true, members: ['Allowed one'], outputMode: 'parallel' };
+            } else {
+                app.state.currentSessionId = null;
+                app.parallelModeEnabled = true;
+            }
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            app.sendCapturedMessage = async () => assert.fail('inferred blocked lane must not reach paid access');
+            await app.sendMessage();
+            assert.match(notices[0], /Blocked model/);
+            assert.equal(app.sendSubmissionsInFlight.size, 0);
+        });
+    }
+
+    test('the actual newly created group is rechecked before spending', async () => {
+        const app = harness();
+        app.state.currentSessionId = null;
+        app.ensureDatabaseReady = async () => true;
+        app.createSession = async () => {
+            const session = { id: 'new', model: 'Allowed one', responseMode: 'council',
+                councilConfig: { enabled: true, members: ['Allowed one', 'Blocked model'], outputMode: 'parallel' } };
+            app.state.sessionsById.set(session.id, session);
+            return session;
+        };
+        app.preflightTurnTicketBudget = async () => assert.fail('must reject before spending');
+        await assert.rejects(app.sendCapturedMessage({ sessionId: null, generation: 0,
+            controller: new AbortController(), rawContent: 'test', files: [], model: 'Allowed one', inferenceBackend: 'openrouter' }),
+            error => error.reason === 'model' && /Blocked model/.test(error.message));
+    });
+
+    for (const eligible of [true, false]) {
+        test(`regenerate checks the saved message model before side effects (${eligible})`, async t => {
+            const app = harness();
+            const session = app.state.sessionsById.get('one');
+            session.model = eligible ? 'Blocked model' : 'Allowed one';
+            session.importedFrom = 'shared';
+            const originalModel = eligible ? 'Allowed one' : 'Blocked model';
+            t.mock.method(chatDB, 'getSessionMessages', async () => [{ id: 'u', role: 'user', model: originalModel, content: 'test' }]);
+            const effects = [];
+            app.clearMemoryApiOverrideContent = () => effects.push('memory');
+            app.markImportedSessionAsForked = async () => effects.push('fork');
+            app.updateUrlWithSession = () => {};
+            app.preflightTurnTicketBudget = async (_session, _content, options) => { effects.push(options.modelName); return false; };
+            const notices = [];
+            app.showToast = message => notices.push(message);
+            await app.regenerateResponse();
+            assert.deepEqual(effects, eligible ? ['memory', 'fork', 'Allowed one'] : []);
+            assert.equal(notices.length, eligible ? 0 : 1);
+            assert.equal(app.regenerationJobs.size, 0);
+        });
+    }
+
+    test('Parallel lane preflight checks its saved model rather than the current group', async t => {
+        const app = harness();
+        const session = app.state.sessionsById.get('one');
+        session.model = 'Blocked model';
+        session.responseMode = 'council';
+        session.councilConfig = { enabled: true, members: ['Blocked model', 'Allowed two'], outputMode: 'parallel' };
+        t.mock.method(chatDB, 'getSessionMessages', async () => [
+            { id: 'u', role: 'user', content: 'test' },
+            { id: 'a', role: 'assistant', council: { stage1: [{ laneId: 'primary', model: 'Allowed one', modelId: 'test/one', response: 'saved' }] } }
+        ]);
+        app.reserveAccessAcquisitionHandoff = () => {};
+        let checked = false;
+        app.preflightTurnTicketBudget = async () => { checked = true; return false; };
+        app.showToast = message => assert.fail(message);
+        await app.regenerateCouncilLane('a', 'primary');
+        assert.equal(checked, true);
+    });
+
+    test('Quick Ask refuses its chosen model before runtime preparation or paid access', async () => {
+        const app = harness();
+        app.resolveModelForQuickAsk = async () => ({ modelId: 'test/blocked', modelName: 'Blocked model' });
+        app.runtime.prepareTurn = async () => assert.fail('must not prepare paid turn');
+        app.ensureQuickAskAccess = async () => assert.fail('must not acquire access');
+        await assert.rejects(app.performInlineQuickAsk('Explain this text', { sessionId: 'one' }), error => error.reason === 'model');
+    });
+});
 
 function streamHarness(stream) {
     const app = appHarness();
@@ -146,6 +330,209 @@ function backendHarness() {
 }
 
 describe('production ChatApp runtime ownership', () => {
+    function searchHarness() {
+        const app = appHarness();
+        app.sessionSearchRequestId = 0;
+        app.sessionSearchQuery = 'needle';
+        app.sessionFilters = { starredOnly: false, dateMode: 'all', customDate: '' };
+        app.renderSessions = () => {};
+        app.cacheSessions = () => {};
+        app.refreshSessionConversationSearchText = () => assert.fail('already-indexed history must not read messages');
+        return app;
+    }
+
+    function searchDeletionHarness() {
+        const app = searchHarness();
+        const sessions = ['one', 'two'].map(id => ({
+            id, title: 'needle', conversationSearchText: '', starred: true, updatedAt: Date.now()
+        }));
+        app.state.sessions = [...sessions];
+        app.state.sessionsById = new Map(sessions.map(session => [session.id, session]));
+        app.state.currentSessionId = 'two';
+        app.state.sessionSearchResults = [...sessions];
+        app.state.sessionSearchResultsKey = app.getSessionResultsKey();
+        app.sessionScrollPositions = new Map();
+        app.sessionPromptScrollAnchors = new Map();
+        app.clearChatbarStateForSession = () => {};
+        app.cacheSessions = rows => rows.forEach(row => app.state.sessionsById.set(row.id, row));
+        return app;
+    }
+
+    for (const criteria of ['query', 'starred']) {
+        test(`deleting a chat removes it from cached ${criteria} results before rendering`, async t => {
+            const app = searchDeletionHarness();
+            if (criteria === 'starred') {
+                app.sessionSearchQuery = '';
+                app.sessionFilters.starredOnly = true;
+                app.state.sessionSearchResultsKey = app.getSessionResultsKey();
+            }
+            t.mock.method(chatDB, 'deleteSessionWithMessages', async () => {});
+            let rendered;
+            app.renderSessions = () => { rendered = app.getFilteredSessions().map(row => row.id); };
+            await app.deleteIdleSession('one');
+            assert.deepEqual(rendered, ['two']);
+            assert.equal(app.state.currentSessionId, 'two');
+        });
+    }
+
+    test('a search snapshot from before deletion cannot restore the deleted chat', async t => {
+        const app = searchDeletionHarness();
+        const snapshot = [...app.state.sessions];
+        const pending = deferred();
+        t.mock.method(chatDB, 'getAllSessions', () => pending.promise);
+        t.mock.method(chatDB, 'deleteSessionWithMessages', async () => {});
+        const searching = app.updateSessionSearchResults();
+        await app.deleteIdleSession('one');
+        pending.resolve(snapshot);
+        await searching;
+        assert.deepEqual(app.getFilteredSessions().map(row => row.id), ['two']);
+        assert.equal(app.state.sessionsById.has('one'), false);
+        assert.equal(app.state.sessionSearchPending, false);
+    });
+
+    test('failed storage deletion preserves searchable results', async t => {
+        const app = searchDeletionHarness();
+        t.mock.method(chatDB, 'deleteSessionWithMessages', async () => { throw new Error('storage failed'); });
+        await assert.rejects(app.deleteIdleSession('one'), /storage failed/);
+        assert.deepEqual(app.getFilteredSessions().map(row => row.id), ['one', 'two']);
+        assert.equal(app.deletedSessionIds.has('one'), false);
+    });
+
+    test('deletion during lazy indexing removes a match already collected by the search', async t => {
+        const app = searchDeletionHarness();
+        const pending = deferred();
+        const indexing = deferred();
+        const snapshot = [
+            { ...app.state.sessions[0], updatedAt: 2 },
+            { ...app.state.sessions[1], title: 'other', conversationSearchText: undefined, updatedAt: 1 }
+        ];
+        t.mock.method(chatDB, 'getAllSessions', async () => snapshot);
+        t.mock.method(chatDB, 'deleteSessionWithMessages', async () => {});
+        app.refreshSessionConversationSearchText = async session => {
+            indexing.resolve();
+            await pending.promise;
+            session.conversationSearchText = 'needle';
+        };
+        const searching = app.updateSessionSearchResults();
+        await indexing.promise;
+        await app.deleteIdleSession('one');
+        pending.resolve();
+        await searching;
+        assert.deepEqual(app.getFilteredSessions().map(row => row.id), ['two']);
+        assert.equal(app.state.sessionsById.has('one'), false);
+    });
+
+    test('long indexed history yields to input and returns ordered matches', async t => {
+        const app = searchHarness();
+        const sessions = Array.from({ length: 350 }, (_, i) => ({
+            id: `history-${i}`, updatedAt: i + 1,
+            title: i === 0 || i === 349 ? 'needle' : 'other', conversationSearchText: ''
+        }));
+        t.mock.method(chatDB, 'getAllSessions', async () => sessions);
+        let completed = false, inputRan = false;
+        const search = app.updateSessionSearchResults().then(() => { completed = true; });
+        setTimeout(() => { inputRan = true; assert.equal(completed, false); }, 0);
+        await search;
+        assert.equal(inputRan, true);
+        assert.deepEqual(app.state.sessionSearchResults.map(s => s.id), ['history-349', 'history-0']);
+        assert.equal(app.state.sessionSearchPending, false);
+    });
+
+    test('a new query interrupts a history scan without publishing old matches', async t => {
+        const app = searchHarness();
+        t.mock.method(chatDB, 'getAllSessions', async () => Array.from({ length: 350 }, (_, i) => ({
+            id: `history-${i}`, updatedAt: i, title: 'other', conversationSearchText: ''
+        })));
+        let scanned = 0;
+        app.sessionMatchesSearchQuery = () => { scanned++; return false; };
+        const search = app.updateSessionSearchResults();
+        const cleared = new Promise(resolve => setTimeout(() => {
+            app.sessionSearchQuery = '';
+            resolve(app.updateSessionSearchResults());
+        }, 0));
+        await Promise.all([search, cleared]);
+        assert.ok(scanned > 0 && scanned < 350, `obsolete query scanned ${scanned} rows`);
+        assert.equal(app.state.sessionSearchResults, null);
+        assert.equal(app.state.sessionSearchPending, false);
+    });
+
+    test('an obsolete database result is discarded before sorting or matching', async t => {
+        const app = searchHarness();
+        const pending = deferred();
+        t.mock.method(chatDB, 'getAllSessions', () => pending.promise);
+        const search = app.updateSessionSearchResults();
+        app.sessionSearchQuery = '';
+        await app.updateSessionSearchResults();
+        pending.resolve({ sort: () => assert.fail('obsolete history must not be sorted') });
+        await search;
+        assert.equal(app.state.sessionSearchResults, null);
+    });
+
+    function reasoningHarness(t, council = false) {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        // Node 24 MockTimers reschedules an interval cleared inside its own
+        // callback. Use a cancellable interval clock for this exact lifecycle.
+        const intervals = new Map();
+        let sequence = 0;
+        t.mock.method(globalThis, 'setInterval', callback => { intervals.set(++sequence, callback); return sequence; });
+        t.mock.method(globalThis, 'clearInterval', id => intervals.delete(id));
+        const tick = ms => {
+            for (let i = 0; i < ms; i += 16) {
+                t.mock.timers.tick(16);
+                for (const callback of [...intervals.values()]) callback();
+            }
+        };
+        const app = { updateActivePromptScrollSpacer() {}, updateScrollButtonVisibility() {} };
+        const area = Object.assign(Object.create(ChatArea.prototype), {
+            app, settledReasoningIds: new Map(), councilReasoningStreams: new Map(),
+            reasoningBuffer: { content: '', timeout: null, messageId: null },
+            typewriter: { targetContent: '', displayedLength: 0, interval: null, messageId: null, charsPerTick: 3, tickMs: 16 },
+            reasoningAutoScrollPaused: false, ensureCouncilLaneReasoningTrace() {}
+        });
+        let writes = 0, rendered = '', present = true;
+        const indicator = {};
+        const content = {
+            dataset: {}, classList: { contains: () => true, add() {} },
+            childNodes: [indicator], querySelector: () => indicator, addEventListener() {},
+            scrollTop: 0, scrollHeight: 200, clientHeight: 100
+        };
+        document.getElementById = id => present && id.startsWith('reasoning-content-') ? content : null;
+        document.createElement = () => ({ set innerHTML(html) { writes++; rendered = html; }, firstChild: null });
+        return {
+            area, content, tick, writes: () => writes, rendered: () => rendered,
+            detach: () => { present = false; },
+            update: text => council ? area.updateCouncilLaneReasoning('m', 'primary', text) : area.updateStreamingReasoning('m', text),
+            advance() { t.mock.timers.tick(80); tick(192); }
+        };
+    }
+
+    for (const council of [false, true]) {
+        test(`${council ? 'Council' : 'single'} reasoning stops idle rewrites and resumes for new text and corrections`, t => {
+            const h = reasoningHarness(t, council);
+            h.update('abc'); h.advance();
+            assert.match(h.rendered(), />abc</);
+            const idleWrites = h.writes();
+            h.tick(5000);
+            assert.equal(h.writes(), idleWrites, 'waiting for the provider must not repeatedly rebuild identical text');
+            h.update('abcdef'); h.advance();
+            assert.match(h.rendered(), />abcdef</);
+            h.update('<tag>!'); h.advance();
+            assert.match(h.rendered(), /&lt;tag&gt;!/, 'same-length corrections still render and stay escaped');
+            const finalWrites = h.writes();
+            h.tick(5000);
+            assert.equal(h.writes(), finalWrites);
+        });
+
+        test(`${council ? 'Council' : 'single'} detached reasoning stops its timer`, t => {
+            const h = reasoningHarness(t, council);
+            h.update('abcdef');
+            t.mock.timers.tick(80);
+            h.detach(); h.tick(16);
+            assert.equal(council ? h.area.councilReasoningStreams.size : h.area.typewriter.interval, council ? 0 : null);
+            assert.equal(h.writes(), 0);
+        });
+    }
+
     test('restored pages resume pending-turn cleanup; canceled navigation never marks unloading', async t => {
         const app = appHarness();
         const events = new EventTarget();
@@ -175,7 +562,7 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
-    function installNavigation(url = 'http://localhost/?s=one', state = {}) {
+    function installNavigation(url = 'http://localhost/?c=one', state = {}) {
         window.location = new URL(url);
         window.history = {
             state,
@@ -189,8 +576,10 @@ describe('production ChatApp runtime ownership', () => {
     test('reload of a locally visited chat deleted in another tab never tries a share download', async () => {
         const app = appHarness();
         app.state.sessions = [{ id: 'one' }];
+        // A pre-rename `?s=` address: writing the current chat replaces it with `?c=`.
         installNavigation('http://localhost/?s=one&view=test#billing', { unrelated: true });
         app.updateUrlWithSession('one');
+        assert.equal(window.location.search, '?view=test&c=one');
         // Model a fresh startup after the IndexedDB row was removed elsewhere.
         const restored = appHarness();
         restored.state.sessions = [];
@@ -217,11 +606,11 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(window.location.search, '');
     });
 
-    for (const marker of [undefined, 'different-chat']) {
-        test(`external and legacy share links still load with marker ${marker}`, async t => {
+    for (const [marker, param] of [[undefined, 'c'], ['different-chat', 'c'], [undefined, 's'], ['different-chat', 's']]) {
+        test(`external and legacy share links (?${param}=) still load with marker ${marker}`, async t => {
             const app = appHarness();
             app.state.sessions = [];
-            installNavigation('http://localhost/?s=shared-chat', { oaLocalSessionId: marker });
+            installNavigation(`http://localhost/?${param}=shared-chat`, { oaLocalSessionId: marker });
             for (const method of ['getSession', 'findSessionByShareId', 'findSessionByImportedFrom', 'findSessionByForkedFrom']) {
                 t.mock.method(chatDB, method, async () => undefined);
             }
@@ -235,12 +624,12 @@ describe('production ChatApp runtime ownership', () => {
     test('storage errors do not get misreported as a deleted local chat', async () => {
         const app = appHarness();
         app.state.sessions = [];
-        installNavigation('http://localhost/?s=one', { oaLocalSessionId: 'one' });
+        installNavigation('http://localhost/?c=one', { oaLocalSessionId: 'one' });
         chatDB.getSession = async () => { throw new Error('IndexedDB unavailable'); };
         app.showToast = () => assert.fail('Do not report missing data when storage fails');
         app.importSharedSession = () => assert.fail('Storage failure must not become a share lookup');
         await assert.rejects(app.checkForUrlSession(), /IndexedDB unavailable/);
-        assert.equal(window.location.search, '?s=one');
+        assert.equal(window.location.search, '?c=one');
     });
 
     test('an old search result stays in the normal sidebar after opening and new activity', async () => {
@@ -327,6 +716,327 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(app.getSessionStreamingState('one').isStreaming, false);
     });
 
+    for (const action of ['send', 'retry']) {
+        for (const partial of [false, true]) {
+            test(`${action} handles structured errors with partial=${partial} without hiding the original failure`, async () => {
+                let calls = 0;
+                const { app, records } = streamHarness(async (...args) => {
+                    calls++;
+                    if (partial) await args[3]('Partial answer');
+                    throw { message: { detail: [{ msg: 'Model unavailable', input: 'private input' }] },
+                        status: 400, retryable: false };
+                });
+                if (action === 'retry') {
+                    records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt', model: 'Accepted model', memoryMode: false });
+                    await app.regenerateResponse();
+                } else await app.sendMessage();
+                const assistant = [...records.values()].find(message => message.role === 'assistant');
+                assert.ok(assistant);
+                assert.match(partial ? assistant.inferenceError : assistant.content, /Model unavailable/);
+                assert.doesNotMatch(JSON.stringify(assistant), /private input|\[object Object\]|includes is not a function/);
+                if (partial) assert.equal(assistant.content, 'Partial answer');
+                else assert.equal(assistant.isLocalOnly, true);
+                assert.equal(calls, 1, 'permanent errors must not replay inference');
+                assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+            });
+        }
+    }
+
+    test('null and string throws leave a readable local error and release the composer', async () => {
+        for (const failure of [null, 'Request rejected']) {
+            const { app, records } = streamHarness(async () => { throw failure; });
+            await app.sendMessage();
+            const assistant = [...records.values()].find(message => message.role === 'assistant');
+            assert.match(assistant.content, failure ? /Request rejected/ : /The request failed/);
+            assert.equal(assistant.isLocalOnly, true);
+            assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+        }
+    });
+
+    test('a structured key-acquisition failure is shown without sending inference', async () => {
+        const { app, records } = streamHarness(async () => assert.fail('No inference without access'));
+        app.inferenceService.getAccessToken = () => null;
+        app.acquireAndSetAccess = async () => { throw { detail: { message: 'Tickets are being moved. Please retry.' } }; };
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /Tickets are being moved/);
+        assert.equal(assistant.isLocalOnly, true);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('structured legacy ticket errors keep recovery metadata and ambiguous failures never consume tickets', () => {
+        const priceChange = ticketClient.createTicketRedemptionError({ detail: 'Invalid ticket count' }, 400, 'fallback');
+        const structuredPriceChange = ticketClient.createTicketRedemptionError({ detail: {
+            error_code: 'TIER_TICKETS_MISMATCH', message: 'A localized pricing mismatch'
+        } }, 400, 'fallback');
+        assert.equal(ticketClient.createTicketRedemptionError({
+            detail: 'Invalid ticket count', error_code: 'TIER_TICKETS_MISMATCH'
+        }, 400, 'fallback').code, 'TICKET_PRICE_CHANGED');
+        assert.equal(structuredPriceChange.code, 'TICKET_PRICE_CHANGED');
+        assert.notEqual(structuredPriceChange.consumeTickets, true);
+        assert.equal(priceChange.code, 'TICKET_PRICE_CHANGED');
+        assert.notEqual(priceChange.consumeTickets, true);
+        const ambiguous = ticketClient.createTicketRedemptionError({ detail: 'Invalid ticket count' }, 500, 'fallback');
+        assert.notEqual(ambiguous.code, 'TICKET_PRICE_CHANGED');
+        const keyId = 'ab'.repeat(32);
+        const legacy = ticketClient.createTicketRedemptionError({ detail: {
+            error_code: 'TICKET_KEY_LEGACY', legacy_key_id: keyId,
+            message: { message: 'Legacy ticket' }
+        } }, 409, 'fallback');
+        assert.equal(legacy.code, 'TICKET_KEY_LEGACY');
+        assert.equal(legacy.legacyKeyId, keyId);
+        assert.equal(legacy.status, 409);
+        assert.notEqual(legacy.consumeTickets, true);
+        const invalidated = ticketClient.createTicketRedemptionError({ detail: {
+            error_code: 'TICKET_KEY_INVALIDATED', invalidated_key_id: keyId,
+            message: { message: 'Old signing key' }
+        } }, 409, 'fallback');
+        assert.equal(invalidated.code, 'TICKET_KEY_INVALIDATED');
+        assert.equal(invalidated.invalidatedKeyId, keyId);
+        for (const data of [{ detail: { message: { message: 'Service unavailable' } } },
+            { detail: { message: { message: 'Authentication refused' } } },
+            { detail: [{ msg: 'Invalid request', input: 'private ticket' }] },
+            { detail: { input: 'private ticket' } }]) {
+            for (const status of [400, 401]) {
+                const error = ticketClient.createTicketRedemptionError(data, status, 'fallback');
+                assert.equal(typeof error.message, 'string');
+                assert.notEqual(error.consumeTickets, true);
+                assert.notEqual(error.code, 'TICKET_USED');
+                assert.doesNotMatch(error.message, /private ticket|\[object Object\]/);
+            }
+        }
+    });
+
+    test('a failed credit refresh preserves its structured error without repeating access or inference', async () => {
+        let calls = 0, refreshes = 0;
+        const { app, records } = streamHarness(async () => {
+            calls++;
+            throw Object.assign(new Error('Key limit exceeded'), { status: 402,
+                data: { error: { metadata: { limit_source: 'openrouter_key_limit' } } } });
+        });
+        app.refreshAccessAfterCreditExhaustion = async () => {
+            refreshes++;
+            throw { message: { detail: 'Ticket service unavailable' }, status: 400 };
+        };
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /Ticket service unavailable/);
+        assert.equal(calls, 1);
+        assert.equal(refreshes, 1);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    // Inference HTTP 401: the real send loop, the real OpenRouter client and
+    // its rejected-request boundary, with only the network transport stubbed.
+    function authRetryHarness(respond, { delays = [1, 2, 4], acquireRequestAccess, authClock } = {}) {
+        const requests = [];
+        const api = new OpenRouterAPI({
+            ...(acquireRequestAccess ? { acquireRequestAccess } : {}),
+            inferenceTiming: { authRetryDelaysMs: delays, ...(authClock ? { authClock } : {}) },
+            networkTransport: { async fetchWithRetry(url, init) {
+                requests.push({ url, at: authClock?.now(), authorization: init.headers.Authorization || init.headers.authorization, body: init.body });
+                return respond(requests.length);
+            } }
+        });
+        const harness = streamHarness((messages, modelId, session, ...rest) =>
+            api.streamCompletion(messages, modelId, 'ticket-key', ...rest));
+        harness.app.acquireAndSetAccess = async () => assert.fail('A 401 retry must not acquire new access');
+        harness.app.refreshAccessAfterCreditExhaustion = async () => assert.fail('A 401 retry must not redeem tickets');
+        return { ...harness, requests };
+    }
+    const rejected = () => new Response(JSON.stringify({ error: { code: 401, message: 'PRIVATE_PROVIDER_BODY' } }), { status: 401 });
+    const answered = text => new Response(`data: {"choices":[{"delta":{"content":"${text}"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`);
+
+    test('a transient inference 401 resends the identical request with the same key and no new access', async () => {
+        const { app, records, requests } = authRetryHarness(call => call <= 2 ? rejected() : answered('Recovered answer'));
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant.content, 'Recovered answer');
+        assert.equal(requests.length, 3);
+        assert.deepEqual(new Set(requests.map(request => request.authorization)), new Set(['Bearer ticket-key']));
+        assert.equal(new Set(requests.map(request => request.body)).size, 1, 'same model, payload and conversation');
+        assert.equal(requests[0].url, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    // Fresh-key readiness with the real deferred title job: the real send and
+    // Retry loops, the real OpenRouter client and title request, only the
+    // network transport stubbed.
+    let freshKeySequence = 0;
+    function freshKeyHarness(respondStream, { hangPauses = false } = {}) {
+        const key = `sk-or-v1-app-fresh-key-${String(++freshKeySequence).padStart(4, '0')}`;
+        // Virtual offsets from the real clocks, which the app's own readiness
+        // check (deciding whether to defer the title) reads.
+        let t = 0;
+        const monotonicBase = performance.now();
+        const wallBase = Date.now();
+        const abortError = () => new DOMException('Request aborted', 'AbortError');
+        const authClock = {
+            now: () => monotonicBase + t,
+            wallNow: () => wallBase + t,
+            sleep: (ms, signal) => new Promise((resolve, reject) => {
+                if (signal?.aborted) { reject(abortError()); return; }
+                signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+                if (!hangPauses) { t += ms; resolve(); }
+            })
+        };
+        const streams = [];
+        const titles = [];
+        const api = new OpenRouterAPI({
+            inferenceTiming: { authClock },
+            networkTransport: {
+                async fetchWithRetry(url, init) {
+                    streams.push({ at: t, authorization: init.headers.Authorization, body: init.body });
+                    return respondStream(t, streams.length);
+                },
+                async fetchWithRetryJson(url, init) {
+                    titles.push({ at: t, authorization: init.headers.Authorization });
+                    return { response: { ok: true, status: 200 }, data: { choices: [{ message: { content: 'Generated title' } }] } };
+                }
+            }
+        });
+        const harness = streamHarness((messages, modelId, session, ...rest) => api.streamCompletion(messages, modelId, key, ...rest));
+        const { app } = harness;
+        const session = app.state.sessionsById.get('one');
+        Object.assign(session, { title: 'Local title', titleSource: 'local', titleGenerationPending: true });
+        app.inferenceService.getAccessToken = () => key;
+        app.inferenceService.generateSessionTitle = (target, prompt, options) => api.generateSessionTitle(prompt, key, options);
+        // The real title job, not the harness stub.
+        app.generateSessionTitleIfNeeded = ChatApp.prototype.generateSessionTitleIfNeeded;
+        app.getModelsForSession = () => app.state.models;
+        app.cleanGeneratedSessionTitle = value => String(value || '').trim();
+        app.clearSessionTitleGenerationPending = async () => {};
+        app.tryRecordRuntimeUsage = async () => {};
+        app.renderSessions = () => {};
+        app.acquireAndSetAccess = async () => assert.fail('A 401 resend must not acquire new access');
+        app.refreshAccessAfterCreditExhaustion = async () => assert.fail('A 401 resend must not redeem tickets');
+        return { ...harness, key, session, streams, titles, markFresh: () => readiness.markFreshInferenceKey(key,
+            { clock: authClock, receivedAt: monotonicBase, expiresAt: wallBase + 20 * 60_000 }) };
+    }
+    const settleTitleJobs = async app => { await Promise.all([...app.titleGenerationJobs.values()].map(job => job.promise.catch(() => {}))); };
+
+    test('a fresh verified key rejected for its first 30 s is answered, and its title starts only after acceptance', async () => {
+        const h = freshKeyHarness(t => t >= 30_000 ? answered('Recovered answer') : rejected());
+        h.markFresh();
+        await h.app.sendMessage();
+        await settleTitleJobs(h.app);
+        const assistant = [...h.records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant.content, 'Recovered answer');
+        assert.deepEqual(h.streams.map(request => request.at), [0, 1000, 3000, 7000, 12000, 17000, 22000, 27000, 32000]);
+        assert.equal(new Set(h.streams.map(request => request.authorization + request.body)).size, 1);
+        assert.equal(h.titles.length, 1, 'one title request, never a rejected one');
+        assert.equal(h.titles[0].at, 32000);
+        assert.equal(h.session.title, 'Generated title');
+        assert.equal(readiness.getFreshKeyReadiness(h.key), null);
+    });
+
+    test('Stop during fresh-key readiness leaves no title job: the chat is free at once and nothing is billed later', async () => {
+        let accept = false;
+        const h = freshKeyHarness(() => accept ? answered('Follow-up answer') : rejected(), { hangPauses: true });
+        h.markFresh();
+        const first = h.app.sendMessage();
+        for (let i = 0; i < 50 && h.streams.length === 0; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.streams.length, 1);
+        assert.equal(h.app.titleGenerationJobs.size, 0, 'no title job waits on the unaccepted key');
+        h.app.stopCurrentSessionStreaming();
+        await first;
+        assert.equal(h.app.titleGenerationJobs.size, 0);
+        assert.equal(h.app.isSessionBusy('one'), false, 'the composer is free immediately');
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(h.titles.length, 0, 'no background title after Stop');
+        assert.equal(h.streams.length, 1);
+        // An immediate follow-up in the same chat is accepted.
+        accept = true;
+        h.app.elements.messageInput.value = 'Follow-up prompt';
+        await h.app.sendMessage();
+        await settleTitleJobs(h.app);
+        assert.ok([...h.records.values()].some(message => message.role === 'assistant' && message.content === 'Follow-up answer'));
+        assert.equal(h.app.titleGenerationJobs.size, 0);
+    });
+
+    test('an early primary failure starts no title; Retry is accepted and only then titles the chat', async () => {
+        let mode = 'fail';
+        const h = freshKeyHarness(() => mode === 'fail' ? new Response('{"error":{"message":"Bad request"}}', { status: 400 }) : answered('Retried answer'));
+        h.markFresh();
+        await h.app.sendMessage();
+        assert.equal(h.app.titleGenerationJobs.size, 0);
+        assert.equal(h.titles.length, 0, 'a failed turn never titles in the background');
+        assert.equal(h.session.titleGenerationPending, true, 'the title is still owed to the chat');
+        mode = 'accept';
+        await h.app.regenerateResponse();
+        await settleTitleJobs(h.app);
+        assert.ok([...h.records.values()].some(message => message.role === 'assistant' && message.content === 'Retried answer'));
+        assert.equal(h.titles.length, 1);
+        assert.equal(h.session.title, 'Generated title');
+    });
+
+    test('a key with no readiness window titles at once, as before', async () => {
+        const h = freshKeyHarness(() => answered('Answer'));
+        await h.app.sendMessage();
+        await settleTitleJobs(h.app);
+        assert.equal(h.titles.length, 1);
+    });
+
+    test('a persistent inference 401 stops after three resends with plain copy and no provider text', async () => {
+        const { app, records, requests } = authRetryHarness(() => rejected());
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(requests.length, 4, 'one request plus three same-key resends');
+        assert.match(assistant.content, /provider rejected this chat's access key 4 times \(HTTP 401\)\. Try again in a moment\./);
+        assert.doesNotMatch(assistant.content, /PRIVATE_PROVIDER_BODY|Bearer|ticket-key/);
+        assert.equal(assistant.isLocalOnly, true);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('mixed gateway and auth rejections stay bounded by both retry budgets', async () => {
+        const { app, records, requests } = authRetryHarness(call => call === 1
+            ? new Response('{}', { status: 503 }) : rejected());
+        await app.sendMessage();
+        assert.equal(requests.length, 5, 'one 503, then one request plus three auth resends');
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /HTTP 401/);
+    });
+
+    test('stopping during the 401 backoff cancels the wait and sends nothing more', async () => {
+        const { app, records, requests } = authRetryHarness(() => {
+            setTimeout(() => app.sessionStreamingStates.get('one').abortController.abort(), 5);
+            return rejected();
+        }, { delays: [60000, 60000, 60000] });
+        const started = Date.now();
+        await app.sendMessage();
+        await new Promise(resolve => setTimeout(resolve, 30));
+        assert.ok(Date.now() - started < 5000, 'the backoff must not hold the composer');
+        assert.equal(requests.length, 1);
+        assert.equal([...records.values()].some(message => message.role === 'assistant' && /401/.test(message.content || '')), false);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('a 401 reported after output keeps the partial reply and is never replayed', async () => {
+        const { app, records, requests } = authRetryHarness(() => new Response(
+            'data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n'
+            + 'data: {"error":{"code":401,"message":"PRIVATE_PROVIDER_BODY"}}\n\n'));
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(requests.length, 1);
+        assert.equal(assistant.content, 'Partial answer');
+        assert.ok(assistant.inferenceError);
+    });
+
+    test('a private-access issuance 401 is not resent and keeps the existing authentication copy', async () => {
+        let acquired = 0;
+        const { app, records, requests } = authRetryHarness(() => assert.fail('No inference without access'), {
+            acquireRequestAccess: async () => {
+                acquired++;
+                throw Object.assign(new Error('Invalid org signature'), { name: 'BrowserWalletHttpError', status: 401 });
+            }
+        });
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(acquired, 1);
+        assert.equal(requests.length, 0);
+        assert.match(assistant.content, /^Authentication error\./);
+    });
+
     test('wide mode updates the action label and icon immediately in both directions', () => {
         const classes = new Set();
         document.documentElement.classList = {
@@ -406,6 +1116,76 @@ describe('production ChatApp runtime ownership', () => {
         panel.isVisible = false; panel.updatePanelVisibility();
         panel.isVisible = true; panel.updatePanelVisibility();
         assert.deepEqual(captures, [false, true]);
+    });
+
+    test('restaurant price ratings preserve every Markdown table row', () => {
+        const previousMarked = globalThis.marked;
+        globalThis.marked = markedApi;
+        const app = appHarness();
+        app.escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            const source = [
+                '| Restaurant | Why go |', '| --- | --- |',
+                '| Evvia | Greek food. **$$$** · [Guide](https://example.com/evvia) |',
+                '| Protégé | Tasting menu. **$$$$** · [Guide](https://example.com/protege) |',
+                '| Ettan | Indian food. **$$$** |', '| Cafe | **$$** |'
+            ].join('\n');
+            const html = app.processContentWithLatex(source);
+            assert.equal((html.match(/<tr>/g) || []).length, 5);
+            assert.match(html, /<strong>\$\$\$<\/strong>/);
+            assert.match(html, /<strong>\$\$\$\$<\/strong>/);
+            assert.match(html, /<strong>\$\$<\/strong>/);
+            assert.match(html, /href="https:\/\/example.com\/protege"/);
+            assert.equal(app.processContentWithLatex('`$$x$$`').trim(), '<p><code>$$x$$</code></p>');
+        } finally { globalThis.marked = previousMarked; }
+    });
+
+    test('removed link anchors cannot open a delayed preview', t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const app = appHarness();
+        let attached = true;
+        let shown = 0;
+        const link = { getAttribute: () => 'https://example.com/' };
+        app.elements.messagesContainer = { contains: () => attached };
+        app.showLinkPreview = () => { shown++; };
+        app.handleLinkMouseEnter({ target: { closest: () => link } });
+        attached = false;
+        t.mock.timers.tick(201);
+        assert.equal(shown, 0);
+    });
+
+    test('transcript removal and window blur dismiss a visible preview and cancel pending work', t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const app = appHarness();
+        const classes = new Set(['visible']);
+        app.linkPreviewCard = {
+            classList: { add: x => classes.add(x), remove: x => classes.delete(x) },
+            addEventListener() {}
+        };
+        let attached = true;
+        app.elements.messagesContainer = { contains: () => attached, addEventListener() {} };
+        let mutation;
+        let blur;
+        const previousObserver = globalThis.MutationObserver;
+        globalThis.MutationObserver = class { constructor(fn) { mutation = fn; } observe() {} disconnect() {} };
+        window.addEventListener = (name, fn) => { if (name === 'blur') blur = fn; };
+        try {
+            app.setupLinkPreviewListeners();
+            app.currentPreviewLink = {};
+            app.isHoveringPreviewCard = true;
+            app.linkPreviewTimeout = setTimeout(() => assert.fail('stale preview reopened'), 200);
+            attached = false;
+            mutation();
+            t.mock.timers.tick(201);
+            assert.equal(classes.has('visible'), false);
+            assert.equal(classes.has('hidden'), true);
+            assert.equal(app.currentPreviewLink, null);
+            classes.add('visible');
+            app.currentPreviewLink = {};
+            blur();
+            assert.equal(classes.has('visible'), false);
+            assert.equal(app.currentPreviewLink, null);
+        } finally { globalThis.MutationObserver = previousObserver; }
     });
 
     test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
@@ -558,6 +1338,27 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(captured.inferenceBackend, 'paid');
         gate.resolve();
         await sending;
+    });
+
+    test('valid chat and Council keys do not depend on pricing availability', async () => {
+        let fetches = 0;
+        globalThis.fetch = async () => { fetches++; return new Response('{}', { status: 400 }); };
+        const app = Object.create(ChatApp.prototype);
+        const session = { id: 'reuse', model: 'Model A' };
+        app.getModelsForSession = () => [{ id: 'model-a', name: 'Model A' }];
+        app.inferenceService = { getAccessToken: () => 'usable-key', isAccessExpired: () => false };
+        app.isCouncilModeActive = () => false;
+        assert.equal((await app.getFreshInferenceTicketRequirement(session)).tickets, 0);
+        app.isCouncilModeActive = () => true;
+        app.councilController = {
+            resolveModelEntries: () => [{ id: 'model-a', name: 'Model A' }],
+            resolveEntryForStage1Entry: () => ({ id: 'model-a', name: 'Model A' }),
+            getFreshEntriesForAccess: () => [],
+            calculateCouncilTicketRequirement: () => assert.fail('No pricing needed for reused keys')
+        };
+        assert.equal((await app.getFreshInferenceTicketRequirement(session)).tickets, 0);
+        assert.equal((await app.getFreshInferenceTicketRequirement(session, { councilStageEntry: {} })).tickets, 0);
+        assert.equal(fetches, 0);
     });
 
     test('per-session ticket policy keeps paid access off the ticket pricing and redemption path', async () => {
@@ -783,6 +1584,131 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(app.sendSubmissionsInFlight.size, 0);
     });
 
+    test('new-chat sends run independently and keep duplicate and Stop ownership per chat', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        const gates = [deferred(), deferred()];
+        const submissions = [];
+        app.sendCapturedMessage = async submission => {
+            const index = submissions.length;
+            submissions.push(submission);
+            submission.sessionId = index === 0 ? 'one' : 'two';
+            app.state.currentSessionId = submission.sessionId;
+            await gates[index].promise;
+        };
+        const first = app.sendMessage();
+        await app.sendMessage(); // Same created chat is still owned.
+        assert.equal(submissions.length, 1);
+        app.sessionNavigationGeneration++;
+        app.state.currentSessionId = null;
+        app.elements.messageInput.value = 'Second chat';
+        const second = app.sendMessage();
+        await app.sendMessage();
+        assert.equal(submissions.length, 2);
+        assert.equal(app.getPendingSend('one'), submissions[0]);
+        assert.equal(app.getPendingSend('two'), submissions[1]);
+        app.stopCurrentSessionStreaming();
+        assert.equal(submissions[1].controller.signal.aborted, true);
+        assert.equal(submissions[0].controller.signal.aborted, false);
+        gates[0].resolve();
+        await first;
+        assert.equal(app.getPendingSend('two'), submissions[1], 'late A cleanup must retain B ownership');
+        gates[1].resolve();
+        await second;
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
+    test('uncreated submissions deduplicate their own composer but not later new chats or existing chats', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        const gate = deferred();
+        const submissions = [];
+        app.sendCapturedMessage = async submission => { submissions.push(submission); await gate.promise; };
+        const first = app.sendMessage();
+        await app.sendMessage();
+        assert.equal(submissions.length, 1);
+        app.sessionNavigationGeneration++;
+        assert.equal(app.getPendingSend(null), null, 'old uncreated submission does not own the new draft');
+        const second = app.sendMessage();
+        await app.sendMessage();
+        assert.equal(submissions.length, 2);
+        app.sessionNavigationGeneration++;
+        const third = app.sendMessage();
+        assert.equal(submissions.length, 3);
+        app.state.currentSessionId = 'two';
+        assert.equal(app.getPendingSend('two'), null, 'an uncreated submission does not own an existing chat');
+        const existing = app.sendMessage();
+        assert.equal(submissions.length, 4);
+        gate.resolve();
+        await Promise.all([first, second, third, existing]);
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
+    test('abandoned session creation never sends the old prompt in the newly selected chat', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        app.ensureDatabaseReady = async () => true;
+        const creating = deferred();
+        const entered = deferred();
+        app.createSession = async () => { entered.resolve(); return creating.promise; };
+        app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
+        let validated = 0;
+        app.validateCapturedInput = async () => { validated++; };
+        app.preflightTurnTicketBudget = async () => false;
+        const sending = app.sendMessage();
+        await entered.promise;
+        app.sessionNavigationGeneration++;
+        app.state.currentSessionId = 'two';
+        creating.resolve(null);
+        await sending;
+        assert.equal(validated, 0, 'abandoned prompt never reaches validation or spending in another session');
+        assert.equal(app.elements.messageInput.value, 'Original prompt');
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
+    test('New Chat cancels only the departing submission when the runtime requires retirement', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        app.runtime.onNewChat = () => {};
+        app.runtime.shouldCancelOnNewChat = () => true;
+        app.clearCurrentSession = async () => { app.state.currentSessionId = null; };
+        app.isMobileView = () => false;
+        const gate = deferred();
+        const submissions = [];
+        app.sendCapturedMessage = async submission => { submissions.push(submission); await gate.promise; };
+        const first = app.sendMessage();
+        await app.handleNewChatRequest();
+        assert.equal(submissions[0].controller.signal.aborted, true);
+        const second = app.sendMessage();
+        assert.equal(submissions.length, 2, 'retiring A does not reserve B composer');
+        assert.equal(submissions[1].controller.signal.aborted, false);
+        gate.resolve();
+        await Promise.all([first, second]);
+    });
+
+    test('oversized conversation keeps the draft and history without spending tickets', async () => {
+        const app = appHarness();
+        const draft = 'a'.repeat((64_000 - 8) * 4);
+        app.elements.messageInput.value = draft;
+        const files = [{ name: 'notes.txt', size: 10, type: 'text/plain' }];
+        app.uploadedFiles = files;
+        app.ensureDatabaseReady = async () => true;
+        app.getModelsForSession = () => [{ name: 'Model one', context_length: 64_000 }];
+        app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
+        const history = [];
+        chatDB.getSessionMessages = async () => history;
+        chatDB.saveMessage = async () => assert.fail('Rejected input must not append to history');
+        app.preflightTurnTicketBudget = async () => assert.fail('Rejected input must not begin ticket spending');
+        const notices = [];
+        app.showToast = message => notices.push(message);
+        await app.sendMessage();
+        assert.equal(app.elements.messageInput.value, draft);
+        assert.equal(app.uploadedFiles, files);
+        assert.equal(history.length, 0);
+        assert.match(notices[0], /model’s context limit/);
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
     test('database delay cannot redirect an existing-chat Send to the newly selected chat', async () => {
         const app = appHarness();
         const gate = deferred();
@@ -921,6 +1847,66 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(preflight.memoryMode, true);
         assert.equal(memoryOptions.memoryMode, true);
         assert.equal(memoryOptions.memoryFeatureEnabled, true);
+    });
+
+    test('a stale thumbnail render cannot retain an attachment removed while decoding', async () => {
+        const app = appHarness();
+        const decoding = deferred();
+        const photo = new File(['fixture'], 'photo.png', { type: 'image/png' });
+        const revoked = [], created = [];
+        const { createComposerImageUrls } = await import('../../chat/services/composerImageUrls.js');
+        app.composerImageUrls = createComposerImageUrls({
+            createObjectURL(file) { created.push(file); return 'blob:fixture'; },
+            revokeObjectURL(url) { revoked.push(url); }
+        });
+        app.filePreviewRenderVersion = 0;
+        app.uploadedFiles = [photo];
+        app.createComposerThumbnail = () => decoding.promise;
+        app.elements.filePreviewsContainer = { innerHTML: 'old preview', classList: { add() {}, remove() {} } };
+        const rendering = app.renderFilePreviews();
+        app.uploadedFiles = [];
+        await app.renderFilePreviews();
+        decoding.resolve('data:image/png,thumbnail');
+        await rendering;
+        assert.equal(app.elements.filePreviewsContainer.innerHTML, '');
+        assert.deepEqual(created, [], 'stale work must not allocate a browser-owned URL');
+        assert.deepEqual(revoked, []);
+    });
+
+    test('an image Send saves the picked file as bytes, never as a File object', async () => {
+        const app = appHarness();
+        const photo = new File([new Uint8Array([1, 2, 3])], 'IMG_4917.jpeg', { type: 'image/jpeg' });
+        app.uploadedFiles = [photo];
+        app.elements.messageInput.value = '';
+        app.ensureDatabaseReady = async () => true;
+        app.validateCapturedInput = async () => {};
+        app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
+        app.preflightTurnTicketBudget = async () => true;
+        app.activateCouncilLayoutForSubmittedTurn = async () => {};
+        app.reserveAccessAcquisitionHandoff = () => {};
+        app.resolvePendingPhaseForSession = () => 'requesting-key';
+        app.setSessionStreamingState = () => {};
+        app.renderFilePreviews = app.updateFileCountBadge = app.resetMessageInputLayout = app.startPromptSlideUpEffect = () => {};
+        app.updateScrollButtonVisibility = () => {};
+        let saved;
+        app.addMessage = async (_role, _content, metadata) => {
+            saved = structuredClone(metadata.extra);
+            const message = { id: 'accepted' };
+            metadata.onPersisted?.(message);
+            return message;
+        };
+        let readFiles;
+        app.ensureMessageFileMetadata = async (_message, files) => {
+            readFiles = files;
+            throw Object.assign(new Error('Stop after acceptance'), { isCancelled: true });
+        };
+        await app.sendMessage();
+        const [stored] = saved.pendingFileObjects;
+        assert.ok(!(stored instanceof Blob));
+        assert.deepEqual([...new Uint8Array(stored.bytes)], [1, 2, 3]);
+        assert.equal(stored.name, 'IMG_4917.jpeg');
+        assert.deepEqual(readFiles, [photo], 'this Send still reads the picked file itself');
+        assert.deepEqual(app.uploadedFiles, []);
     });
 
     test('session creation cannot restore an old URL after navigation during settings persistence', async () => {
@@ -1446,6 +2432,49 @@ describe('production ChatApp runtime ownership', () => {
             ['Auto Router', 'Auto Router']);
     });
 
+    test('an edited prompt is resubmitted to the model on the edit card, not the one it was first sent to', async () => {
+        let requestedModelId;
+        const { app, records } = streamHarness(async (...args) => {
+            requestedModelId = args[1];
+            await args[3]('An answer from the newly selected model');
+            return { completionTokens: 3 };
+        });
+        app.state.models = [
+            { id: 'vendor/first-model', name: 'First model' },
+            { id: 'vendor/second-model', name: 'Second model' }
+        ];
+        app.inferenceService.getDisplayName = (_id, fallback) => fallback;
+        app.chatArea = { appendMessage() {}, updateStreamingMessage() {}, finalizeStreamingMessage() {},
+            updateMessage() {}, removeMessagesAfter() {}, updateMessageModel() {} };
+        records.set('prompt', { id: 'prompt', sessionId: 'one', role: 'user', content: 'Earlier prompt',
+            model: 'First model', memoryMode: false, timestamp: 1 });
+        records.set('answer', { id: 'answer', sessionId: 'one', role: 'assistant', content: 'From the first model',
+            model: 'First model', timestamp: 2 });
+        // The model picker was switched while the edit card was open; its chip mirrors the session model.
+        app.state.sessionsById.get('one').model = 'Second model';
+        app.editDrafts = new Map([['prompt', { content: 'Edited prompt', files: [] }]]);
+        app.editingMessageId = 'prompt';
+        app.stopSessionStreamingAndWait = async () => true;
+        app.recomputeSessionCouncilTranscriptHint = async () => {};
+        app.applySessionConversationSearchText = () => {};
+        app.renderSessions = () => {};
+        globalThis.document.querySelector = selector => (selector.includes('edit-prompt-textarea')
+            ? { value: 'Edited prompt' }
+            : null);
+
+        await app.confirmEditPrompt('prompt');
+
+        const prompt = records.get('prompt');
+        assert.equal(prompt.content, 'Edited prompt');
+        assert.equal(prompt.model, 'Second model', 'the stored prompt records the model it was resubmitted to');
+        assert.equal(records.has('answer'), false, 'the earlier reply is truncated');
+        assert.equal(requestedModelId, 'vendor/second-model');
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant?.model, 'Second model');
+        assert.equal(app.editingMessageId, null);
+        assert.equal(app.exclusiveSessionMutationOwners.has('one'), false, 'the edit releases its exclusive reservation');
+    });
+
     test('pre-output response metadata patches only its session pending header in place', () => {
         const makePending = sessionId => {
             const label = { textContent: 'Auto Router' };
@@ -1568,6 +2597,79 @@ describe('production ChatApp runtime ownership', () => {
                 assert.equal(app.sendSubmissionsInFlight.size, 0);
             });
         }
+    }
+
+    test('explicit retry with unavailable selected pricing never streams or falls back', async () => {
+        let streams = 0;
+        const { app, records } = streamHarness(async () => { streams++; return {}; });
+        app.state.models.push({ id: 'selected-model', name: 'Selected model' });
+        records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt', model: 'Accepted model' });
+        app.hasEligibleModelAccess = (_session, model) => {
+            assert.equal(model, 'Selected model');
+            return false;
+        };
+        let purchases = 0;
+        app.acquireAndSetAccess = async (_session, options) => {
+            purchases++;
+            assert.equal(options.modelNameOverride, 'Selected model');
+            throw Object.assign(new Error('Selected model has no price'), { code: 'MODEL_TIER_UNAVAILABLE' });
+        };
+        await app.regenerateResponse({ modelNameOverride: 'Selected model' });
+        assert.equal(purchases, 1);
+        assert.equal(streams, 0);
+        assert.ok([...records.values()].some(m => m.isLocalOnly && m.content.includes('Selected model has no price')));
+        assert.equal(app.regenerationJobs.size, 0);
+    });
+
+    test('explicit retry model uses the selected model for preflight, access and inference', async () => {
+        let streamed, preflight, acquired;
+        const { app, records } = streamHarness(async (...args) => { streamed = args; return { totalTokens: 1 }; });
+        app.state.models.push({ id: 'selected-model', name: 'Selected model' });
+        app.state.sessionsById.get('one').model = 'Selected model';
+        records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt', model: 'Unavailable model',
+            searchEnabled: true, memoryMode: false, reasoningEnabled: false, reasoningEffort: 'low' });
+        app.preflightTurnTicketBudget = async (_session, _content, options) => { preflight = options; return true; };
+        app.hasEligibleModelAccess = (_session, model) => {
+            assert.equal(model, 'Selected model');
+            return false;
+        };
+        app.acquireAndSetAccess = async (_session, options) => { acquired = options.modelNameOverride; };
+        await app.regenerateResponse({ modelNameOverride: 'Selected model' });
+        assert.equal(preflight.modelName, 'Selected model');
+        assert.equal(acquired, 'Selected model');
+        assert.equal(streamed[1], 'selected-model');
+        assert.equal(streamed[6], true);
+        assert.equal(streamed[10], false);
+        assert.equal(records.get('accepted').model, 'Unavailable model', 'original prompt metadata remains historical');
+    });
+
+    for (const action of ['handleResendMessage', 'handleRegenerateMessage']) {
+        test(`${action} captures the Cmd+K model before asynchronous work`, async () => {
+            const area = Object.create(ChatArea.prototype);
+            const session = { id: 'one', model: 'Selected model' };
+            const owner = {};
+            let requested;
+            area.setMessageActionBusy = () => {};
+            area.render = async () => {};
+            area.app = {
+                getCurrentSession: () => session,
+                beginSessionMutation: () => owner,
+                endSessionMutation: () => {},
+                stopSessionStreamingAndWait: async () => { session.model = 'Later selection'; return true; },
+                isSessionDeleted: () => false,
+                data: {
+                    getSessionMessages: async () => [
+                        { id: 'question', role: 'user', model: 'Unavailable model' },
+                        { id: 'error', role: 'assistant', isLocalOnly: true }
+                    ],
+                    deleteMessage: async () => {}
+                },
+                regenerateResponse: async options => { requested = options; }
+            };
+            await area[action](action === 'handleResendMessage' ? 'question' : 'error');
+            assert.equal(requested.modelNameOverride, 'Selected model');
+            assert.equal(requested.sessionId, 'one');
+        });
     }
 
     test('Retry uses accepted model/search/Memory/reasoning and prepares recoverable files before inference', async () => {
@@ -1826,7 +2928,7 @@ test('shared conversation arrival skips startup sign-in but still requires sign-
         app.signInPolicy = { required: true };
         app.getPaymentMode = () => 'tickets';
         app.accountModal = { open() { opened += 1; } };
-        for (const search of ['?s=01m24-vns1h-1jeze-svet6e', '?s=shared&view=read']) {
+        for (const search of ['?c=01m24-vns1h-1jeze-svet6e', '?c=shared&view=read', '?s=01m24-vns1h-1jeze-svet6e', '?s=shared&view=read']) {
             window.location.search = search;
             assert.equal(await app.openSignInIfRequired(), false);
         }
@@ -1835,11 +2937,11 @@ test('shared conversation arrival skips startup sign-in but still requires sign-
         // This must stop before any wallet, model, or inference work.
         assert.equal(await app.preflightTurnTicketBudget({}, 'Continue this conversation'), false);
         assert.equal(opened, 1);
-        for (const search of ['', '?s=', '?s=%20', '?subject=shared']) {
+        for (const search of ['', '?c=', '?c=%20', '?s=', '?s=%20', '?subject=shared']) {
             window.location.search = search;
             assert.equal(await app.openSignInIfRequired(), true);
         }
-        assert.equal(opened, 5);
+        assert.equal(opened, 7);
     } finally {
         accountService.waitForAuthBootstrap = originalWait;
         accountService.reconcileSharedAccount = originalReconcile;
@@ -1853,11 +2955,14 @@ test('send waits for shared account reconciliation and blocks locked or incomple
     const { default: accountService } = await import('../../chat/services/accountService.js');
     const originalState = accountService.getState;
     const originalReconcile = accountService.reconcileSharedAccount;
+    const originalWait = accountService.waitForAuthBootstrap;
     let current;
     let reconciled = false;
     let opened = 0;
     let notices = 0;
+    let waits = 0;
     try {
+        accountService.waitForAuthBootstrap = async () => current;
         accountService.reconcileSharedAccount = async () => { await Promise.resolve(); reconciled = true; };
         accountService.getState = () => { assert.ok(reconciled); return current; };
         const app = Object.create(ChatApp.prototype);
@@ -1865,22 +2970,182 @@ test('send waits for shared account reconciliation and blocks locked or incomple
         app.getPaymentMode = () => 'tickets';
         app.accountModal = { open() { opened += 1; } };
         app.showToast = () => { notices += 1; };
+        // A start-up wait that runs out (the account did not become ready).
+        app.waitForAccountState = async () => { waits += 1; return current; };
         // No model or wallet methods: reaching them would fail this test,
         // even when a stale UI had displayed a positive ticket balance.
         const ready = { accountId: 'account-y', sessionVerified: true, status: 'unlocked', accountScopeReady: true, ticketSyncReady: true };
         for (const patch of [
             { sessionVerified: false }, { status: 'locked' },
-            { accountHandoffPending: true }, { accountScopeReady: false }, { ticketSyncReady: false }
+            { accountHandoffPending: true }, { accountScopeReady: false }
         ]) {
             current = { ...ready, ...patch };
             reconciled = false;
             assert.equal(await app.preflightTurnTicketBudget({}, 'Hello'), false);
         }
         assert.equal(opened, 2);
-        assert.equal(notices, 3);
+        assert.equal(notices, 2);
+        assert.equal(waits, 2, 'a handoff or an inactive scope is waited for before the notice');
+        // The first encrypted sync still running is not a reason to refuse: a
+        // wallet that covers the turn sends; the budget check is reached.
+        current = { ...ready, ticketSyncReady: false };
+        reconciled = false;
+        let priced = 0;
+        app.runtime = {};
+        app.features = { tickets: true };
+        app.memoryFeatureEnabled = false;
+        app.memoryMode = false;
+        app.getFreshInferenceTicketRequirement = async () => { priced += 1; return { tickets: 1, label: 'Model one' }; };
+        const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
+        const wallet = { getTicketCount: ticketClient.getTicketCount, getHeldTicketCount: ticketClient.getHeldTicketCount, isLegacyTransferRunning: ticketClient.isLegacyTransferRunning };
+        Object.assign(ticketClient, { getTicketCount: () => 3, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false });
+        try {
+            assert.equal(await app.preflightTurnTicketBudget({}, 'Hello'), true);
+        } finally {
+            Object.assign(ticketClient, wallet);
+        }
+        assert.equal(priced, 1);
+        assert.equal(waits, 2);
     } finally {
         accountService.getState = originalState;
         accountService.reconcileSharedAccount = originalReconcile;
+        accountService.waitForAuthBootstrap = originalWait;
         restore();
     }
+});
+
+
+test('automatic composer focus never opens the phone keyboard or interrupts an account dialog', () => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness(); let focuses = 0;
+        const input = app.elements.messageInput;
+        input.ownerDocument = document;
+        input.offsetParent = {}; input.focus = () => focuses++;
+        document.defaultView = window;
+        window.innerWidth = 390;
+        app.focusMessageInput({ force: true }); app.focusMessageInput();
+        assert.equal(focuses, 0);
+        window.innerWidth = 1200; app.focusMessageInput();
+        assert.equal(focuses, 1);
+        app.accountModal = { isOpen: true }; app.focusMessageInput({ force: true });
+        assert.equal(focuses, 1);
+    } finally { restore(); }
+});
+
+for (const failure of ['notice', 'metadata', 'none']) {
+    test(`regeneration restores the visible original even when ${failure} persistence fails`, async t => {
+        const restore = installBrowser();
+        try {
+            const app = appHarness(); let renders = 0;
+            const draft = {sessionId:'one'};
+            t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
+            t.mock.method(chatDB, 'finishMessageReplacement', async (_draft, options) => {
+                assert.equal(options.notice, 'stopped');
+                if (failure === 'notice') throw Error('Synthetic quota failure');
+            });
+            app.chatArea = {render: async()=>renders++};
+            app.regenerateCapturedResponse = async ({abortController}) => { abortController.abort(); };
+            app.recomputeSessionCouncilTranscriptHint = async()=>{if(failure === 'metadata')throw Error('Synthetic metadata failure');};
+            app.refreshSessionConversationSearchText = async()=>{};
+            app.showToast = ()=>{};
+            await app.regenerateResponse({sessionId:'one',replaceFromMessageId:'original'});
+            assert.equal(renders,2,'original view restored after the draft view');
+            assert.equal(app.regenerationJobs.size,0);
+        } finally { restore(); }
+    });
+}
+
+test('search and council metadata never persist an unfinished replacement', async () => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness(), session=app.state.sessionsById.get('one');
+        session.conversationSearchText='original index';
+        chatDB.messageReplacements.set('one',{});
+        assert.equal(app.applySessionConversationSearchText(session,[{content:'draft'}]),null);
+        assert.equal(await app.refreshSessionConversationSearchText(session,null,{persist:true}),null);
+        assert.equal(await app.setSessionCouncilTranscriptHint(session,true,{persist:true}),false);
+        assert.equal(session.conversationSearchText,'original index');
+        assert.equal(session.hasCouncilTranscript,undefined);
+    } finally { chatDB.messageReplacements.delete('one'); restore(); }
+});
+
+for (const outcome of ['complete', 'failed', 'empty', 'stopped']) {
+    test(`regeneration ${outcome} selects the correct durable replacement outcome`, async t => {
+        const restore = installBrowser();
+        try {
+            const app = appHarness();
+            const draft = { sessionId: 'one' };
+            const finishes = [];
+            let renders = 0, extractions = 0;
+            t.mock.method(chatDB, 'beginMessageReplacement', async (sessionId, messageId) => {
+                assert.equal(sessionId, 'one');
+                assert.equal(messageId, 'original');
+                return draft;
+            });
+            t.mock.method(chatDB, 'finishMessageReplacement', async (received, options) => {
+                assert.equal(received, draft);
+                finishes.push(options);
+            });
+            app.chatArea = { render: async () => { renders++; } };
+            app.regenerateCapturedResponse = async ({ abortController }) => {
+                if (outcome === 'stopped') abortController.abort();
+                return outcome === 'empty' ? undefined : { completed: outcome === 'complete' || outcome === 'stopped' };
+            };
+            app.recomputeSessionCouncilTranscriptHint = async () => {};
+            app.refreshSessionConversationSearchText = async () => {};
+            app.triggerPostTurnMemoryExtraction = () => { extractions++; };
+            await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
+            assert.deepEqual(finishes, [outcome === 'complete' ? { commit: true } : { notice: outcome === 'stopped' ? 'stopped' : 'failed' }]);
+            assert.equal(extractions, outcome === 'complete' ? 1 : 0);
+            assert.equal(renders, 2);
+            assert.equal(app.regenerationJobs.size, 0);
+        } finally { restore(); }
+    });
+}
+
+test('regenerate action never deletes the saved transcript before requesting its replacement', async () => {
+    const area = Object.create(ChatArea.prototype);
+    const messages = [
+        { id: 'question', role: 'user' },
+        { id: 'original', role: 'assistant' },
+        { id: 'later', role: 'user' }
+    ];
+    let requested, ended = false;
+    const owner = {};
+    area.setMessageActionBusy = () => {};
+    area.app = {
+        getCurrentSession: () => ({ id: 'one' }),
+        beginSessionMutation: () => owner,
+        endSessionMutation: (_id, token) => { assert.equal(token, owner); ended = true; },
+        stopSessionStreamingAndWait: async () => true,
+        isSessionDeleted: () => false,
+        data: {
+            getSessionMessages: async () => structuredClone(messages),
+            deleteMessage: async () => { throw new Error('Do not delete the previous answer before replacement succeeds'); }
+        },
+        regenerateResponse: async options => { requested = options; }
+    };
+    await area.handleRegenerateMessage('original');
+    assert.deepEqual(requested, { sessionId: 'one', userMessageId: 'question', mutationToken: owner, replaceFromMessageId: 'original', modelNameOverride: undefined });
+    assert.equal(ended, true);
+});
+
+test('Council Quick Ask restores retained access before building its inference session', async () => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness();
+        const session = { id: 's' };
+        let active = 'expired'; let restores = 0;
+        app.inferenceService = { getAccessLabel: () => 'API key', getVerificationAdapter: () => null, getAccessInfo: () => ({}) };
+        app.councilController = {
+            seedPrimaryLaneAccessFromSession() {}, needsFreshLaneAccess: () => false,
+            ensureAccessForEntries: async () => { restores++; active = 'retained-paid'; },
+            buildLaneSession: () => ({ apiKey: active })
+        };
+        app.getBannedAccessWarning = () => null;
+        const result = await app.ensureQuickAskAccess(session, { laneId: 'primary', laneEntry: { id: 'p/high', name: 'High' } }, new AbortController());
+        assert.equal(restores, 1);
+        assert.equal(result.apiKey, 'retained-paid');
+    } finally { restore(); }
 });

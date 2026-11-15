@@ -11,6 +11,7 @@ import {
 } from './_registryFixtures.mjs';
 import { isUnclaimedPayoutCredit } from '../../chat/zkapi/versioning/walletHoldings.mjs';
 import { availableWithdrawalEscape } from '../../chat/zkapi/services/withdrawalRecovery.mjs';
+import { withdrawalFeeScope } from '../../chat/zkapi/components/WithdrawalFees.js';
 import { installActiveVersion, resetActiveVersionForTests } from '../../chat/zkapi/versioning/activeVersion.mjs';
 import { createDocument as createMiniDocument } from './_miniDom.mjs';
 
@@ -375,7 +376,7 @@ test('a deposit that already started is finished here, on the closed version', t
     assert.match(html, /Resume with MetaMask|Saved deposit/);
     // A submitted one shows the ordinary recovery view.
     zkapiClient.config.pending_deposit = { phase: 'submitted', amount: '5000000' };
-    assert.match(f.modal.renderBalance(), /Deposit submitted/);
+    assert.match(f.modal.renderBalance(), /Deposit in progress/);
 });
 
 test('with the helpers still loading, a closed version offers no deposit and says so', t => {
@@ -415,7 +416,8 @@ test('the review step: steps, fee disclosure, destination, and the existing with
 test('the method choice returns where escape is the person’s own choice', t => {
     const f = upgradeFixture(t);
     f.modal.withdrawMode = 'escape';
-    assert.match(f.modal.renderUpgrade(), /name="zkapi-withdraw-mode"/);
+    // The escape hatch is a quiet link of the form, shown where it is the choice.
+    assert.match(f.modal.renderUpgrade(), /id="zkapi-withdraw-mode-toggle"[^>]*>Use the normal withdrawal instead</);
 });
 
 test('the upgrade’s withdrawal narrates under the upgrade’s name, an ordinary one under its own', t => {
@@ -657,18 +659,17 @@ test('"you can add a new balance while a return is pending" is not said where de
     assert.match(held, /keep chatting normally\. Version 2 deposits wait until this finishes\./);
 });
 
-test('set-aside is not offered as a way to add a balance where deposits wait', t => {
+test('set-aside is not offered as a way to add a balance, on any version', t => {
+    // The dialog's withdrawal view no longer sets a balance aside (the staging
+    // lineage removed it); where deposits wait it offers nothing of the kind
+    // either, and a single version page draws the same.
     const prepared = { mode: 'mutual', phase: 'prepared', clearance_reserved: true };
     const f = fixture(t, { note: aNote(), config: { prepared_withdrawal: prepared }, facade: facadeFor(holder(20)) });
     let html = f.modal.renderWithdrawal();
-    assert.match(html, /id="zkapi-park-withdrawal-btn"[^>]*>Set aside for later</);
-    assert.match(html, /Version 2 deposits wait until this finishes\./);
-    assert.doesNotMatch(html, /Set aside and add a new balance/);
-    // Single version: exactly the old button.
+    assert.doesNotMatch(html, /zkapi-park-withdrawal-btn|Set aside and add a new balance|Set aside for later/);
     delete zkapiClient.oaVersioning;
     html = f.modal.renderWithdrawal();
-    assert.match(html, /Set aside and add a new balance/);
-    assert.doesNotMatch(html, /deposits wait/);
+    assert.doesNotMatch(html, /zkapi-park-withdrawal-btn|Set aside and add a new balance|Set aside for later/);
 });
 
 // ---------------------------------------------------------------------------
@@ -809,7 +810,7 @@ test('the same gates hold for Send Ethereum: no funding flow is started', async 
     const html = controls.renderFundingAccount(owner);
     assert.doesNotMatch(html, /data-funding-address\b|Copy address|Amount to deposit|data-funding-next/);
     assert.match(html, /ETH left at your funding address/);
-    assert.match(html, /Return leftover ETH/);
+    assert.match(html, /Return ETH to your wallet/);
     // A version that takes deposits shows it all again.
     zkapiClient.oaVersioning = facadeFor(derive({ active: V2, selection: selectionFor(V2, { reason: 'no_runtime_note', slotOwner: null, slotKind: 'empty' }) }), { active: V2 });
     assert.match(controls.renderFundingAccount(owner), /data-funding-address\b/);
@@ -1237,7 +1238,7 @@ test('a single-version tab writes the view exactly as it always did', t => {
     f.modal.isOpen = true;
     f.modal.rememberRunningModal();
     assert.deepEqual(Object.keys(JSON.parse(storage.get('oa-zkapi-running-modal'))).sort(),
-        ['amount', 'currency', 'help', 'history', 'method', 'mode', 'scroll', 'setup', 'view']);
+        ['amount', 'currency', 'help', 'history', 'method', 'mode', 'returnOpen', 'scroll', 'setup', 'view']);
 });
 
 test('the upgrade view is restorable, and the welcome intent obeys the same stamp', t => {
@@ -1561,7 +1562,19 @@ test('the new paths run in a vm with no imports and no facade', () => {
         'restoreWalletView', 'stopFundingFlow', 'isFundingViewHydrating', 'attachPrivateBalanceHelp', 'capturePrivateBalanceHelpFocus',
         'privateBalanceExpiryLabel', 'privateBalanceExpired', 'privateBalanceGuide', 'privateBalanceHelpButton', 'privateBalanceHelpContent',
         'restorePrivateBalanceHelpFocus', 'updatePrivateBalanceExpiryState', 'zkapiErrorMessage', 'runAddressAction'];
+    // Every name the three sources import is supplied (the host's own imports
+    // too); the explicit values of the context replace the ones that matter.
+    const importedNames = [];
+    for (const file of ['AccountModal', 'WelcomePanel', 'WalletMethodControls']) {
+        const raw = fs.readFileSync(new URL(`../../chat/zkapi/components/${file}.js`, import.meta.url), 'utf8');
+        for (const match of raw.matchAll(/^import\s+([\s\S]*?)\s+from\s+'[^']+';/gm)) {
+            const clause = match[1].trim();
+            const names = clause.startsWith('{') ? clause.slice(1, clause.lastIndexOf('}')).split(',') : [clause];
+            importedNames.push(...names.map(entry => entry.trim().split(/\s+as\s+/).pop()).filter(Boolean));
+        }
+    }
     const context = {
+        ...Object.fromEntries(importedNames.map(name => [name, () => ''])),
         zkapiClient: client, addressFundingWallet: { pending: null, address: null, hasPendingTransaction: false },
         getWalletMethod: () => 'metamask', walletMethodText: value => value,
         readWelcomeModalIntent: () => null, writeWelcomeModalIntent() {},
@@ -1912,7 +1925,7 @@ test('a dormant facade writes the saved view in today’s shape, so it survives 
     f.modal.isOpen = true;
     f.modal.rememberRunningModal();
     assert.deepEqual(Object.keys(JSON.parse(storage.get('oa-zkapi-running-modal'))).sort(),
-        ['amount', 'currency', 'help', 'history', 'method', 'mode', 'scroll', 'setup', 'view']);
+        ['amount', 'currency', 'help', 'history', 'method', 'mode', 'returnOpen', 'scroll', 'setup', 'view']);
     // The welcome too.
     const welcome = Object.assign(Object.create(WelcomePanel.prototype), { app: {}, isOpen: true, overlay: { querySelector: () => null } });
     welcome.rememberRunningModal();
@@ -1927,7 +1940,7 @@ test('the funding view of a single-version page is exactly what it was', t => {
     t.after(() => setWalletMethod('metamask'));
     addressFundingWallet.state = { exists: true, unlocked: true, backedUp: true, address: `0x${'2'.repeat(40)}`, pending: null, migrationRequired: false };
     const html = controls.renderFundingAccount(ownerOf());
-    assert.match(html, /<\/details>\n        <p data-funding-notice class="zkapi-helper" role="status">/);
+    assert.match(html, /<p data-funding-notice class="zkapi-helper zkapi-funding-notice" role="status">/);
 });
 
 
@@ -2693,7 +2706,7 @@ test('while a chat settles, Withdraw says the most it could cost and offers the 
     assert.equal(concedeChecked(root), 'wait', 'never preselects giving something up');
     // It sits between the method and the confirmation.
     assert.ok(html.indexOf('name="zkapi-withdraw-mode"') < html.indexOf('data-zkapi-exit-choice'));
-    assert.ok(html.indexOf('data-zkapi-exit-choice') < html.indexOf('id="zkapi-withdraw-confirm"'));
+    assert.ok(html.indexOf('data-zkapi-exit-choice') < html.indexOf('id="zkapi-withdraw-btn"'));
     // Not a way to give up silently: the figure is said with its ether beside it.
     assert.match(textOf(html), /0\.001 ETH/);
     // The upgrade's embedded withdrawal says the same.
@@ -2736,11 +2749,12 @@ test('a withdrawal already prepared shows the fine print and no choice: its meth
 // The withdrawal the dialog starts, against the real service modules with only
 // the network and the wallet stood in for. `prepared` is a withdrawal plan
 // the SDK saved earlier (an unsubmitted mutual close in the browser's slot).
-function startable(t, page, { prepared = false } = {}) {
+function startable(t, page, { prepared = false, browser = false } = {}) {
     const events = [];
     const destination = `0x${'b'.repeat(40)}`;
     const previous = { browserMode: zkapiClient.browserMode, manifest: walletRuntime.manifest,
-        runtime: walletRuntime.runtime, preempt: walletRuntime.preemptForExit, config: zkapiClient.config };
+        runtime: walletRuntime.runtime, preempt: walletRuntime.preemptForExit, config: zkapiClient.config,
+        escapeReady: walletRuntime.assertEscapeReady, hadEscapeReady: Object.hasOwn(walletRuntime, 'assertEscapeReady') };
     zkapiClient.browserMode = prepared;
     walletRuntime.manifest = { deployment_id: 'dialog-test' };
     walletRuntime.runtime = { state: { note_id: 7 }, lateWithdrawalAttempts: [],
@@ -2757,18 +2771,37 @@ function startable(t, page, { prepared = false } = {}) {
         Object.assign(walletRuntime, { manifest: previous.manifest, runtime: previous.runtime });
         if (previous.preempt === undefined) delete walletRuntime.preemptForExit;
         else walletRuntime.preemptForExit = previous.preempt;
+        if (previous.hadEscapeReady) walletRuntime.assertEscapeReady = previous.escapeReady;
+        else delete walletRuntime.assertEscapeReady;
     });
     t.mock.method(addressFundingWallet, 'init', async () => {});
     t.mock.method(addressFundingWallet, 'reload', async () => {});
     t.mock.method(zkapiClient, 'init', async () => {});
     t.mock.method(zkapiClient, 'settleActiveLease', async () => { events.push('settle'); });
+    // An escape asks the runtime whether it is ready instead of settling chat
+    // access: the same hook, so a test that moves the clock "while the chat key
+    // settles" moves it at that step for either way of leaving.
+    if (browser) {
+        zkapiClient.browserMode = true;
+        walletRuntime.assertEscapeReady = async () => { await zkapiClient.settleActiveLease(); };
+    }
     t.mock.method(zkapiClient, 'connectWallet', async () => { events.push('connect'); return `0x${'c'.repeat(40)}`; });
     t.mock.method(walletRuntime, 'init', async () => { events.push('init'); });
     t.mock.method(walletRuntime, 'reload', async () => { events.push('reload'); });
     const withdrawals = [];
+    // The wallet-paid fee review that precedes a withdrawal: a funded quote.
+    const feeQuote = { address: destination, chainId: 1, mode: 'mutual', balanceWei: '100', feeReserveWei: '10',
+        shortfallWei: '0', expiresAt: Number.MAX_SAFE_INTEGER };
+    page.modal.walletMethodReady = true;
+    page.modal.withdrawalFees = { scope: withdrawalFeeScope(page.modal), quote: feeQuote };
+    t.mock.method(zkapiClient, 'getWithdrawalFeeBudget', async mode => ({ ...feeQuote, mode }));
     t.mock.method(zkapiClient, 'withdraw', async (mode, report, options) => {
         events.push('withdraw');
-        withdrawals.push({ mode, options });
+        // The wallet fee review (reviewedFunding) is the host's own and is
+        // covered by withdrawal-feedback; these tests are about what a version
+        // adds, so it is set aside here.
+        const { reviewedFunding: _reviewed, ...rest } = options || {};
+        withdrawals.push({ mode, options: Object.keys(rest).length ? rest : undefined });
         return { status: 'submitted' };
     });
     const runs = [];
@@ -2848,9 +2881,9 @@ test('wiring:withdrawal-operation-recheck the prepared withdrawal the person cho
     drawWithdraw(page);
     await page.modal.submitWithdrawal();
     // The strict check of the chosen plan first (as it always was), then the
-    // settlement (its own recovery pass reads the wallet in a browser), then
-    // the wallet connection, then the note-and-operation check, then the SDK.
-    assert.deepEqual(started.events, ['init', 'reload', 'init', 'reload', 'settle', 'connect',
+    // escape's readiness (an escape never settles chat access), then the
+    // wallet connection, then the note-and-operation check, then the SDK.
+    assert.deepEqual(started.events, ['init', 'reload', 'init', 'reload', 'connect',
         'init', 'preempt', 'reload', 'withdraw']);
     assert.equal(started.runs[0].details.operationId, 'withdraw-7', 'the signer is bound to the operation shown');
     assert.equal(started.runs[0].details.kind, 'escape');
@@ -2925,7 +2958,7 @@ test('a page drawn for something else, or before the figure grew, is drawn again
     page.modal.withdrawMode = 'escape';
     const draws = [];
     page.modal.render = () => { draws.push('render'); };
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.deepEqual(draws, ['render']);
     assert.equal(started.runs.length, 0);
     assert.equal(started.withdrawals.length, 0);
@@ -2938,7 +2971,7 @@ test('a page drawn for something else, or before the figure grew, is drawn again
     zkapiClient.config = { ...zkapiClient.config, exit: { ...zkapiClient.config.exit, bound_at_state: '2000000' } };
     zkapiClient.emitChange('update');
     assert.equal(page.facade.state(SHAPES_NOW).exit.boundAtState, '2000000');
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.equal(draws.length, 2);
     assert.equal(started.runs.length, 0);
     assert.match(page.modal.outcome.message, /has changed/);
@@ -2979,7 +3012,7 @@ test('once the time a settling chat had to settle has passed, Withdraw offers no
             assert.doesNotMatch(textOf(html), /waits for it|Wait for it to settle|Give up nothing now/);
             // The sentence sits with the fine print, before the confirmation.
             assert.ok(html.indexOf('data-zkapi-exit-bound') < html.indexOf('data-zkapi-exit-settlement-passed'));
-            assert.ok(html.indexOf('data-zkapi-exit-settlement-passed') < html.indexOf('id="zkapi-withdraw-confirm"'));
+            assert.ok(html.indexOf('data-zkapi-exit-settlement-passed') < html.indexOf('id="zkapi-withdraw-btn"'));
         }
     }
 });
@@ -2987,7 +3020,7 @@ test('once the time a settling chat had to settle has passed, Withdraw offers no
 test('after the settling chat\'s time the dialog starts the withdrawal on the figure it showed, and nothing on a choice that no longer exists', async t => {
     const page = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
     const at = settlementTimeOf(page);
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     Date.now = () => at + 1;
     page.modal.withdrawMode = 'mutual';
     drawWithdraw(page);
@@ -3004,12 +3037,12 @@ test('after the settling chat\'s time the dialog starts the withdrawal on the fi
 test('a page drawn before the settling chat\'s time is not acted on after it, unless the person chose to give up the figure', async t => {
     const page = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
     const at = settlementTimeOf(page);
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     drawWithdraw(page);
     // The default (waiting) was drawn at a time when it meant something.
     assert.equal(concedeChecked(page.modal.overlay), 'wait');
     Date.now = () => at;
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.equal(started.runs.length, 0, 'nothing started');
     assert.equal(started.withdrawals.length, 0);
     assert.equal(page.modal.outcome.tone, 'error');
@@ -3025,7 +3058,7 @@ test('a page drawn before the settling chat\'s time is not acted on after it, un
     page.modal.overlay.querySelector('input[value="zero"]').click();
     assert.equal(page.modal.exitChoice?.choice, 'zero');
     Date.now = () => at;
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.equal(started.withdrawals.length, 0);
     assert.equal(page.modal.exitChoice, null, 'the pick is not carried over');
     // Giving up the figure was chosen in so many words and is still exactly
@@ -3043,7 +3076,7 @@ test('a page drawn before the settling chat\'s time is not acted on after it, un
 test('the settling chat\'s time passing while the chat key settles stops a waiting withdrawal before the SDK is asked', async t => {
     const page = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
     const at = settlementTimeOf(page);
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     // The chat key's settlement takes until after that time.
     zkapiClient.settleActiveLease.mock.mockImplementation(async () => {
         started.events.push('settle');
@@ -3059,7 +3092,7 @@ test('the settling chat\'s time passing while the chat key settles stops a waiti
     // Giving up nothing now is just as much a thing of the past.
     Date.now = () => at - 1000;
     const nothing = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
-    const third = startable(t, nothing);
+    const third = startable(t, nothing, { browser: true });
     zkapiClient.settleActiveLease.mock.mockImplementation(async () => {
         third.events.push('settle');
         Date.now = () => at + 1;
@@ -3072,7 +3105,7 @@ test('the settling chat\'s time passing while the chat key settles stops a waiti
     // The same lapse is no reason to stop a person who chose to give up the figure.
     Date.now = () => at - 1000;
     const again = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
-    const second = startable(t, again);
+    const second = startable(t, again, { browser: true });
     zkapiClient.settleActiveLease.mock.mockImplementation(async () => {
         second.events.push('settle');
         Date.now = () => at + 1;
@@ -3101,7 +3134,7 @@ test('a choice drawn under a time that was held only by a refusal is out of date
     zkapiClient.emitChange('update');
     page.facade.noteRefusal(settlementRefusal(at), { slot: true });
     assert.equal(page.facade.state(SHAPES_NOW).exit.wait?.kind, 'settlement');
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     drawWithdraw(page);
     page.modal.render();
     assert.deepEqual(concedeValues(page.modal.overlay), ['wait', 'zero', 'bound']);
@@ -3111,7 +3144,7 @@ test('a choice drawn under a time that was held only by a refusal is out of date
     Date.now = () => at;
     assert.equal(page.facade.state(at).exit.wait, null);
     assert.equal(page.facade.state(at).exit.escapeAtMs, null);
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.equal(started.runs.length, 0);
     assert.equal(started.withdrawals.length, 0);
     assert.match(page.modal.outcome.message, /The time that chat had to settle has passed/);
@@ -3123,7 +3156,7 @@ test('a choice drawn when the state named no time is out of date once the state 
     zkapiClient.config = { ...zkapiClient.config, exit: { ...zkapiClient.config.exit, escape_at: null } };
     zkapiClient.emitChange('update');
     assert.equal(page.facade.state(SHAPES_NOW).exit.escapeAtMs, null);
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     drawWithdraw(page);
     page.modal.render();
     assert.deepEqual(concedeValues(page.modal.overlay), ['wait', 'zero', 'bound']);
@@ -3132,7 +3165,7 @@ test('a choice drawn when the state named no time is out of date once the state 
     zkapiClient.config = { ...zkapiClient.config, exit: { ...zkapiClient.config.exit, escape_at: at } };
     zkapiClient.emitChange('update');
     Date.now = () => at;
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.equal(started.withdrawals.length, 0);
     assert.match(page.modal.outcome.message, /The time that chat had to settle has passed/);
     // A moment earlier the same page is acted on.
@@ -3162,7 +3195,7 @@ test('only a settlement wait carries a settlement time: another kind of wait wit
 test('a chat that settled before the click is no settlement time that passed: the choice drawn for it still means what it says', async t => {
     const page = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
     const at = settlementTimeOf(page);
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     drawWithdraw(page);
     page.modal.render();
     assert.equal(concedeChecked(page.modal.overlay), 'wait');
@@ -3196,7 +3229,7 @@ test('the later of the times the state holds is the settlement time, so a refusa
 
 test('giving up the figure is chosen for that figure exactly: a figure that shrank is drawn again before anything is prepared', async t => {
     const page = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
-    const started = startable(t, page);
+    const started = startable(t, page, { browser: true });
     drawWithdraw(page);
     page.modal.render();
     page.modal.overlay.querySelector('input[value="bound"]').click();
@@ -3205,7 +3238,7 @@ test('giving up the figure is chosen for that figure exactly: a figure that shra
     zkapiClient.config = { ...zkapiClient.config, exit: { ...zkapiClient.config.exit, bound_at_state: '600000' } };
     zkapiClient.emitChange('update');
     assert.equal(page.facade.state(SHAPES_NOW).exit.boundAtState, '600000');
-    assert.equal(page.modal.submitWithdrawal(), undefined);
+    assert.equal(await page.modal.submitWithdrawal(), undefined);
     assert.equal(started.runs.length, 0, 'nothing was prepared');
     assert.equal(started.withdrawals.length, 0);
     assert.match(page.modal.outcome.message, /has changed\. Review it below, then choose again\./);
@@ -3236,7 +3269,7 @@ test('the figure moving while the chat key settles stops the withdrawal before t
     ];
     for (const { pick, after, moved } of cases) {
         const page = shapesPage(t, 'unresolved_request_settlement_wait', { view: 'withdraw' });
-        const started = startable(t, page);
+        const started = startable(t, page, { browser: true });
         zkapiClient.settleActiveLease.mock.mockImplementation(async () => {
             started.events.push('settle');
             zkapiClient.config = { ...zkapiClient.config, exit: { ...zkapiClient.config.exit, bound_at_state: after } };
@@ -3325,12 +3358,9 @@ test('a balance held by an exit lock with no withdrawal of its own is said once,
     const words = textOf(html);
     assert.match(words, /frozen/i);
     assert.doesNotMatch(words, /Needs attention|No transaction is moving|ready to finish withdrawing/);
-    // The pill is the notice's own word, in the quiet tone.
-    const pill = bodyOf(html).querySelectorAll('.zkapi-balance-top .zkapi-pill').at(-1);
-    assert.equal(textOf(pill.innerHTML), 'frozen');
-    assert.doesNotMatch(pill.className, /amber/);
-    // The Withdraw button is still there: the exit stays available.
-    assert.match(html, /id="zkapi-withdraw-view-btn"/);
+    // The way to the withdrawal is still there: the exit stays available (a
+    // held balance opens it as "Review withdrawal").
+    assert.match(html, /id="zkapi-continue-withdrawal-btn"/);
 });
 
 test('a prepared plan keeps its own words beside the frozen notice: finishing it is what comes next', t => {
@@ -3339,8 +3369,8 @@ test('a prepared plan keeps its own words beside the frozen notice: finishing it
     assert.equal(zkapiClient.activeWithdrawal?.phase, 'prepared');
     const html = page.modal.renderBalance();
     assert.match(html, /data-zkapi-version-notice="frozen"/);
-    assert.match(textOf(html), /No transaction is moving\. This balance is ready to finish withdrawing\./);
-    assert.match(textOf(html), /Needs attention/);
+    // The plan's own line (the dialog's wording for a paused withdrawal).
+    assert.match(textOf(html), /Withdrawal paused\. This balance is reserved and cannot be used for chat\./);
 });
 
 test('a held lock does not hide the words of a transaction that is moving, or of a page whose frozen notice is not drawn', t => {
@@ -3350,14 +3380,12 @@ test('a held lock does not hide the words of a transaction that is moving, or of
     zkapiClient.config = { ...zkapiClient.config, prepared_withdrawal: { mode: 'mutual', phase: 'submitted', note_id: 7,
         destination: `0x${'a'.repeat(40)}`, transaction_hash: `0x${'ab'.repeat(32)}` } };
     const html = submitted.modal.renderBalance();
-    assert.match(textOf(html), /Your withdrawal transaction was submitted\. Check its status before using this balance\./);
-    assert.match(textOf(html), /Submitted/);
+    assert.match(textOf(html), /A withdrawal was submitted\. Check its status before using this balance\./);
     assert.doesNotMatch(html, /data-zkapi-version-notice="frozen"[\s\S]*frozen<\/span>/);
     // Without the helpers there is no notice to stand in for the words.
     const early = shapesPage(t, 'mutual_lock_with_ownership_proof', { noHelpers: true });
     const plain = textOf(early.modal.renderBalance());
-    assert.match(plain, /Needs attention/);
-    assert.match(plain, /No transaction is moving\. This balance is ready to finish withdrawing\./);
+    assert.match(plain, /Withdrawal paused\. This balance is reserved and cannot be used for chat\./);
 });
 
 test('a refusal is held against the balance it was about: the shown one, or none of the set-aside ones', async t => {
@@ -3654,14 +3682,29 @@ test('the new paths of the dialog run in a vm with no imports and no facade, and
         'stopFundingFlow', 'isFundingViewHydrating', 'attachPrivateBalanceHelp', 'capturePrivateBalanceHelpFocus',
         'privateBalanceExpiryLabel', 'privateBalanceExpired', 'privateBalanceGuide', 'privateBalanceHelpButton',
         'privateBalanceHelpContent', 'restorePrivateBalanceHelpFocus', 'updatePrivateBalanceExpiryState'];
+    // Every name the three sources import is supplied (the host's own imports
+    // too); the explicit values of the context replace the ones that matter.
+    const importedNames = [];
+    for (const file of ['AccountModal', 'WelcomePanel', 'WalletMethodControls']) {
+        const raw = fs.readFileSync(new URL(`../../chat/zkapi/components/${file}.js`, import.meta.url), 'utf8');
+        for (const match of raw.matchAll(/^import\s+([\s\S]*?)\s+from\s+'[^']+';/gm)) {
+            const clause = match[1].trim();
+            const names = clause.startsWith('{') ? clause.slice(1, clause.lastIndexOf('}')).split(',') : [clause];
+            importedNames.push(...names.map(entry => entry.trim().split(/\s+as\s+/).pop()).filter(Boolean));
+        }
+    }
     const calls = [];
     const context = {
+        ...Object.fromEntries(importedNames.map(name => [name, noop])),
         zkapiClient: client, addressFundingWallet: { pending: null }, getWalletMethod: () => 'metamask', walletMethodText: value => value,
         readWelcomeModalIntent: () => null, writeWelcomeModalIntent() {}, window: { sessionStorage, addEventListener() {} },
         document: { activeElement: null, getElementById: () => null }, setTimeout, clearTimeout, queueMicrotask,
         ...Object.fromEntries(names.map(name => [name, noop])),
         runAddressAction: async (owner, details, report, action) => action(),
-        assertWithdrawalEscapeAvailable: async expected => { calls.push(['assert', expected]); }
+        assertWithdrawalEscapeAvailable: async expected => { calls.push(['assert', expected]); },
+        // The wallet-paid fee review that precedes a withdrawal.
+        refreshWithdrawalFees: async () => true, withdrawalFeeReady: () => true, assertEscapeReady: async () => {},
+        settlePrivateAccess: async () => {}, escapeNeedsSettlement: () => false
     };
     const Account = vm.runInNewContext(`${source}\nAccountModal;`, context);
     const modal = Object.create(Account.prototype);
@@ -3683,6 +3726,8 @@ test('the new paths of the dialog run in a vm with no imports and no facade, and
     assert.equal(modal.paymentTransactionUrl(`0x${'ab'.repeat(32)}`), `https://etherscan.io/tx/0x${'ab'.repeat(32)}`);
     assert.equal(modal.withdrawalRecordLabel({ phase: 'closed_unconfirmed', payoutCredited: true }), 'Payout held');
     // And a withdrawal starts exactly as before: nothing is re-verified.
+    modal.withdrawalFees = { quote: { feeReserveWei: '1' } };
+    modal.view = 'withdraw';
     let details = null;
     modal.run = async (action, given) => { details = given; await action(() => {}); };
     client.withdraw = async () => ({ status: 'submitted' });
@@ -3730,7 +3775,7 @@ test('the second pill of a row sits with its status, and a helper’s buttons sh
     zkapiClient.withdrawals = [{ recordId: 'closed-1', mode: 'escape', phase: 'closed', payoutVerified: true,
         finalBalance: 1_000_000, destination: `0x${'12'.repeat(20)}`, createdAt: 1_700_000_000_000 }];
     const closed = bodyOf(page.modal.renderWithdrawalRecords());
-    assert.equal(closed.querySelector('[data-extra-action="closed-1"]').parentNode.className, 'mt-3 flex gap-2');
+    assert.equal(closed.querySelector('[data-extra-action="closed-1"]').parentNode.className, 'zkapi-record-actions');
 });
 
 test('wiring:withdrawal-operation-recheck a withdrawal of a legacy page names no operation to its signer', async t => {
@@ -3744,7 +3789,7 @@ test('wiring:withdrawal-operation-recheck a withdrawal of a legacy page names no
     drawWithdraw(page);
     await page.modal.submitWithdrawal();
     assert.deepEqual(Object.keys(started.runs[0].details).sort(), ['blocksSend', 'kind', 'phase', 'title']);
-    assert.deepEqual(started.events, ['init', 'reload', 'init', 'reload', 'settle', 'withdraw']);
+    assert.deepEqual(started.events, ['init', 'reload', 'settle', 'withdraw']);
     assert.deepEqual(started.withdrawals[0], { mode: 'escape',
         options: { destination: started.destination, expectedWithdrawalOperationId: 'withdraw-7' } });
 });

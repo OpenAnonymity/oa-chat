@@ -5,14 +5,24 @@
 // The persisted phase is what a reload has, so the same list is drawn
 // after one, with the current step waiting and its actions underneath.
 
-const STATES = ['complete', 'active', 'waiting', 'upcoming', 'error'];
+const STATES = ['complete', 'active', 'waiting', 'paused', 'upcoming', 'error'];
 
-function stepsFor(kind, { hasLease = false, escapePeriod = '' } = {}) {
+// With Send ETH (addressFunding) nobody confirms anything: this browser holds
+// the funding address's key and signs the transaction itself. Its steps say
+// what the browser does, and none of them waits on the person.
+function stepsFor(kind, { hasLease = false, escapePeriod = '', addressFunding = false } = {}) {
+    if (kind === 'deposit' && addressFunding) {
+        return [
+            { id: 'connect', label: 'Prepare funding address', detail: 'Checks the ETH at this address and the current network fee.' },
+            { id: 'deposit', label: 'Send the deposit', detail: 'This browser signs it and sends it from your funding address.' },
+            { id: 'chain', label: 'Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
+        ];
+    }
     if (kind === 'deposit') {
         return [
-            { id: 'connect', label: 'Connect MetaMask' },
-            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'This transfer moves funds from your wallet into your zkAPI balance.' },
-            { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
+            { id: 'connect', label: 'Connect MetaMask', detail: 'Opens MetaMask to use your account.' },
+            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Moves the funds from your wallet into your private balance.' },
+            { id: 'chain', label: 'Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
     }
     const escape = kind === 'escape';
@@ -20,13 +30,15 @@ function stepsFor(kind, { hasLease = false, escapePeriod = '' } = {}) {
         ...(hasLease ? [{ id: 'settle', label: 'Settle the active chat key', detail: 'Finishes the open chat and confirms its usage.' }] : []),
         escape
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
-            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server is authorizing your withdrawal, and your device is creating the withdrawal proof.' },
+            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server authorizes it and this device makes the proof.' },
+        addressFunding
+            ? { id: 'wallet', label: escape ? 'Send the escape start' : 'Send your withdrawal', detail: 'This browser signs it and pays the network fee from your funding address.' }
+            : escape
+                ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
+                : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Approve the transaction in MetaMask.' },
         escape
-            ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
-            : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Confirm the transaction to return your remaining balance to your wallet.' },
-        escape
-            ? { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
-            : { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
+            ? { id: 'chain', label: 'Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
+            : { id: 'chain', label: 'Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
     ];
 }
 
@@ -37,7 +49,7 @@ export function classifyWalletStatus(kind, message = '') {
     const text = String(message || '');
     if (!text) return null;
     if (/Withdrawal confirmed\.|returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
-    if (/submitted|waiting for confirmation|Checking submitted|checking confirmation|Checking (the private-vault deposit|payment status)/i.test(text)) return { step: 'chain', state: 'active' };
+    if (/^(?:(?:Deposit|Withdrawal|Replacement|Background replacement|Finalization)(?: replacement)? submitted\b|Checking submitted\b)|waiting for confirmation|checking confirmation/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
         if (/Connecting to MetaMask|Connecting to the MetaMask account/i.test(text)) return { step: 'connect', state: 'active' };
@@ -53,11 +65,13 @@ export function classifyWalletStatus(kind, message = '') {
 /** Where a persisted phase (what survives a reload) puts the journey. */
 export function positionForPersistedPhase(kind, phase = '') {
     switch (String(phase || '')) {
+        // Saved work that waits for the person's Continue: the step it
+        // stopped at is paused — marked as the current one, not running.
         case 'reserving':
-            return { step: 'proof', state: 'upcoming' };
+            return { step: 'proof', state: 'paused' };
         case 'prepared':
         case 'retry_exact':
-            return kind === 'deposit' ? { step: 'deposit', state: 'upcoming' } : { step: 'wallet', state: 'upcoming' };
+            return kind === 'deposit' ? { step: 'deposit', state: 'paused' } : { step: 'wallet', state: 'paused' };
         case 'awaiting_wallet':
             return kind === 'deposit' ? { step: 'deposit', state: 'waiting' } : { step: 'wallet', state: 'waiting' };
         case 'submitted':
@@ -79,9 +93,16 @@ export function positionForPersistedPhase(kind, phase = '') {
  */
 export function walletJourney({ kind, message = '', persistedPhase = '', last = null, failed = false, ...options } = {}) {
     const steps = stepsFor(kind, options);
+    // A quote also has a saved deposit plan. Checking that plan does not mean
+    // a transaction has been sent. Only submission status or durable recovery
+    // state can move a deposit to the Ethereum step.
+    const persisted = positionForPersistedPhase(kind, persistedPhase);
+    const classified = classifyWalletStatus(kind, message);
+    const position = kind === 'deposit' && persisted?.step === 'chain'
+        ? persisted : classified || last || (message ? null : persisted) || { step: steps[0].id, state: 'active' };
     if (kind === 'deposit') {
         const chain = steps.find(step => step.id === 'chain');
-        if (/Checking (the private-vault deposit|payment status)/i.test(message)) {
+        if (position.step === 'chain' && /Checking (the private-vault deposit|payment status)/i.test(message)) {
             chain.label = 'Checking your deposit';
             chain.detail = 'Looking for your saved deposit on Ethereum.';
         } else if (['ambiguous', 'dropped_or_pending'].includes(persistedPhase)) {
@@ -89,15 +110,14 @@ export function walletJourney({ kind, message = '', persistedPhase = '', last = 
             chain.detail = 'Check its status before trying again.';
         }
     }
-    const position = classifyWalletStatus(kind, message) || last || positionForPersistedPhase(kind, persistedPhase) || { step: steps[0].id, state: 'active' };
     const index = position.step === 'done' ? steps.length : Math.max(0, steps.findIndex(step => step.id === position.step));
-    const state = STATES.includes(position.state) ? position.state : 'active';
+    const named = STATES.includes(position.state) ? position.state : 'active';
+    const state = options.addressFunding && named === 'waiting' ? 'active' : named;
     return {
         kind,
         position,
         category: kind === 'deposit' ? 'Adding your balance' : kind === 'escape' ? 'Starting account recovery'
-            : persistedPhase === 'reserving' ? 'Withdrawal preparation paused'
-                : ['prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal ready to continue' : 'Withdrawal',
+            : ['reserving', 'prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal, paused' : 'Withdrawal',
         steps: steps.map((step, i) => ({
             ...step,
             state: i < index ? 'complete' : i === index ? (failed ? 'error' : state) : 'upcoming'

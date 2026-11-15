@@ -25,6 +25,19 @@ For Open WebUI and other OpenAI-compatible clients, two local streaming APIs exi
 - **Multimodal**: Images, PDFs, Word documents (`.docx`), and audio attachments.
 - **Right panel**: Ticket registration, access issuance/expiry, and an activity timeline (logs are memory-only per tab).
 
+### Recent updates — November 2026
+
+The public client includes the fixes used by the production app through
+November 11, 2026: improved retry and resend after model changes, provider-error
+recovery, browser storage and ticket-sync recovery, zero-data-retention provider
+routing, and local ticket-usage history. Existing public protocol-version support
+and `oa-clientd` remain available in this repository.
+
+This source update excludes staging request-timing collection and staging-only
+feature rollouts. The commercial subscription and checkout interface remains in
+the separate commercial host. See [the source-sync notes](docs/PUBLIC_MAIN_SYNC.md)
+for scope and validation.
+
 ### Quick start
 1. Clone the repo.
 2. Install dependencies:

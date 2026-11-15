@@ -387,3 +387,37 @@ deployment root. The new receipt checker requires the deposit signer and payout
 recipient separately, verifies exact calldata/events and captured finalized
 state, and passed 13 offline tests plus independent review. Public documentation
 omits the test accounts, transaction hashes, note identifiers and exact amounts.
+## Mainnet production verifier pin regression (2026-10-01)
+
+Commercial `a8325ba` with public core `549c138` reintroduced a Mainnet browser
+profile pinning `https://verifier2.openanonymity.ai`. The live deployment
+manifest names `https://verifier-production-20260917.openanonymity.ai`; the SDK
+therefore correctly rejects the mismatch with “The deployment manifest changed
+its pinned OA verifier.” The production host verifier setting alone does not
+update the SDK's separately compiled `trusted_deployment.verifier_url`.
+
+The correction restores the earlier reviewed Mainnet pin and runtime trust
+regressions in the current production source line. It retains Sepolia's pin,
+deployment ID, vault, signing/proof pins, and wallet database. Existing wallet
+notes and recovery journals must remain intact; clearing storage or bypassing
+manifest verification is not a repair. Commercial's production artifact gate
+must check the exact expected verifier independently of the source profile.
+
+## Host verifier routing (2026-10-02)
+
+The payment network determines the zkAPI verifier, independently of the website's
+ticket org. Mainnet on staging must contact the production verifier, while
+staging tickets still use verifier2. `build.json.zkapiVerifierOrigin` records the
+compiled origin selected from the reviewed `trusted_deployment.verifier_url`.
+Commercial artifact gates require those pins to agree. No runtime lease or
+server response may select a different verifier. A separate instance on staging
+keeps in-memory station state and persisted broadcasts independent, preserving
+the existing ticket cache key; it has no
+advisory fallback pins, so it requires explicit approval. Production with matching
+origins retains the existing shared instance and policy. Wallet deployment IDs,
+contracts, note databases, balances and recovery journals are unchanged.
+
+Regression coverage exercises the actual SDK host callback with split origins,
+rejects changed lease origins before sending a key, checks each verifier request
+URL, and checks that bans/caches and fallback station pins cannot cross origins.
+These tests do not certify a funded Mainnet inference request.

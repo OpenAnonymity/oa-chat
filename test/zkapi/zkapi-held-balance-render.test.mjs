@@ -216,9 +216,8 @@ test('the panel says the balance is saved, not "$0.00" and "Add funds", and show
     assert.equal(zkapiClient.lastError, error);
     assert.doesNotMatch(html, TRACES);
     assert.doesNotMatch(html, /text-destructive">[^<]/);
-    // The pill is quiet: this is not an error of the balance.
-    assert.match(html, /bg-muted text-muted-foreground">unavailable<\/span>/);
-    assert.doesNotMatch(html, /bg-destructive\/10/);
+    // Nothing here is an error of the balance: no error pill, no error line.
+    assert.doesNotMatch(html, /bg-destructive\/10|zkapi-balance-error/);
 });
 
 test('the panel says the same when the client has no error any more, and shows no error pill or line', t => {
@@ -231,9 +230,8 @@ test('the panel says the same when the client has no error any more, and shows n
     assert.match(html, /id="zkapi-panel-fund"[^>]*>Balance details<\/button>/);
     assert.match(html, /data-zkapi-version-notice="held"/);
     assert.equal(textOf(html).includes(HELD_WORDS), true);
-    // The pill says "unavailable" in the quiet colors, whatever the experience says.
-    assert.match(html, /bg-muted text-muted-foreground">unavailable<\/span>/);
-    assert.doesNotMatch(html, />attention<|>not funded<|bg-destructive\/10|text-destructive">[^<]/);
+    // No status pill or error line, whatever the experience says.
+    assert.doesNotMatch(html, />attention<|>not funded<|bg-destructive\/10|text-destructive">[^<]|zkapi-balance-error/);
     assert.doesNotMatch(html, TRACES);
 });
 
@@ -262,7 +260,7 @@ test('the panel is what it was without a facade, and for a page whose SDK starte
     assert.match(plain, /Private balance: <span class="font-semibold">\$0\.00<\/span>/);
     assert.match(plain, /Add funds to chat/);
     assert.match(plain, />Add funds<\/button>/);
-    assert.match(plain, /text-destructive">Unable to load https:\/\/zkapi-operator\.invalid\/config\.json \(503\)\.<\/p>/);
+    assert.match(plain, /zkapi-balance-error" role="status">[\s\S]*?Unable to load https:\/\/zkapi-operator\.invalid\/config\.json \(503\)\./);
 
     // A page whose SDK started and reads an empty wallet: only the version
     // fragments differ from the page with no facade.
@@ -435,7 +433,7 @@ test('the withdraw view of a held balance says it is saved, not that there is no
     assert.equal(textOf(html).includes(HELD_WORDS), true);
     // Without a facade that sentence is still the one a page says for no note.
     delete zkapiClient.oaVersioning;
-    assert.match(dialog({ view: 'withdraw' }).renderWithdrawal(), /There is no active private note to withdraw\./);
+    assert.match(dialog({ view: 'withdraw' }).renderWithdrawal(), /There is no active private balance to withdraw\./);
 });
 
 test('before the helpers arrive one plain line stands in, and still offers nothing', t => {

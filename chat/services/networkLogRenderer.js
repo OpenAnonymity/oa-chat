@@ -90,11 +90,33 @@ function escapeHtmlAttribute(text) {
         .replace(/\n/g, '&#10;');
 }
 
+// The org answers a ticket it has already seen with 401 TICKET_ALREADY_SPENT
+// (older orgs: a 401 whose words say so). The client sets that ticket aside
+// and tries the next, so the row says what happened rather than "requesting".
+export function isSpentTicketRefusal(status, response) {
+    if (status !== 401) return false;
+    const detail = response && typeof response.detail === 'object' && response.detail !== null
+        ? response.detail : response;
+    if (detail?.error_code === 'TICKET_ALREADY_SPENT') return true;
+    const words = String(
+        (typeof response?.detail === 'string' ? response.detail : '') ||
+        detail?.failed_ticket?.reason || detail?.message || detail?.error || ''
+    ).toLowerCase();
+    return words.includes('already spent') || words.includes('double-spend') || words.includes('already used');
+}
+
 /**
  * Get user-friendly activity description based on log type and endpoint
  */
 export function getActivityDescription(log, detailed = false) {
     const { type, url, method, status, response, request, action, message } = log;
+
+    if (action === 'ticket-sweep-summary' && type === 'local') {
+        const count = log.spentTicketChecks;
+        return detailed
+            ? `${count} key request${count === 1 ? ' was' : 's were'} refused because tickets had already been used. These repeated checks are grouped here while OA tries remaining tickets. This is a check count, not a count of tickets spent or removed.`
+            : `Used tickets · ${count} check${count === 1 ? '' : 's'}`;
+    }
 
     // Handle local events (non-network operations)
     if (type === 'local' && method === 'LOCAL') {
@@ -249,6 +271,8 @@ export function getActivityDescription(log, detailed = false) {
                     return 'Ephemeral access key granted';
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key';
+                } else if (isSpentTicketRefusal(status, response)) {
+                    return 'Ticket already used elsewhere, skipped';
                 }
                 return 'Requesting ephemeral access key';
             } else {
@@ -257,6 +281,8 @@ export function getActivityDescription(log, detailed = false) {
                     return `Successfully obtained an ephemeral key valid for ${duration} minutes.`;
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key. The OA platform may be unavailable or your ticket may have already been used.';
+                } else if (isSpentTicketRefusal(status, response)) {
+                    return 'The org had already seen this ticket: it was spent from another device or browser, or a sync did not carry its use over. Nothing was charged. The ticket was moved out of this wallet and the next one was tried.';
                 }
                 return 'Exchanging privacy ticket for ephemeral access key...';
             }
@@ -445,7 +471,7 @@ export function getActivityIcon(log) {
 
     // Handle local events
     if (type === 'local') {
-        if (action === 'ticket-select') {
+        if (action === 'ticket-select' || action === 'ticket-sweep-summary') {
             // Checkmark/select icon for ticket selection
             return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>

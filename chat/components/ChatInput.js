@@ -1,3 +1,5 @@
+import { isPhoneAppLayout } from '../ui/phoneAppLayout.js';
+import { trackFeatureUsage, trackSettingChange } from '../services/featureUsage.js';
 import { enterKeyAction } from '../domain/composerKeys.js';
 import { setupRadioGroupKeyboard } from '../ui/radioGroupKeyboard.js';
 import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
@@ -25,6 +27,7 @@ import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { onModelTiersUpdate } from '../services/modelTiers.js';
+import { getPinnedModels, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import {
     RESPONSE_MODE_COUNCIL,
     COUNCIL_OUTPUT_PARALLEL,
@@ -99,6 +102,7 @@ export default class ChatInput {
         this.councilReviewToggle = null;
         this.councilReviewModelSelect = null;
         onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
+        onPinnedModelsUpdate(() => this.refreshMultiModelSettingsUI());
         this.applyComposerLayout();
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
@@ -215,6 +219,7 @@ export default class ChatInput {
         this.responsiveComposerCleanup?.();
         this.responsiveComposerCleanup = setupResponsiveComposer({
             input: this.app.elements.messageInput,
+            onCompactChange: () => this.resizeMessageInput(),
             onScrub: () => {
                 hideSurface(this.app.elements.settingsMenu);
                 this.app.elements.settingsBtn.setAttribute('aria-expanded', 'false');
@@ -378,11 +383,14 @@ export default class ChatInput {
         // Search toggle functionality — the composer's own control and the
         // Tools switch in the settings panel flip the same state.
         const toggleSearch = async () => {
-            this.app.searchEnabled = !this.app.searchEnabled;
+            const previous = this.app.searchEnabled;
+            const next = !previous;
+            this.app.searchEnabled = next;
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
-            await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
+            await this.app.data.saveSetting('searchEnabled', next);
+            trackSettingChange('search', previous, next);
         };
         this.app.elements.searchToggle.addEventListener('click', toggleSearch);
         const searchSettingToggle = document.getElementById('search-setting-toggle');
@@ -436,9 +444,11 @@ export default class ChatInput {
                 if (!btn || btn.disabled) return;
 
                 const nextEffort = normalizeReasoningEffort(btn.dataset.reasoningEffort);
+                const previous = this.app.reasoningEffort;
                 this.app.reasoningEffort = nextEffort;
                 this.updateReasoningEffortUI();
                 await this.app.data.saveSetting('reasoningEffort', nextEffort);
+                trackSettingChange('reasoning', previous, nextEffort);
             });
         }
 
@@ -459,7 +469,6 @@ export default class ChatInput {
                 const btnRect = btn.getBoundingClientRect();
                 // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
                 document.body.appendChild(menu);
-                showSurface(menu, 'dropdown');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
                 // Centre the panel over the gear button, clamped so it never
@@ -468,23 +477,51 @@ export default class ChatInput {
                 const viewport = window.visualViewport;
                 const viewTop = viewport?.offsetTop || 0;
                 const viewHeight = viewport?.height || window.innerHeight;
-                const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
+                // The panel hangs from the composer card's top edge, never
+                // from the gear: hung from the gear it sat over the text box
+                // (Dominic, 2026-10-09). Phones share the card's edges and
+                // stop at 70% of the viewport so the conversation stays in
+                // view above it — it scrolls inside rather than growing
+                // further; laptops keep the panel centred on the gear.
+                const phoneCard = isPhoneAppLayout();
+                const cardRect = this.app.elements.inputCard?.getBoundingClientRect() || null;
+                const anchorTop = cardRect ? cardRect.top : btnRect.top;
+                const width = phoneCard && cardRect
+                    ? Math.round(cardRect.width)
+                    : Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
                 const centred = btnRect.left + btnRect.width / 2 - width / 2;
-                const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
-                const availableAbove = btnRect.top - viewTop - viewportMargin - 8;
-                const bottom = window.innerHeight - btnRect.top + 8;
+                const left = phoneCard && cardRect
+                    ? Math.round(cardRect.left)
+                    : Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
+                const availableAbove = anchorTop - viewTop - viewportMargin - 8;
+                const bottom = window.innerHeight - anchorTop + 8;
+                const restingMaxHeight = phoneCard && cardRect
+                    ? Math.min(availableAbove, Math.round(viewHeight * 0.7))
+                    : availableAbove;
                 menu.style.left = `${left}px`;
                 menu.style.bottom = availableAbove >= 220 ? `${bottom}px` : 'auto';
                 menu.style.top = availableAbove >= 220 ? 'auto' : `${viewTop + viewportMargin}px`;
                 menu.style.width = `${width}px`;
                 menu.style.minWidth = `${width}px`;
                 menu.style.maxWidth = `${width}px`;
-                menu.style.maxHeight = `${availableAbove >= 220 ? availableAbove : viewHeight - viewportMargin * 2}px`;
+                const fallbackMaxHeight = phoneCard && cardRect
+                    ? Math.min(viewHeight - viewportMargin * 2, Math.round(viewHeight * 0.7))
+                    : viewHeight - viewportMargin * 2;
+                menu.style.maxHeight = `${Math.max(0, availableAbove >= 220 ? restingMaxHeight : fallbackMaxHeight)}px`;
                 menu.style.overflowY = 'auto';
+                // Where the panel sits at rest, so a fold that briefly pinned
+                // its top edge can glide it back (restoreSettingsMenuAnchor).
+                this.settingsMenuAnchor = availableAbove >= 220
+                    ? { bottom: menu.style.bottom, maxHeight: menu.style.maxHeight }
+                    : null;
+                menu.style.translate = '';
+                menu.style.transition = '';
 
                 this.ensureScrubberModelsLoaded();
-                this.refreshMemorySettingsUI();
-                this.refreshMultiModelSettingsUI();
+                this.refreshMemorySettingsUI({ instant: true });
+                this.refreshMultiModelSettingsUI({ instant: true });
+                // Position and populate before measuring the transition's first frame.
+                showSurface(menu, 'dropdown');
             } else {
                 hideSurface(menu);
                 btn.classList.remove('tooltip-disabled');
@@ -982,8 +1019,14 @@ export default class ChatInput {
             // The confidential service does not support aborting its transport.
             // Keep the reservation through its actual completion, and discard
             // a late result when its captured chat or draft no longer owns it.
+            trackFeatureUsage('scrubber_started');
+            // The ticket is charged when the confidential key is issued, before
+            // the scrub itself runs. Announcing it then would replace the
+            // loading toast and read as if the scrub had finished, so the
+            // charge is reported with the result instead.
+            let ticketNote = '';
             const result = await scrubberService.redactPrompt(text, session, {
-                onTicketSpent: count => this.app.showToast?.(`${count} ticket${count === 1 ? '' : 's'} used for scrubbing`, 'info', 4000)
+                onTicketSpent: count => { ticketNote = `${count} ticket${count === 1 ? '' : 's'} used`; }
             });
             if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
             if (!result?.success || !result.text) {
@@ -991,6 +1034,7 @@ export default class ChatInput {
                 return;
             }
 
+            trackFeatureUsage('scrubber_completed');
             const hasChanges = text.trim() !== result.text.trim();
             input.value = result.text;
             input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1001,7 +1045,8 @@ export default class ChatInput {
                 redacted: result.text,
                 timestamp: Date.now()
             } : null;
-            this.app.showToast(hasChanges ? 'PII removed' : 'No PII detected', 'success');
+            const outcome = hasChanges ? 'PII removed' : 'No PII detected';
+            this.app.showToast(ticketNote ? `${outcome} · ${ticketNote}` : outcome, 'success');
             this.updateScrubberHintVisibility();
             this.updateScrubberPreviewHintVisibility();
             this.scrubberDiffState.previewRendered = false;
@@ -1994,7 +2039,132 @@ export default class ChatInput {
         if (!available) toggle.dataset.tooltip = reason;
     }
 
-    refreshMemorySettingsUI() {
+    /**
+     * Settings that only matter while a switch is on (Memory's under the
+     * Memory heading, Council model under Council review) fold away while it
+     * is off (the transitions.dev accordion). Opening the gear sets them
+     * without motion; a click on the switch animates. Tooltips above the
+     * rows need the fold's clip lifted once it has settled open.
+     */
+    setSettingsChildrenOpen(id, open, { instant = false } = {}) {
+        const children = document.getElementById(id);
+        if (!children) return;
+        const inner = children.querySelector('.t-acc-panel-inner');
+        const panel = children.querySelector('.t-acc-panel');
+        if (inner) inner.inert = !open;
+        if (children.dataset.open === String(open) && !instant) return;
+        this.settingsFoldTimers ||= new Map();
+        clearTimeout(this.settingsFoldTimers.get(id));
+        delete children.dataset.settled;
+        if (instant) {
+            children.dataset.instant = '';
+            children.dataset.open = String(open);
+            void children.offsetHeight;
+            delete children.dataset.instant;
+            if (open) children.dataset.settled = '';
+            return;
+        }
+        // The panel hangs from its bottom edge above the composer. Folding
+        // settings away holds the top edge, so the switch just clicked stays
+        // under the pointer (the panel glides back down once it is left).
+        // Unfolding grows the panel upward from its resting place, so it
+        // never covers the composer; if a fold just left a gap that fits the
+        // new rows, they fill that gap first and nothing above them moves.
+        if (!open) this.pinSettingsMenuTop();
+        else this.prepareSettingsMenuGrowth(inner?.scrollHeight || 0);
+        children.dataset.open = String(open);
+        const settle = () => {
+            clearTimeout(this.settingsFoldTimers.get(id));
+            panel?.removeEventListener?.('transitionend', onEnd);
+            if (open && children.dataset.open === 'true') children.dataset.settled = '';
+            this.scheduleSettingsMenuReanchor();
+        };
+        const onEnd = event => { if (event.target === panel) settle(); };
+        panel?.addEventListener?.('transitionend', onEnd);
+        this.settingsFoldTimers.set(id, setTimeout(settle, 400));
+    }
+
+    /**
+     * Once a fold has settled, the panel glides back to rest just above the
+     * composer: right away when the pointer is elsewhere (a keyboard toggle),
+     * otherwise when the pointer leaves the panel. The switch never moves
+     * from under the pointer, and the gap a closed fold leaves does not stay.
+     */
+    scheduleSettingsMenuReanchor() {
+        const menu = this.app.elements.settingsMenu;
+        if (!menu || !this.settingsMenuAnchor || menu.style.bottom !== 'auto') return;
+        menu.removeEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+        if (!menu.matches?.(':hover')) {
+            this.restoreSettingsMenuAnchor();
+            return;
+        }
+        this.settingsMenuReanchorOnLeave ||= () => {
+            menu.removeEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+            this.restoreSettingsMenuAnchor();
+        };
+        menu.addEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+    }
+
+    restoreSettingsMenuAnchor() {
+        const menu = this.app.elements.settingsMenu;
+        const anchor = this.settingsMenuAnchor;
+        if (!menu || !anchor || menu.style.bottom !== 'auto' || menu.classList.contains('hidden')) return;
+        const before = menu.getBoundingClientRect().top;
+        menu.style.top = 'auto';
+        menu.style.bottom = anchor.bottom;
+        menu.style.maxHeight = anchor.maxHeight;
+        const delta = before - menu.getBoundingClientRect().top;
+        const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        if (Math.abs(delta) < 1 || reduced) return;
+        // FLIP: start where it was, glide to rest (translate, so the
+        // dropdown's own transform and opacity transitions are untouched).
+        menu.style.transition = 'none';
+        menu.style.translate = `0 ${delta}px`;
+        void menu.offsetHeight;
+        menu.style.transition = 'translate 260ms cubic-bezier(0.22, 1, 0.36, 1)';
+        menu.style.translate = '0 0';
+        clearTimeout(this.settingsMenuGlideTimer);
+        this.settingsMenuGlideTimer = setTimeout(() => {
+            menu.style.transition = '';
+            menu.style.translate = '';
+        }, 300);
+    }
+
+    /**
+     * Before settings unfold: a panel still held by its top edge keeps it when
+     * the rows fit in the gap above the composer; otherwise it goes back to
+     * hanging from its bottom edge first (gliding, if it had moved), so the
+     * rows push it up rather than down over the composer.
+     */
+    prepareSettingsMenuGrowth(growth) {
+        const menu = this.app.elements.settingsMenu;
+        const anchor = this.settingsMenuAnchor;
+        if (!menu || !anchor || menu.style.bottom !== 'auto') return;
+        const restingBottom = window.innerHeight - parseFloat(anchor.bottom);
+        const room = restingBottom - menu.getBoundingClientRect().bottom;
+        if (growth <= room + 1) return;
+        menu.removeEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+        this.restoreSettingsMenuAnchor();
+    }
+
+    /** Keeps the open settings panel's top edge where it is; it grows down, and scrolls if it runs out of room. */
+    pinSettingsMenuTop() {
+        const menu = this.app.elements.settingsMenu;
+        if (!menu || menu.classList.contains('hidden') || menu.style.bottom === 'auto') return;
+        const rect = menu.getBoundingClientRect?.();
+        if (!rect) return;
+        const viewport = window.visualViewport;
+        const viewBottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight);
+        menu.style.top = `${rect.top}px`;
+        menu.style.bottom = 'auto';
+        // Retain the composer boundary even when the menu is already scrolling.
+        const restingBottom = this.settingsMenuAnchor
+            ? window.innerHeight - parseFloat(this.settingsMenuAnchor.bottom)
+            : rect.bottom;
+        menu.style.maxHeight = `${Math.max(0, Math.min(viewBottom - 12, restingBottom) - rect.top)}px`;
+    }
+
+    refreshMemorySettingsUI({ instant = false } = {}) {
         const memorySupported = this.supportsFeature('memory');
         const memoryFeatureEnabled = this.isMemoryAvailable();
         const memoryUnavailableReason = this.getMemoryUnavailableReason();
@@ -2002,9 +2172,10 @@ export default class ChatInput {
         this.updateSwitchToggleUI(
             featureToggle,
             this.app.memoryFeatureEnabled !== false,
-            'Save memories is on',
-            'Save memories is off'
+            'Memory is on',
+            'Memory is off'
         );
+        this.setSettingsChildrenOpen('memory-settings-children', memoryFeatureEnabled, { instant });
         if (featureToggle) {
             featureToggle.disabled = !memorySupported;
             featureToggle.setAttribute('aria-disabled', String(!memorySupported));
@@ -2016,8 +2187,8 @@ export default class ChatInput {
         this.updateSwitchToggleUI(
             memoryAutoIncludeToggle,
             effectiveMemoryAutoInclude,
-            'Always attach retrieval is on',
-            memoryFeatureEnabled ? 'Always attach retrieval is off' : memoryUnavailableReason
+            'Use memories without asking is on',
+            memoryFeatureEnabled ? 'Use memories without asking is off' : memoryUnavailableReason
         );
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
@@ -2215,7 +2386,7 @@ export default class ChatInput {
         button?.classList.remove('tooltip-disabled');
     }
 
-    async setMemoryContextEnabled(enabled) {
+    async setMemoryContextEnabled(enabled, { userAction = false } = {}) {
         if (!this.requireFeature('memory')) return;
         if (enabled === true && this.app.memoryFeatureEnabled === false) {
             this.app.memoryMode = false;
@@ -2223,9 +2394,12 @@ export default class ChatInput {
             await this.app.data.saveSetting('memoryMode', false);
             return;
         }
-        this.app.memoryMode = enabled === true;
+        const previous = this.app.memoryMode === true;
+        const next = enabled === true;
+        this.app.memoryMode = next;
         this.updateMemoryToggleUI();
-        await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+        await this.app.data.saveSetting('memoryMode', next);
+        if (userAction) trackSettingChange('memory_replies', previous, next);
     }
 
     async openMemoryContextPanel() {
@@ -2255,7 +2429,7 @@ export default class ChatInput {
             return;
         }
 
-        this.setMemoryContextEnabled(!this.app.memoryMode).catch(error => {
+        this.setMemoryContextEnabled(!this.app.memoryMode, { userAction: true }).catch(error => {
             console.error('Failed to toggle memory context:', error);
         });
     }
@@ -2342,6 +2516,13 @@ export default class ChatInput {
             persistMode: true
         });
 
+        // Read immediately before applying, so overlapping clicks on the same
+        // choice do not count twice. Navigation during persistence is uncounted.
+        const sameScope = this.app.getCurrentSession() === session;
+        const previous = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : this.app.getPendingCouncilConfig?.()?.enabled === true;
+
         if (!session) {
             this.app.setPendingCouncilConfig?.({
                 enabled,
@@ -2350,15 +2531,18 @@ export default class ChatInput {
                 outputMode,
                 reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
+            if (sameScope) trackSettingChange('parallel', previous, enabled);
             return null;
         }
 
-        return this.app.setCouncilModeForCurrentSession({
+        const result = await this.app.setCouncilModeForCurrentSession({
             enabled,
             members,
             synthesisModel,
             outputMode
         });
+        if (sameScope) trackSettingChange('parallel', previous, enabled);
+        return result;
     }
 
     async persistParallelDefaults(options = {}) {
@@ -2431,6 +2615,10 @@ export default class ChatInput {
             persistMode: (enabled && !currentlyMultiModelEnabled) || leaveParallelToo
         });
 
+        const sameScope = this.app.getCurrentSession() === session;
+        const currentConfig = session ? session.councilConfig : this.app.getPendingCouncilConfig?.();
+        const previous = (!session || session.responseMode === RESPONSE_MODE_COUNCIL)
+            && currentConfig?.enabled === true && currentConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
         if (!session) {
             this.app.setPendingCouncilConfig?.({
                 enabled: nextMultiModelEnabled,
@@ -2439,6 +2627,7 @@ export default class ChatInput {
                 outputMode,
                 reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
+            if (sameScope) trackSettingChange('council', previous, enabled);
             this.refreshMultiModelSettingsUI();
             this.updateMemoryToggleUI();
             return;
@@ -2450,6 +2639,7 @@ export default class ChatInput {
             synthesisModel,
             outputMode
         });
+        if (sameScope) trackSettingChange('council', previous, enabled);
         this.refreshMultiModelSettingsUI();
         this.updateMemoryToggleUI();
     }
@@ -2704,7 +2894,7 @@ export default class ChatInput {
             || COUNCIL_OUTPUT_PARALLEL;
     }
 
-    refreshMultiModelSettingsUI() {
+    refreshMultiModelSettingsUI({ instant = false } = {}) {
         const session = this.app.getCurrentSession();
         const select = document.getElementById('multi-model-secondary-select');
         const inlineContainer = document.getElementById('council-inline-models');
@@ -2755,9 +2945,11 @@ export default class ChatInput {
         this.app.updateCouncilLayoutMode?.(session);
         const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
         const availableModels = models.filter((model) => model?.name);
-        const allSelectableModels = models.filter((model) => model?.name);
-        const modelsLoaded = allSelectableModels.length > 0;
-        const councilSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
+        const pinnedCouncilModels = getPinnedModels()
+            .map((id) => availableModels.find((model) => model.id === id))
+            .filter(Boolean);
+        const resolvedSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
+        const councilSynthesisModel = this.getModelEntryByName(resolvedSynthesisModel)?.name || resolvedSynthesisModel;
         const configuredSecondary = this.getConfiguredSecondaryModelName(primary);
         const selectedSecondary = this.resolveSecondaryModelName(primary, configuredSecondary);
 
@@ -2839,17 +3031,19 @@ export default class ChatInput {
         }
 
         const renderSynthesisOptions = () => {
-            const options = [...allSelectableModels];
-            if (!modelsLoaded && councilSynthesisModel && !options.some((model) => model.name === councilSynthesisModel)) {
-                options.unshift({ name: councilSynthesisModel });
+            const options = [...pinnedCouncilModels];
+            // Keep the saved choice visible without silently replacing the model
+            // a chat uses. New choices come only from the pinned list.
+            if (councilSynthesisModel && !options.some((model) => model.name === councilSynthesisModel)) {
+                options.unshift({ name: councilSynthesisModel, currentOnly: true });
             }
             return options.map((model, index) => {
                 const value = model.name;
-                const label = this.getFullModelHoverName(value);
+                const label = this.getFullModelHoverName(value) + (model.currentOnly ? ' (current)' : '');
                 const selected = councilSynthesisModel
                     ? value === councilSynthesisModel
                     : index === 0;
-                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(label)}</option>`;
+                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}${model.currentOnly ? ' disabled' : ''}>${this.escapeOptionText(label)}</option>`;
             }).join('');
         };
 
@@ -2863,10 +3057,11 @@ export default class ChatInput {
         }
 
         if (councilReviewModelRow) {
-            // The row is always there, dimmed while review is off: turning the
-            // switch on must not grow the panel under the pointer.
             councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled || !councilSupported);
         }
+        // Council model folds under Council review while review is off (the
+        // panel holds its top edge, so the switch stays under the pointer).
+        this.setSettingsChildrenOpen('council-review-children', isCouncilReviewEnabled && councilSupported, { instant });
 
         // In zkAPI mode the Council rows dim and the switch's bubble says
         // why, so a greyed switch never reads as "off" when it is "not here".
@@ -2891,11 +3086,11 @@ export default class ChatInput {
                 : 'No model available';
             councilReviewModelSelect.setAttribute('aria-label', `Council model: ${councilHoverName}`);
             councilReviewModelSelect.title = councilHoverName;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                councilReviewModelSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+            if (pinnedCouncilModels.length === 0 && !councilSynthesisModel) {
+                councilReviewModelSelect.innerHTML = '<option value="" disabled selected>No pinned models available</option>';
                 councilReviewModelSelect.disabled = true;
             } else {
-                councilReviewModelSelect.disabled = !isCouncilReviewEnabled;
+                councilReviewModelSelect.disabled = !isCouncilReviewEnabled || pinnedCouncilModels.length === 0;
                 councilReviewModelSelect.innerHTML = renderSynthesisOptions();
                 if (councilSynthesisModel) {
                     councilReviewModelSelect.value = councilSynthesisModel;
@@ -2905,22 +3100,22 @@ export default class ChatInput {
 
         if (synthesisInlineSelect) {
             this.councilSynthesisInlineSelect = synthesisInlineSelect;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+            if (pinnedCouncilModels.length === 0 && !councilSynthesisModel) {
+                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No pinned models available</option>';
                 synthesisInlineSelect.disabled = true;
             } else {
-                synthesisInlineSelect.disabled = !isCouncilReviewEnabled;
+                synthesisInlineSelect.disabled = !isCouncilReviewEnabled || pinnedCouncilModels.length === 0;
                 synthesisInlineSelect.innerHTML = renderSynthesisOptions();
             }
         }
 
         if (synthesisSelect) {
             this.multiModelSynthesisSelect = synthesisSelect;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                synthesisSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+            if (pinnedCouncilModels.length === 0 && !councilSynthesisModel) {
+                synthesisSelect.innerHTML = '<option value="" disabled selected>No pinned models available</option>';
                 synthesisSelect.disabled = true;
             } else {
-                synthesisSelect.disabled = !isCouncilReviewEnabled;
+                synthesisSelect.disabled = !isCouncilReviewEnabled || pinnedCouncilModels.length === 0;
                 synthesisSelect.innerHTML = renderSynthesisOptions();
             }
         }
@@ -2972,7 +3167,9 @@ export default class ChatInput {
             const btn = event.target.closest('.theme-toggle-btn');
             if (btn) {
                 const preference = btn.dataset.themeOption || 'system';
+                const previous = themeManager.getPreference();
                 themeManager.setPreference(preference);
+                trackSettingChange('theme', previous, themeManager.getPreference());
             }
         });
     }

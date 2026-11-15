@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 
 import networkLogger from '../../chat/services/networkLogger.js';
 
+test('provider error diagnostics keep only finite codes, never free-form provider data', () => {
+    for (const [code, expected] of [[429, 'PROVIDER_CODE_429'], [402, 'PROVIDER_CODE_402'],
+        ['PRIVATE_PROVIDER_BODY_KEY', 'PROVIDER_STREAM_ERROR'], [123456, 'PROVIDER_STREAM_ERROR']]) {
+        const error = Object.assign(new Error('PRIVATE_PROVIDER_BODY_KEY'), { code, providerReported: true });
+        const safe = networkLogger.sanitizeError(error);
+        assert.equal(safe, `Request failed (${expected})`);
+        assert.doesNotMatch(safe, /PRIVATE_PROVIDER_BODY_KEY|123456/);
+        assert.equal(error.status, undefined);
+    }
+});
+
 test('redacts inference tickets even when a request may roll back', () => {
     const headers = networkLogger.sanitizeHeaders({
         Authorization: 'InferenceTicket token=still-usable-after-rollback'

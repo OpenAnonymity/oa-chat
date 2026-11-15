@@ -103,7 +103,9 @@ async function importChats(chatsData, source = null) {
             updatedAt: session.updatedAt || session.createdAt || Date.now()
         };
 
-        await chatDB.saveSession(normalizedSession);
+        // An explicit restore may bring back chats from before the browser
+        // last recreated chat storage.
+        await chatDB.saveSession(normalizedSession, { allowRecreate: true });
         result.importedSessions++;
     }
 

@@ -2,6 +2,7 @@
  * Network Logger Service
  * Tracks and stores network requests for debugging and monitoring
  */
+import { providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
 
 class NetworkLogger {
     constructor() {
@@ -33,7 +34,30 @@ class NetworkLogger {
      * @param {string} details.detail - Optional detail code for UI descriptions
      * @param {string} details.action - Specific action type for local events
      */
+    /**
+     * A short reference to a key (its last four characters): enough for the
+     * timeline to say which key an entry ran under, never enough to use it.
+     */
+    keyRefForToken(token) {
+        const value = typeof token === 'string' ? token.trim() : '';
+        return value.length >= 8 ? value.slice(-4) : '';
+    }
+
+    /** The key reference for the Authorization header a request is about to send. */
+    keyRefForHeaders(headers) {
+        if (!headers || typeof headers !== 'object') return '';
+        const name = Object.keys(headers).find(key => key.toLowerCase() === 'authorization');
+        const value = name ? String(headers[name] || '') : '';
+        if (!value || /REDACTED/i.test(value)) return '';
+        return this.keyRefForToken(value.replace(/^\s*Bearer\s+/i, ''));
+    }
+
     logRequest(details) {
+        // Captured before the headers are redacted, so the entry keeps the key
+        // it actually used even after the session moves to another one.
+        const keyRef = typeof details.keyRef === 'string' && details.keyRef
+            ? details.keyRef
+            : this.keyRefForHeaders(details.request?.headers);
         const sanitizedRequest = this.sanitizeRequest(details.request || {});
         const sanitizedResponse = details.type === 'openrouter'
             ? this.sanitizeProviderResponse(details.response || {})
@@ -42,6 +66,7 @@ class NetworkLogger {
             id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             timestamp: Date.now(),
             sessionId: details.sessionId || this.currentSessionId,
+            keyRef,
             type: details.type || 'unknown',
             method: details.method || 'GET',
             url: details.url || '',
@@ -263,9 +288,9 @@ class NetworkLogger {
     sanitizeError(error) {
         if (!error) return null;
         const status = Number(error?.status ?? error?.response?.status);
-        const code = typeof error?.code === 'string'
+        const code = providerErrorDiagnosticCode(error) || (typeof error?.code === 'string'
             ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
-            : '';
+            : '');
         const details = [];
         if (Number.isFinite(status)) details.push(`HTTP ${status}`);
         if (code) details.push(code);
@@ -490,4 +515,5 @@ if (typeof window !== 'undefined') {
     window.networkLogger = networkLogger;
 }
 
+export { NetworkLogger };
 export default networkLogger;

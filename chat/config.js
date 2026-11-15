@@ -34,9 +34,31 @@ export const VERIFIER_URL = disposableDemoVerifierBypass
     ? ORG_API_BASE
     : configuredVerifierOrigin || 'https://verifier2.openanonymity.ai';
 
+// zkAPI may use Mainnet on a staging host. Its verifier is pinned by the
+// reviewed payment deployment, independently of the ticket org verifier.
+export const ZKAPI_VERIFIER_URL = typeof __OA_ZKAPI_VERIFIER_ORIGIN__ === 'string'
+    && __OA_ZKAPI_VERIFIER_ORIGIN__ ? __OA_ZKAPI_VERIFIER_ORIGIN__ : VERIFIER_URL;
+
+// Explicit operator trust for unverified continuation, independent of the org's
+// recently-attested flag and verifier broadcasts. Changing a pin invalidates
+// previously saved fallback approvals. This is not verifier approval.
+export const TRUSTED_VERIFIER_STATIONS = Object.freeze([Object.freeze({
+    stationId: 'oa-station',
+    publicKey: '20019ebb3cfa61a34ac75879bca8ccf9168ce435c6007d5279b84ebeb83fd097',
+    verifierOrigin: 'https://verifier2.openanonymity.ai'
+}), Object.freeze({
+    stationId: 'oa-production-station',
+    publicKey: '02a294fde1113c43bec88175429bab20d0795c5d51b2f27ebd596bd80fdc4585',
+    verifierOrigin: 'https://verifier-production-20260917.openanonymity.ai',
+    // Production continuity is for outages, never an explicit refusal.
+    outageOnly: true
+})]);
+
 // Verifier outage policy -- what the client does when the verifier cannot give
 // an explicit approval for a freshly issued key. Set at build time with
 // OA_VERIFIER_OUTAGE_POLICY; tests and unbuilt sources default to strict.
+// Every continuation below additionally requires a pinned trusted station and a
+// valid local Ed25519 signature binding that station to this key and expiry.
 //   strict:   continue only when the org marked the station recently attested
 //             (or on a temporary 429 / ownership-check error); anything else blocks.
 //   tolerant: continue on any outage -- unreachable, timeout, 5xx, 429, pending
@@ -57,7 +79,8 @@ export const VERIFIER_OUTAGE_POLICY = (
 // operator sees connection metadata (timing, connecting IPs) but not request
 // content (TLS terminates at the destination). For stronger IP privacy, users
 // can use their own VPN/Tor instead of or in addition to this relay.
-export const PROXY_URL = disposableDemoProxyUrl || 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf';
+const configuredProxyUrl = typeof __OA_PROXY_URL__ === 'string' ? __OA_PROXY_URL__ : '';
+export const PROXY_URL = disposableDemoProxyUrl || configuredProxyUrl || 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf/';
 export const DEMO_PROXY_FETCH_TIMEOUT_MS = disposableDemoProxyUrl ? 10000 : null;
 
 // Base URL for shared chat links

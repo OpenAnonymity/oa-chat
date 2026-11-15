@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildTrustedStationFallback } from '../../chat/services/trustedStations.js';
 
 import {
     buildExplicitlyVerifiedOpenRouterSharePayload,
@@ -204,7 +205,8 @@ test('verified OpenRouter keys and non-OpenRouter credentials are preserved', ()
 });
 
 test('outage access survives reload without being approved or shareable; Council bans still clear it', () => {
-    const info = { key: 'outage-child', verifierSubmitKeyProof: { status: 'verifier-unavailable' } };
+    const info = { key: 'outage-child', keyHash: '11'.repeat(32), stationId: 'oa-station', expiresAtUnix: Math.floor(Date.now() / 1000) + 3600, stationSignature: '00'.repeat(64) };
+    info.verifierSubmitKeyProof = { status: 'verifier-unavailable', trustedStationFallback: buildTrustedStationFallback(info, 'abcdef1234567890') };
     const session = { apiKey: info.key, apiKeyInfo: info };
     assert.equal(hasUsableVerifierApproval(session), true);
     assert.equal(hasExplicitVerifierApproval(session), false);
@@ -214,4 +216,12 @@ test('outage access survives reload without being approved or shareable; Council
     assert.equal(clearUnsafeOpenRouterCouncilAccess(session), false);
     assert.equal(clearUnsafeOpenRouterCouncilAccess(session, { isBanned: () => true }), true);
     assert.equal(session.councilAccess, undefined);
+});
+
+
+test('legacy unverified access without pinned station authorization is cleared on reload', () => {
+    const session = { apiKey: 'old-child', apiKeyInfo: { key: 'old-child', verifierSubmitKeyProof: { status: 'verifier-unavailable', detail: 'unverified_advisory' } } };
+    assert.equal(hasUsableVerifierApproval(session), false);
+    assert.equal(clearUnverifiedOpenRouterAccess(session), true);
+    assert.equal(session.apiKey, null);
 });

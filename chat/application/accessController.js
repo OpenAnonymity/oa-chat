@@ -1,22 +1,36 @@
+import { withTierPurchaseLock } from '../services/inference/tierPurchaseLock.js';
+import { ticketTierPolicyEnabled } from '../services/inference/ticketTierAccess.js';
+import { reportDiagnostic } from '../services/diagnostics.js';
 import {
+    isVerifierResultApproved,
     isVerifierResultUsable,
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
 } from '../services/inference/verifiedAccess.js';
-import { getCreditLimitSource, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
+import { getCreditLimitSource, isKeyLimitExceededResponse, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
 import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
+import { waitForSignal } from '../services/inference/reliability.js';
+import { markFreshInferenceKey, readinessClock } from '../services/inference/keyReadiness.js';
 
 export function isAccessCreditExhaustedError(error) {
-    if (error?.status !== 402) return false;
+    const status = error?.status;
+    if (status !== 402 && status !== 403) return false;
     const responseData = error.data || error.responseData || null;
+    // Richer display text must not widen the legacy credit-refresh heuristic:
+    // a refresh can spend a ticket. Provider adapters retain its original text.
+    const recoveryMessage = typeof error.creditRecoveryMessage === 'string'
+        ? error.creditRecoveryMessage : error.message;
+    // A 403 is a key whose limit is spent only when OpenRouter says so in
+    // words; every other 403 (moderation, permissions) keeps the key.
+    if (status === 403) return isKeyLimitExceededResponse(status, responseData, recoveryMessage);
     const source = getCreditLimitSource(responseData);
     // Account-wide funding and in-flight holds cannot be repaired by spending
     // another ticket. Nor is a key exhausted when a smaller output still fits.
     if (source && source !== 'openrouter_key_limit') return false;
-    const affordability = parseOutputAffordability(responseData?.error?.message || error.message);
+    const affordability = parseOutputAffordability(responseData?.error?.message || recoveryMessage);
     if (affordability?.affordable > 0) return false;
     if (source === 'openrouter_key_limit') return true;
     const details = [
-        error.message,
+        recoveryMessage,
         responseData?.error?.message,
         responseData?.detail,
         responseData?.message
@@ -117,6 +131,9 @@ export function buildVerifierSubmitKeyProof(verifyResult, accessInfo = null, opt
         stationId,
         keyHashFromOrg,
         keyHashFromVerifier,
+        ...(verifyResult?.trustedStationFallback ? {
+            trustedStationFallback: redactProofValue(verifyResult.trustedStationFallback, accessInfo)
+        } : {}),
         verifierResponse,
         retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
         error: redactProofValue(verifyResult?.error?.message || null, accessInfo),
@@ -165,10 +182,12 @@ export async function acquireVerifiedAccess(options = {}) {
         getTicketCost,
         getFallbackModelEntry,
         onTicketUsed = () => {},
+        onTicketSweepEnd = null,
         onNetworkSession = () => {},
         onGranted = null,
         onAccessRequestError = () => {},
         onVerificationWarning = () => {},
+        onTicketShortage = null,
         modelIdOverride = null,
         modelNameOverride = null,
         modelEntryOverride = null,
@@ -182,11 +201,6 @@ export async function acquireVerifiedAccess(options = {}) {
         throw new Error('Access controller is missing required dependencies.');
     }
 
-    const availableTickets = ticketClient.getTicketCount();
-    if (availableTickets === 0) {
-        throw new Error('You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request invite code at [here](https://openanonymity.ai/beta/).');
-    }
-
     const modelName = modelNameOverride || session.model || inferenceService.getDefaultModelName(session);
     const modelEntry = modelEntryOverride || (modelIdOverride && Array.isArray(models)
         ? models.find(model => model.id === modelIdOverride)
@@ -198,13 +212,46 @@ export async function acquireVerifiedAccess(options = {}) {
     }
     const modelId = modelEntry.id;
     const overrideTickets = Number(ticketsRequiredOverride);
-    const ticketsRequired = Number.isFinite(overrideTickets) && overrideTickets > 0
-        ? Math.ceil(overrideTickets)
-        : getTicketCost(modelId, reasoningEnabled);
-
-    if (availableTickets < ticketsRequired) {
-        throw new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-    }
+    const hasTicketOverride = Number.isFinite(overrideTickets) && overrideTickets > 0;
+    // The org chooses a tier by ticket count, not model ID. Refresh here,
+    // after accepting the prompt, so a still-valid old tier cannot overcharge.
+    const resolveTicketCost = async ({ forceRefresh = true } = {}) => {
+        if (hasTicketOverride) return Math.ceil(overrideTickets);
+        const liveCost = await inferenceService.getAccessTicketCost?.(session, { modelId, signal, forceRefresh });
+        return liveCost ?? getTicketCost(modelId, reasoningEnabled);
+    };
+    const shortageError = balance => Object.assign(
+        new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${balance} available.`),
+        { code: 'TICKET_SHORTAGE', requiredTickets: ticketsRequired, availableTickets: balance }
+    );
+    // A shortage found here (the price rose after the send was accepted) gets
+    // the same answer as one found before it: the caller may reload the wallet
+    // and ask for one more balance check, or open its offers and stop.
+    const throwIfCancelled = () => {
+        if (!signal?.aborted) return;
+        throw Object.assign(new Error('Request aborted'), { name: 'AbortError', isCancelled: true });
+    };
+    const spendableBalance = () => Math.max(0, ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0));
+    let shortageHandled = false;
+    const checkBalance = async (selectionError = null) => {
+        throwIfCancelled();
+        let balance = Number.isFinite(selectionError?.availableTickets)
+            ? selectionError.availableTickets : spendableBalance();
+        if (balance >= ticketsRequired) return;
+        if ((selectionError?.heldTickets || ticketClient.getHeldTicketCount?.() || 0) > 0) {
+            throw Object.assign(new Error('Your tickets from the previous version are still being moved. Try again in a moment.'), { code: 'TICKETS_MOVING' });
+        }
+        if (!shortageHandled && typeof onTicketShortage === 'function') {
+            shortageHandled = true;
+            const outcome = await waitForSignal(onTicketShortage({ requiredTickets: ticketsRequired, availableTickets: balance, label: ticketRequirementLabel }), signal);
+            throwIfCancelled();
+            balance = spendableBalance();
+            if (outcome?.retry === true && balance >= ticketsRequired) return;
+        }
+        throw shortageError(balance);
+    };
+    let ticketsRequired = await resolveTicketCost();
+    await checkBalance();
 
     if (signal?.aborted) {
         const error = new Error('Request aborted');
@@ -216,40 +263,110 @@ export async function acquireVerifiedAccess(options = {}) {
     onNetworkSession(session.id);
 
     let result;
-    let retries = 0;
-    const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
-
-    while (retries < maxRetries) {
+    let pricingRetried = false;
+    let selectionRetried = false;
+    // Tickets the org had already seen — spent from another device or
+    // browser, or left behind by a lost sync. Each one is archived locally
+    // and the next is tried, for as long as the wallet lasts: the user
+    // asked for a reply, and a wallet with hundreds of such tickets must
+    // still get one. Stop cancels; a wallet that runs out is a shortage.
+    // `ticketsSkipped` counts refusals; `ticketsRemoved` counts what the
+    // wallet actually lost to them (an org that names no index sets a whole
+    // selection aside), which is the number the user is told.
+    let ticketsSkipped = 0;
+    let ticketsRemoved = 0;
+    let sweepSettled = false;
+    const settleSweep = (recovered, reason = null) => {
+        if (sweepSettled || ticketsSkipped === 0) return;
+        sweepSettled = true;
+        if (typeof onTicketSweepEnd !== 'function') return;
         try {
-            result = await inferenceService.requestAccess(session, {
-                ticketsRequired,
-                ...(signal ? { signal } : {})
-            });
-            break;
-        } catch (error) {
-            if (error.code === 'TICKET_USED') {
-                retries += 1;
-                await onTicketUsed(retries, error);
-                continue;
-            }
-            if (error.code === 'TICKET_KEY_INVALIDATED') {
-                retries += 1;
-                const remainingTickets = ticketClient.getTicketCount();
-                if (remainingTickets >= ticketsRequired) {
+            onTicketSweepEnd({ skipped: ticketsSkipped, removed: ticketsRemoved, recovered, reason, tier: ticketsRequired });
+        } catch (hookError) {
+            onVerificationWarning('Ticket sweep hook failed:', buildSafeAccessErrorMetadata(hookError));
+        }
+    };
+
+    let keyReceivedAt = null;
+    try {
+        for (;;) {
+            throwIfCancelled();
+            const balanceBeforeRequest = spendableBalance();
+            try {
+                result = await inferenceService.requestAccess(session, {
+                    ticketsRequired,
+                    ...(signal ? { signal } : {})
+                });
+                // When this tab received the new key, before any verifier wait.
+                keyReceivedAt = readinessClock.now();
+                break;
+            } catch (error) {
+                if (['NO_TICKETS', 'INSUFFICIENT_TICKETS'].includes(error.code)) {
+                    if (selectionRetried) throw shortageError(error.availableTickets ?? spendableBalance());
+                    selectionRetried = true;
+                    await checkBalance(error);
                     continue;
                 }
-                error.message = remainingTickets > 0
-                    ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
-                    : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+                if (error.code === 'TICKET_PRICE_CHANGED' && !pricingRetried && !hasTicketOverride
+                    && typeof inferenceService.getAccessTicketCost === 'function') {
+                    pricingRetried = true;
+                    ticketsRequired = await resolveTicketCost({ forceRefresh: true });
+                    await checkBalance();
+                    continue;
+                }
+                if (error.code === 'TICKET_USED') {
+                    // The wallet must shrink for every refusal, or the same
+                    // ticket is being offered again (a store that cannot
+                    // write, an org that refuses everything): stop rather
+                    // than loop.
+                    const removedNow = balanceBeforeRequest - spendableBalance();
+                    if (!(removedNow > 0)) {
+                        error.message = 'Couldn’t update the tickets saved on this device. Please try again.';
+                        error.code = 'TICKET_SWEEP_STALLED';
+                        reportDiagnostic('access.sweep_stalled', { tier: ticketsRequired });
+                        onAccessRequestError(buildSafeAccessErrorMetadata(error));
+                        throw error;
+                    }
+                    ticketsSkipped += 1;
+                    ticketsRemoved += removedNow;
+                    await onTicketUsed(ticketsRemoved, error);
+                    continue;
+                }
+                if (error.code === 'TICKET_KEY_INVALIDATED') {
+                    // Each refusal retires one old signing-key generation from
+                    // the wallet; the next request uses what is left. Bounded
+                    // by the wallet shrinking (and by Stop), never by a count:
+                    // a wallet holding several old generations ahead of its
+                    // current tickets must still reach them.
+                    const remainingTickets = ticketClient.getTicketCount();
+                    if (remainingTickets >= ticketsRequired && spendableBalance() < balanceBeforeRequest) {
+                        continue;
+                    }
+                    if (remainingTickets >= ticketsRequired) {
+                        error.message = 'Couldn’t update the tickets saved on this device. Please try again.';
+                        error.code = 'TICKET_SWEEP_STALLED';
+                        reportDiagnostic('access.sweep_stalled', { tier: ticketsRequired });
+                    } else {
+                        error.message = remainingTickets > 0
+                            ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
+                            : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+                    }
+                }
+                onAccessRequestError(buildSafeAccessErrorMetadata(error));
+                throw error;
             }
-            onAccessRequestError(buildSafeAccessErrorMetadata(error));
-            throw error;
         }
+    } catch (error) {
+        settleSweep(false, error?.code || error?.name || null);
+        throw error;
     }
 
     if (!result) {
-        throw new Error('All available tickets were already spent');
+        const error = new Error('No usable ticket was found. Please try again.');
+        error.code = 'ACCESS_NOT_GRANTED';
+        throw error;
     }
+    settleSweep(true);
 
     if (typeof onGranted === 'function') {
         try {
@@ -290,6 +407,15 @@ export async function acquireVerifiedAccess(options = {}) {
         if (!isVerifierResultUsable(verifyResult)) {
             throw createVerificationFailure(verifyResult, proof);
         }
+        // Only an explicitly verified key just issued to this tab gets a
+        // provider readiness window (keyReadiness.js), anchored at receipt.
+        // Trusted-station fallback, bypass and custom/private access do not.
+        if (isVerifierResultApproved(verifyResult)) {
+            markFreshInferenceKey(result.key || result.token, {
+                receivedAt: keyReceivedAt,
+                expiresAt: result.expiresAt || result.expires_at || null
+            });
+        }
 
         result = {
             ...result,
@@ -301,6 +427,15 @@ export async function acquireVerifiedAccess(options = {}) {
 }
 
 export async function acquireSessionAccess(options = {}) {
+    if (ticketTierPolicyEnabled() && options.tierPurchase) {
+        return withTierPurchaseLock({ session: options.session,
+            ...options.tierPurchase, service: options.inferenceService, db: options.chatDB,
+            signal: options.signal, acquire: () => acquireSessionAccessUnlocked(options) });
+    }
+    return acquireSessionAccessUnlocked(options);
+}
+
+async function acquireSessionAccessUnlocked(options) {
     const {
         session,
         inferenceService,
@@ -337,7 +472,9 @@ export async function acquireSessionAccess(options = {}) {
         }
     } catch (error) {
         if (error?.verifierSubmitKeyProof) {
-            inferenceService.clearAccessInfo(session, { reason: 'verifier-rejected' });
+            if (!ticketTierPolicyEnabled() || !inferenceService.getAccessToken(session) || inferenceService.isAccessExpired(session)) {
+                inferenceService.clearAccessInfo(session, { reason: 'verifier-rejected' });
+            }
             session.lastVerifierSubmitKeyProof = error.verifierSubmitKeyProof;
             await chatDB.saveSession(session);
             onSessionChanged(session);

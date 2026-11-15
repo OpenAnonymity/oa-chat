@@ -12,6 +12,10 @@ export function applyVerifierRetryResult(session, accessInfo, result) {
     };
     update(session?.apiKey, session?.apiKeyInfo);
     for (const lane of Object.values(session?.councilAccess || {})) update(lane?.apiKey, lane?.apiKeyInfo);
+    for (const info of session?.ticketAccessHistory || []) update(info?.key, info);
+    for (const history of Object.values(session?.ticketLaneHistory || {})) {
+        for (const lane of history) update(lane?.apiKey, lane?.apiKeyInfo);
+    }
     if (changed) clearUnverifiedOpenRouterAccess(session, { reason: 'verifier-retry-rejected' });
     return changed;
 }

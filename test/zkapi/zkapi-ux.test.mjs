@@ -48,7 +48,7 @@ test('New Chat is immediately typeable while the previous chat closes', () => {
     });
     assert.equal(state.primary.phase, 'closing');
     assert.equal(state.primary.blocksSend, false);
-    assert.match(state.primary.detail, /keep typing/i);
+    assert.match(state.primary.detail, /New messages can send when this finishes/);
     assert.equal(state.showComposer, true);
 });
 
@@ -417,7 +417,7 @@ test('a prepared plan keeps its own words: finishing it is what comes next', () 
     const withVersion = deriveZkapiUxState({ snapshot: client, now: SHAPES_NOW, version });
     const without = deriveZkapiUxState({ snapshot: client, now: SHAPES_NOW });
     assert.deepEqual(withVersion, without);
-    assert.equal(withVersion.primary.title, 'Withdrawal ready to finish');
+    assert.equal(withVersion.primary.title, 'Withdrawal paused');
     assert.equal(withVersion.primary.frozen, undefined);
     // The same for every other withdrawal in motion, with the lock held, on
     // a balance another device has used as well.

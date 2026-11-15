@@ -5,3 +5,4 @@ export { default as RightPanel } from './components/RightPanel.js';
 export { default as WelcomePanel } from './components/WelcomePanel.js';
 export { default as AccountModal } from './components/AccountModal.js';
 export * from './publicInferenceApi.js';
+export { setFeatureUsageReporter } from './services/featureUsage.js';

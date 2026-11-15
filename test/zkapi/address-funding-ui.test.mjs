@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { DepositAmount } from '../../chat/zkapi/services/depositAmount.mjs';
+import { DepositAmount, formatSuggestedDeposit } from '../../chat/zkapi/services/depositAmount.mjs';
 import { renderFundingPaymentQr } from '../../chat/zkapi/components/FundingPaymentQr.js';
 import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingEthAmount, fundingDestination } from '../../chat/zkapi/services/addressFunding.js';
@@ -19,10 +19,10 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         config: { funding: { demo_billing_token_address: '0x4444444444444444444444444444444444444444' } }, ...client };
     const microtasks = [];
     const timers = new Map();
-    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, DepositAmount, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, DepositAmount, formatSuggestedDeposit, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
         walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingEthAmount, fundingDestination,
-        formatFundingAmount, confirm,
+        formatFundingAmount, confirm, motionDuration: () => 250,
         queueMicrotask: callback => microtasks.push(callback),
         setTimeout: callback => { const id = timers.size + 1; timers.set(id, callback); return id; },
         clearTimeout: id => timers.delete(id),
@@ -241,30 +241,68 @@ function quotedFlow(overrides = {}) {
     };
 }
 
-test('ordinary native funding keeps the fee breakdown available and enables Deposit only when funded', () => {
+// One accordion row of the funding section: whether its panel is open (not
+// inert), the markup of its body, and the page without that row.
+function helpRow(html, kind) {
+    const start = html.lastIndexOf('<div class="zkapi-funding-help', html.indexOf(`data-funding-help="${kind}"`));
+    if (start < 0 || html.indexOf(`data-funding-help="${kind}"`) < 0) return null;
+    const next = html.indexOf('<div class="zkapi-funding-help t-acc"', start + 1);
+    const segment = next < 0 ? html.slice(start) : html.slice(start, next);
+    const panel = segment.match(/<div [^>]*data-funding-help-panel[^>]*>/)[0];
+    return { open: !/\binert\b/.test(panel), body: segment.match(/<div class="zkapi-funding-help-body">([\s\S]*)$/)[1], rest: html.replace(segment, '') };
+}
+
+// Ethereum wallet transfer details: the value cell of a labelled row, and
+// markup reduced to its words.
+function transferValue(html, label) {
+    const match = html.match(new RegExp(`<span class="zkapi-transfer-label">${label}</span><span class="zkapi-transfer-value">([\\s\\S]*?)</span><span class="zkapi-transfer-control">`));
+    return match ? match[1] : null;
+}
+const plain = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+const addressText = html => plain(html.match(/data-funding-address[^>]*>([\s\S]*?)<\/(?:span|div)>/)[1]).replace(/\s+/g, '');
+
+const empty0 = html => helpRow(html, 'return').body;
+
+test('ordinary native funding shows the transfer as details and offers Deposit only when funded', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const waiting = controls.renderFundingAccount(owner);
     assert.match(waiting, /Amount to deposit/);
-    assert.match(waiting, /0\.005 ETH/);
-    assert.match(waiting, /data-funding-progress/);
-    assert.match(waiting, /Estimated actual network fee<\/dt><dd>0\.0004 ETH/);
-    assert.match(waiting, /Optional buffer/);
-    assert.match(waiting, /Amount to send<\/dt><dd>0\.0055 ETH/);
+    assert.match(transferValue(waiting, 'Deposit'), /\$10\.00/);
+    assert.match(transferValue(waiting, 'Network fee'), /up to \$10\.00/);
+    assert.match(transferValue(waiting, 'Send'), /zkapi-funding-send-number">0\.0055<\/span> ETH/);
+    assert.match(transferValue(waiting, 'Network'), /Ethereum Mainnet/);
+    assert.equal(addressText(waiting), recipient, 'the whole address is shown, never cut off');
+    assert.match(waiting, /data-funding-help="fee" data-open="false"/);
+    assert.match(waiting, /Moving ETH into your private balance is subject to a network fee\. Any leftover fee stays at your deposit address and goes toward your next deposit\./);
+    assert.match(waiting, /Waiting for your ETH · usually under a minute/);
+    assert.doesNotMatch(waiting, /data-funding-next/, 'no dead Deposit button while waiting');
+    assert.doesNotMatch(waiting, /data-funding-help="quote"|Transaction breakdown/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
-    assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
-    assert.match(waiting, /sending wallet charges its own transfer fee separately/);
-    assert.match(waiting, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
-    assert.match(waiting, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock/i);
-    assert.match(waiting, /Return leftover ETH/);
-    assert.doesNotMatch(waiting, /<details[^>]*open/);
+    assert.match(waiting, /Return ETH to your wallet/);
+    assert.equal(helpRow(waiting, 'return').open, false);
     Object.assign(owner.fundingFlow, { ready: true, remainingWei: '0', status: { ethBalance: '5500000000000000' } });
     const ready = controls.renderFundingAccount(owner);
-    assert.match(ready, /Funds received/);
-    assert.doesNotMatch(ready, /Send 0(?:\.0)? ETH|Received/);
+    assert.match(transferValue(ready, 'Received'), /0\.0055 ETH/);
+    assert.match(ready, /data-funding-next[^>]*>Deposit</);
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
-    assert.match(ready, /Its USD value changes with the ETH price/);
+    assert.doesNotMatch(ready, /Waiting for your ETH|data-funding-copy-amount/);
+    const leftover = helpRow(ready, 'return');
+    assert.equal(leftover.open, false);
+    assert.match(ready, /<span class="zkapi-funding-help-label">Return ETH to your wallet<\/span>/, 'the row header is the label alone');
+    assert.match(plain(leftover.body), /0\.0055 ETH is waiting at your deposit address\. It’s yours to send back to your wallet\. Only this browser can move it, so return it before clearing this site’s data\./);
+    assert.doesNotMatch(leftover.body, /part of your private balance|isn’t in your private balance/, 'no confusing balance wording');
+    assert.match(leftover.body, /placeholder="Your wallet address \(0x…\)"/);
+    assert.match(leftover.body, /data-funding-return-paste[^>]*>Paste<\/button>/);
+    assert.match(leftover.body, /data-funding-return-part data-open="false"><div class="t-acc-panel" inert>/, 'the amount field starts tucked away');
+    assert.match(plain(leftover.body), /Return all/);
+    assert.match(plain(leftover.body), /Sending it costs a small network fee, which comes out of the amount you return\./);
+    assert.match(leftover.body, /data-funding-return-toggle[^>]*><span class="zkapi-swap-text"><span >Return a specific amount<\/span>/);
+    assert.doesNotMatch(leftover.body, /Send ETH/, 'not "Send ETH", which names the funding method above');
+    const empty = helpRow(waiting, 'return');
+    assert.match(plain(empty.body), /Nothing is waiting at your deposit address right now\./);
+    assert.doesNotMatch(empty0(waiting), /is waiting at your deposit address\./, 'no amount line when nothing is there');
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
@@ -273,25 +311,22 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send 0\.0015 ETH more/);
-    assert.match(html, /Already at this address/);
-    assert.match(html, /0\.004 ETH/);
-    assert.match(html, /Amount to send<\/dt><dd>0\.0015 ETH/);
-    assert.doesNotMatch(html, /Received/);
+    assert.match(transferValue(html, 'Still needed'), /0\.0015<\/span> ETH/);
+    assert.match(plain(html), /Received 0\.004 ETH · send 0\.0015 more/);
+    assert.match(html, /data-funding-copy-amount data-amount="0\.0015"/);
+    assert.doesNotMatch(html, /data-funding-next/);
 });
 
-test('covering required fees enables Next without asking for the remaining optional buffer', () => {
+test('covering required fees enables Deposit without asking for the remaining optional buffer', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
         ready: true, remainingWei: '50000000000000', status: { ethBalance: '5450000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Ready to deposit/);
-    assert.match(html, /Funds received\./);
-    assert.match(html, /0\.00545 ETH/);
+    assert.match(transferValue(html, 'Received'), /0\.00545 ETH/);
+    assert.match(html, /data-funding-next[^>]*>Deposit</);
     assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
-    assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number/);
-    assert.match(html, /Optional buffer remaining/);
+    assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number|data-funding-copy-amount|Still needed/);
 });
 
 test('a fee outage retains the independently checked funding-address balance', () => {
@@ -314,32 +349,26 @@ test('the visible send amount shows USD for the remaining transfer including fee
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    const heading = html.match(/<h3 class="zkapi-funding-send-amount">([\s\S]*?)<\/h3>/)[1];
-    assert.match(heading, /0\.0015/);
-    assert.match(heading, /zkapi-funding-send-usd">≈ \$3\.00 USD/);
-    assert.doesNotMatch(heading, /\$10\.00|\$11\.00/);
-    assert.match(html, /data-funding-help-panel[^>]+hidden/);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
-    assert.ok(details, 'cost details are in the collapsed transaction breakdown');
-    assert.match(details[1], /data-funding-progress/);
-    assert.match(details[1], /role="progressbar"/);
-    assert.match(details[1], /zkapi-funding-progress-required|zkapi-funding-progress-optional/);
-    assert.match(details[1], /Already at this address/);
-    assert.match(html, /Transaction breakdown <svg/);
-    assert.match(html, /zkapi-funding-summary">Deposit ≈ \$10\.00 · Fee allowance ≈ \$1\.00<\/p>/);
-    assert.doesNotMatch(html.replace(details[1], ''), /data-funding-progress|Already at this address|Estimated actual network fee|Optional buffer/);
+    const send = transferValue(html, 'Still needed');
+    assert.match(send, /0\.0015<\/span> ETH <small>≈ \$3\.00<\/small>/);
+    assert.doesNotMatch(send, /\$10\.00|\$11\.00/);
+    assert.match(transferValue(html, 'Deposit'), /\$10\.00/);
+    assert.match(transferValue(html, 'Network fee'), /up to \$1\.00/);
     assert.doesNotMatch(html, /Recommended to send|more is required for the deposit and network fee allowance/);
-    owner.fundingHelpOpen = 'quote';
-    assert.doesNotMatch(controls.renderFundingAccount(owner), /data-funding-help-panel[^>]+hidden/);
+    owner.fundingFeeOpen = true;
+    const opened = controls.renderFundingAccount(owner);
+    assert.match(opened, /data-funding-help="fee" data-open="true"[\s\S]*?aria-expanded="true"/);
+    assert.equal(helpRow(opened, 'return').open, false, 'rows open on their own');
 });
 
 test('an unavailable USD conversion keeps exact ETH visible without a zero dollar estimate', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '—' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /0\.0055/);
-    assert.match(html, /zkapi-funding-send-usd">USD estimate unavailable/);
-    assert.match(html, /zkapi-funding-summary">Deposit 0\.005 ETH · Fee allowance 0\.0005 ETH<\/p>/);
+    assert.match(transferValue(html, 'Send'), /0\.0055<\/span> ETH/);
+    assert.doesNotMatch(transferValue(html, 'Send'), /≈/);
+    assert.match(transferValue(html, 'Deposit'), /0\.005 ETH/);
+    assert.match(transferValue(html, 'Network fee'), /up to 0\.0005 ETH/);
     assert.doesNotMatch(html, /≈ \$0/);
 });
 
@@ -352,7 +381,7 @@ test('ETH-origin deposits render an exact editable ETH amount and a USD switch',
     assert.match(html, /data-funding-amount data-funding-eth[^>]*value="0\.005000001"/);
     assert.match(html, /data-funding-currency[^>]*aria-label="Switch amount to USD"/);
     assert.doesNotMatch(html, /data-funding-eth[^>]*readonly|data-funding-usd|Saved deposit/);
-    assert.match(html, /zkapi-funding-send-usd">≈ \$10\.00 USD/);
+    assert.match(transferValue(html, 'Send'), /≈ \$10\.00/);
 });
 
 test('a saved ETH-origin deposit locks both its exact amount and denomination control', () => {
@@ -371,24 +400,21 @@ test('a missing balance never presents the full funding requirement as a known t
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$1.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ remainingWei: null, status: null }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Checking your funding address/);
-    assert.match(html, /Amount to send<\/dt><dd>— ETH/);
-    assert.doesNotMatch(html, /<h3>Send/);
-    assert.match(html, /data-funding-next[^>]*disabled/);
+    assert.match(html, /Checking your deposit address…/);
+    assert.match(transferValue(html, 'Send'), /—/);
+    assert.doesNotMatch(html, /data-funding-payment-qr|data-funding-copy-amount|role="progressbar"/, 'an unknown balance is not drawn as a known amount');
+    assert.doesNotMatch(html, /data-funding-next/);
 });
 
-test('an expired quote retains the QR and open breakdown but disables Deposit while refreshing', () => {
+test('an expired quote keeps the amount and QR but never offers Deposit while refreshing', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$1.00', config: { funding: { chain_id: 11155111 } } } });
     const flow = quotedFlow({ ready: true });
-    owner.fundingHelpOpen = 'quote';
     flow.fee.expiresAt = Date.now() - 1;
-    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: flow, fundingHelpOpen: 'quote' });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: flow });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Updating fee estimate/);
-    assert.match(html, /data-funding-next[^>]*disabled/);
+    assert.doesNotMatch(html, /data-funding-next/);
     assert.match(html, /data-funding-payment-qr/);
-    assert.doesNotMatch(html, /data-funding-help-panel[^>]*hidden/);
-    assert.match(html, /0\.0055/);
+    assert.match(transferValue(html, 'Send'), /0\.0055/);
     assert.match(html, /data-funding-address/);
 });
 
@@ -402,7 +428,7 @@ test('a definitely unsubmitted saved deposit refreshes its quote with the origin
     assert.match(html, /data-funding-usd[^>]*value="10" readonly/);
     assert.doesNotMatch(html, /value="999"/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
-    assert.match(html, /Estimated actual network fee/);
+    assert.match(html, /Network fee/);
     assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
 });
 
@@ -416,7 +442,7 @@ test('a saved ETH deposit from MetaMask shows its fixed principal and current US
     assert.match(html, /aria-label="Saved deposit amount"/);
     assert.match(html, /data-funding-eth[^>]*value="0\.005" readonly/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
-    assert.match(html, /Estimated actual network fee/);
+    assert.match(html, /Network fee/);
     assert.doesNotMatch(html, /data-funding-usd|value="999"|value="" readonly/);
     owner.fundingFlow.intent = null;
     const loading = controls.renderFundingAccount(owner);
@@ -431,9 +457,10 @@ test('a quotable saved address deposit omits the legacy resume button that lacks
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
     const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
     const account = Object.create(AccountModal.prototype);
-    Object.assign(account, { busy: false, renderOutcome: () => 'saved status', renderWithdrawalStatusLink: () => '' });
+    Object.assign(account, { busy: false, escapeHtml, renderOutcome: () => 'saved status', renderWithdrawalStatusLink: () => '' });
     const html = account.renderBalance();
-    assert.equal(html, 'saved status');
+    assert.match(html, /saved status/);
+    assert.doesNotMatch(html, /data-funding-next|data-funding-usd/);
     assert.doesNotMatch(html, /zkapi-deposit-btn|Resume with MetaMask/);
 });
 
@@ -453,7 +480,7 @@ test('explicit address retry preparation cannot sign and returns to the quoted f
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
     const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
     const account = Object.create(AccountModal.prototype);
-    Object.assign(account, { busy: false, fundingFlow: { ready: true },
+    Object.assign(account, { busy: false, escapeHtml, fundingFlow: { ready: true },
         setStatus(value) { this.status = value; },
         async run(action, details) {
             assert.equal(details.phase, 'local', 'review never enters provider signing authorization');
@@ -491,7 +518,7 @@ for (const phase of ['prepared', 'retry_exact']) {
             .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
         const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
         const account = Object.create(AccountModal.prototype);
-        Object.assign(account, { busy: false, renderOutcome: () => '', renderWithdrawalStatusLink: () => '' });
+        Object.assign(account, { busy: false, escapeHtml, renderOutcome: () => '', renderWithdrawalStatusLink: () => '' });
         const html = account.renderBalance();
         assert.match(html, /id="zkapi-check-deposit-btn"/);
         assert.doesNotMatch(html, /id="zkapi-deposit-btn"/);
@@ -536,11 +563,12 @@ test('stale USD pricing leaves exact ETH fees visible without a fictitious conve
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '—' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Estimated actual network fee<\/dt><dd>0\.0004 ETH<\/dd>/);
+    assert.match(transferValue(html, 'Network fee'), /up to 0\.0005 ETH/);
+    assert.match(transferValue(html, 'Deposit'), /0\.005 ETH/);
     assert.doesNotMatch(html, /≈ —|NaN|undefined/);
 });
 
-test('a confirmed deposit displays its receipt fee separately from the current public balance after reopening', () => {
+test('fee address explains the current public balance without showing an unrelated old deposit fee', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$1.00',
         note: { note_id: 3 }, deposits: [
             { status: 'confirmed', noteId: 2, fundingAddress: recipient, feeWei: '999000000000000000' },
@@ -548,15 +576,15 @@ test('a confirmed deposit displays its receipt fee separately from the current p
         ] } });
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: { ethBalance: '250000000000000' } });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Actual deposit network fee<\/dt><dd>0\.00035 ETH/);
-    assert.match(html, /Currently at this address: 0\.00025 ETH/);
-    assert.match(html, /may also hold ETH from other transfers/);
+    assert.doesNotMatch(html, /Actual deposit network fee|0\.00035 ETH/);
+    assert.match(html, /Available for fees: 0\.00025 ETH/);
+    assert.match(html, /separate from your private chat balance/);
     assert.doesNotMatch(html, /0\.999 ETH/);
     owner.fundingFlow = { status: { ethBalance: '5500000000000000' } };
     owner.fundingStatus = owner.fundingFlow.status;
     const transitioning = controls.renderFundingAccount(owner);
-    assert.match(transitioning, /Actual deposit network fee<\/dt><dd>0\.00035 ETH/);
-    assert.match(transitioning, /Currently at this address: — ETH/);
+    assert.doesNotMatch(transitioning, /Actual deposit network fee|0\.00035 ETH/);
+    assert.match(transitioning, /Available for fees: — ETH/);
     assert.doesNotMatch(transitioning, /0\.0055 ETH/);
 });
 
@@ -566,7 +594,7 @@ test('confirmation without a matched account receipt never invents a paid fee or
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: null });
     const html = controls.renderFundingAccount(owner);
     assert.doesNotMatch(html, /Actual deposit network fee|unused fee buffer remains|0\.00035 ETH/);
-    assert.match(html, /Currently at this address: — ETH/);
+    assert.match(html, /Available for fees: — ETH/);
 });
 
 test('closing a private note leaves public ETH return controls accessible in the new-deposit view', () => {
@@ -574,14 +602,14 @@ test('closing a private note leaves public ETH return controls accessible in the
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: { ethBalance: '15208600000000000' } });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Amount to deposit/);
-    assert.match(html, /Return leftover ETH/);
+    assert.match(html, /Return ETH to your wallet/);
     assert.match(html, /data-funding-return-eth/);
-    assert.doesNotMatch(html, /<details[^>]*open/);
+    assert.equal(helpRow(html, 'return').open, false);
     owner.fundingFlow = { status: { ethBalance: '15208600000000000' }, ready: false };
-    assert.match(controls.renderFundingAccount(owner), /Return leftover ETH/);
+    assert.match(controls.renderFundingAccount(owner), /Return ETH to your wallet/);
     owner.fundingFlow.status.ethBalance = '0';
     owner.fundingStatus.ethBalance = '0';
-    assert.match(controls.renderFundingAccount(owner), /Return leftover ETH/);
+    assert.match(controls.renderFundingAccount(owner), /Return ETH to your wallet/);
 });
 
 test('public ETH return is available without a saved intent, USD price or successful balance read', () => {
@@ -592,10 +620,10 @@ test('public ETH return is available without a saved intent, USD price or succes
         fundingFlow: { intent: null, status: null, error: 'The ETH/USD reference price is unavailable.', ready: false } });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /ETH\/USD reference price is unavailable/);
-    assert.match(html, /Return leftover ETH/);
+    assert.match(html, /Return ETH to your wallet/);
     assert.match(html, /data-funding-return-eth/);
-    assert.match(html, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
-    assert.doesNotMatch(html, /<details[^>]*open/);
+    assert.equal(addressText(html), recipient);
+    assert.equal(helpRow(html, 'return').open, false);
     assert.doesNotMatch(html, /data-funding-next/);
 });
 
@@ -743,7 +771,7 @@ test('hydration and received-funds renders never submit; only an explicit Next c
     let submits = 0;
     f.context.AddressDepositFlow = class {
         constructor() { this.ready = true; }
-        start(value) { starts++; assert.equal(value, '10.00'); }
+        start(value) { starts++; assert.equal(value, '10'); }
     };
     f.owner.submitAddressDeposit = async () => { submits++; };
     const button = f.field('next');
@@ -1010,11 +1038,18 @@ test('copy remains usable while funding waits without changing the active action
     f.owner.fundingWait = new AbortController();
     f.owner.render = () => { assert.fail('copy must not replace the funding wait UI'); };
     const notice = f.field('notice');
+    const status = f.field('copy-status');
     const button = f.field('copy');
+    button.dataset = { copied: 'false' };
     f.controls.attachWalletMethodControls(f.owner);
     await button.events.click();
     assert.deepEqual(copied, [recipient]);
-    assert.equal(notice.textContent, 'Receiving address copied.');
+    assert.equal(button.dataset.copied, 'true', 'the button itself answers');
+    assert.equal(status.textContent, 'Address copied');
+    assert.equal(notice.textContent, undefined, 'nothing else on the page moves');
+    [...f.timers.values()].at(-1)();
+    assert.equal(button.dataset.copied, 'false');
+    assert.equal(status.textContent, '');
     assert.equal(f.owner.busy, true);
     assert.equal(f.owner.fundingBusy, false);
     assert.equal(f.owner.fundingWait.signal.aborted, false);
@@ -1027,12 +1062,14 @@ test('a denied clipboard permission selects the funding address without interrup
     const address = f.field('address', recipient);
     const selected = [];
     address.focus = () => selected.push('focus');
-    address.select = () => selected.push('select');
+    const selection = { removeAllRanges: () => selected.push('clear'), addRange: range => selected.push(`select ${range.node === address}`) };
+    f.context.document.createRange = () => ({ selectNodeContents(node) { this.node = node; } });
+    f.context.document.getSelection = () => selection;
     const notice = f.field('notice');
     const button = f.field('copy');
     f.controls.attachWalletMethodControls(f.owner);
     await button.events.click();
-    assert.deepEqual(selected, ['focus', 'select']);
+    assert.deepEqual(selected, ['focus', 'clear', 'select true']);
     assert.match(notice.textContent, /Copy the selected address/);
     assert.equal(f.owner.busy, true);
 });
@@ -1189,38 +1226,30 @@ test('quote expiry repaints stale instructions even during a disclosure or pendi
     assert.equal(renders, 1, 'expiry does not wait for another RPC or animation');
 });
 
-test('manual deposit keeps instructions in the breakdown and shows a concise exact shortfall', () => {
+test('manual deposit shows a concise exact shortfall and the network beside the address', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00',
         config: { funding: { chain_id: 11155111 } }, networkName: () => 'Sepolia' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
         status: { ethBalance: '5000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /In your own wallet/);
-    assert.match(html, /choose <strong>Sepolia<\/strong>/);
-    assert.match(html, /Only your deposit is added to the private balance/);
+    assert.match(transferValue(html, 'Network'), /Sepolia/);
     assert.match(html, /This browser’s receiving address/);
-    assert.match(html, /0\.00045 ETH still needed/);
-    assert.match(html, /data-funding-next[^>]*disabled[^>]*>Deposit/);
-    assert.doesNotMatch(html, /Waiting for funds|>Next</);
-    assert.match(html, /confirm the transfer in your wallet/);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
-    assert.ok(details);
-    assert.match(details[1], /In your own wallet/);
-    assert.match(details[1], /Only your deposit is added/);
-    assert.doesNotMatch(html.replace(details[1], ''), /In your own wallet|Only your deposit is added|confirm the transfer|zkapi-funding-address-label/);
+    assert.match(plain(html), /Received 0\.005 ETH · send 0\.0005 more/);
+    assert.match(transferValue(html, 'Still needed'), /0\.0005<\/span> ETH/);
+    assert.doesNotMatch(html, /data-funding-next|Waiting for funds|>Next</);
 });
 
 test('failed refresh keeps fee details but suppresses QR and deposit authorization', () => {
     const f = fixture({ client: { isNativeEthFunding: true, config: { funding: { chain_id: 11155111 } } } });
     const flow = quotedFlow();
     Object.assign(flow, { displayQuote: flow.fee, fee: null, ready: false, error: 'Unable to check fees.' });
-    Object.assign(f.owner, { view: 'fund', isOpen: true, fundingFlow: flow, fundingHelpOpen: 'quote' });
+    Object.assign(f.owner, { view: 'fund', isOpen: true, fundingFlow: flow });
     const html = f.controls.renderFundingAccount(f.owner);
-    assert.match(html, /Transaction breakdown/);
+    assert.match(transferValue(html, 'Network fee'), /up to/);
     assert.match(html, /0\.0055/);
-    assert.doesNotMatch(html, /data-funding-help-panel[^>]*hidden|data-funding-payment-qr/);
-    assert.match(html, /data-funding-next[^>]*disabled/);
+    assert.match(html, /Unable to check fees\./);
+    assert.doesNotMatch(html, /data-funding-payment-qr|data-funding-next|Waiting for your ETH/);
 });
 
 test('expiry pauses Deposit without requesting an optional top-up from an already funded address', () => {
@@ -1231,9 +1260,171 @@ test('expiry pauses Deposit without requesting an optional top-up from an alread
     flow.fee = null;
     Object.assign(f.owner, { view: 'fund', isOpen: true, fundingFlow: flow });
     const html = f.controls.renderFundingAccount(f.owner);
-    assert.match(html, /Funds received/);
-    assert.match(html, /Optional buffer remaining/);
-    assert.match(html, /Updating fee estimate/);
-    assert.match(html, /data-funding-next[^>]*disabled/);
-    assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number/);
+    assert.match(transferValue(html, 'Received'), /0\.00545 ETH/);
+    assert.match(html, /zkapi-funding-next-pending[^>]*disabled>[\s\S]*Updating network fee…/, 'the button says why it is off');
+    assert.doesNotMatch(html, /data-funding-next|data-funding-payment-qr|zkapi-funding-send-number/);
+});
+
+function motionDocument({ reduced = false } = {}) {
+    const listeners = {};
+    const timers = [];
+    const view = { matchMedia: () => ({ matches: reduced }), setTimeout: (callback, ms) => { timers.push({ callback, ms }); return timers.length; }, clearTimeout() {} };
+    const doc = { defaultView: view, activeElement: null, addEventListener: (type, listener) => { listeners[type] = listener; }, removeEventListener() {} };
+    return { doc, listeners, timers };
+}
+
+test('breakdown and return rows open on their own, stay inert while closed, and hold renders while they move', () => {
+    const f = fixture();
+    const { doc, listeners, timers } = motionDocument();
+    const row = kind => {
+        const button = { events: {}, attributes: {}, addEventListener(type, listener) { this.events[type] = listener; },
+            setAttribute(name, value) { this.attributes[name] = value; }, focus() { doc.activeElement = this; } };
+        const panel = { inert: true };
+        const help = { dataset: { fundingHelp: kind, open: 'false' }, contains: node => node === button,
+            querySelector: selector => selector === '[data-funding-help-toggle]' ? button : selector === '[data-funding-help-panel]' ? panel : null };
+        return { help, button, panel };
+    };
+    const quote = row('quote');
+    const leftover = row('return');
+    const motion = [];
+    Object.assign(f.owner, { handleDisclosureMotion: moving => motion.push(moving), overlay: {
+        ownerDocument: doc, querySelector: () => null, contains: () => false,
+        querySelectorAll: selector => selector === '[data-funding-help]' ? [quote.help, leftover.help] : [] } });
+    f.controls.attachWalletMethodControls(f.owner);
+    quote.button.events.click();
+    assert.equal(f.owner.fundingHelpOpen, 'quote');
+    assert.equal(quote.help.dataset.open, 'true');
+    assert.equal(quote.panel.inert, false);
+    assert.equal(quote.button.attributes['aria-expanded'], 'true');
+    assert.deepEqual(motion, [true], 'background renders wait for the panel');
+    assert.equal(timers.at(-1).ms, 250);
+    timers.at(-1).callback();
+    assert.deepEqual(motion, [true, false]);
+    leftover.button.events.click();
+    assert.equal(f.owner.fundingReturnOpen, true);
+    assert.equal(f.owner.fundingHelpOpen, 'quote', 'opening one row leaves the other as it was');
+    const escape = () => { const event = { key: 'Escape', prevented: false, preventDefault() { this.prevented = true; }, stopPropagation() {} }; listeners.keydown(event); return event.prevented; };
+    assert.equal(escape(), true);
+    assert.equal(f.owner.fundingReturnOpen, false, 'Escape closes the row opened last');
+    assert.equal(leftover.panel.inert, true);
+    assert.equal(doc.activeElement, leftover.button, 'focus returns to its trigger');
+    doc.activeElement = quote.button;
+    assert.equal(escape(), true);
+    assert.equal(f.owner.fundingHelpOpen, null);
+    assert.equal(escape(), false, 'with every row closed, Escape is left to the dialog');
+});
+
+for (const reduced of [false, true]) {
+    test(`switching MetaMask ↔ Send ETH ${reduced ? 'jumps under reduced motion' : 'slides the pill from where it was and eases the new content in'}`, () => {
+        const f = fixture();
+        const { doc } = motionDocument({ reduced });
+        const drawnFrom = [];
+        const animated = [];
+        const content = { animate: frames => animated.push(frames), nextElementSibling: null };
+        const bar = { dataset: { active: 'address' }, closest: () => ({ nextElementSibling: content }),
+            get offsetWidth() { drawnFrom.push(this.dataset.from); return 320; } };
+        Object.assign(f.owner, { walletMethodSlideFrom: 'metamask', overlay: { ownerDocument: doc, contains: () => false,
+            querySelectorAll: () => [], querySelector: selector => selector === '.zkapi-segmented' ? bar : null } });
+        f.controls.attachWalletMethodControls(f.owner);
+        assert.deepEqual(drawnFrom, reduced ? [] : ['metamask'], 'the new control is first drawn with the pill where it was');
+        assert.equal(bar.dataset.from, undefined, 'then released to travel');
+        assert.equal(animated.length, reduced ? 0 : 1);
+        assert.equal(f.owner.walletMethodSlideFrom, null, 'a later render never replays it');
+        f.controls.attachWalletMethodControls(f.owner);
+        assert.equal(animated.length, reduced ? 0 : 1);
+    });
+}
+
+test('the signer control names its active choice for the sliding pill', () => {
+    const f = fixture({ method: 'address' });
+    assert.match(f.controls.renderWalletMethod(f.owner), /class="zkapi-segmented"[^>]*data-active="address"/);
+    const metamask = fixture({ method: 'metamask' });
+    assert.match(metamask.controls.renderWalletMethod(metamask.owner), /data-active="metamask"/);
+});
+
+test('an open breakdown survives a reload whose first render shows the address receipt instead', () => {
+    const f = fixture();
+    const { doc } = motionDocument();
+    const receipt = { dataset: { fundingHelp: 'receipt', open: 'false' }, contains: () => false,
+        querySelector: selector => selector === '[data-funding-help-toggle]' ? { addEventListener() {}, setAttribute() {} } : selector === '[data-funding-help-panel]' ? { inert: true } : null };
+    Object.assign(f.owner, { fundingHelpOpen: 'quote', fundingReturnOpen: true, overlay: { ownerDocument: doc, contains: () => false, querySelector: () => null,
+        querySelectorAll: selector => selector === '[data-funding-help]' ? [receipt] : [] } });
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(f.owner.fundingHelpOpen, 'quote', 'restored state waits for its own row');
+    assert.equal(f.owner.fundingReturnOpen, true);
+    assert.equal(receipt.dataset.open, 'false', 'and never opens another row');
+});
+
+test('while the amount to send is being worked out, the rows hold their places and nothing can authorize a deposit', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00', config: { funding: { chain_id: 1 } } } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ intent: null, fee: null, totalWei: null, remainingWei: null }) });
+    const loading = controls.renderFundingAccount(owner);
+    assert.match(loading, /Estimating the deposit network fee/);
+    assert.match(loading, /data-funding-transfer/);
+    assert.match(transferValue(loading, 'Network fee'), /Estimating…/);
+    assert.match(transferValue(loading, 'Send'), /class="zkapi-skel"/, 'a placeholder holds the value’s place');
+    assert.doesNotMatch(loading, /zkapi-transfer is-revealing/, 'nothing to reveal yet');
+    assert.doesNotMatch(loading, /data-funding-next\b|data-funding-payment-qr/, 'nothing can authorize a deposit yet');
+
+    Object.assign(owner, { fundingFlow: quotedFlow() });
+    const quoted = controls.renderFundingAccount(owner);
+    assert.match(quoted, /data-funding-payment-qr/);
+    assert.match(quoted, /data-funding-help="qr" data-open="false"/, 'the QR waits under the Network row');
+    assert.match(quoted, /class="zkapi-transfer is-revealing" style="--zkapi-reveal-delay:-\d+ms"/, 'the figures fade in where the placeholders were');
+    assert.match(controls.renderFundingAccount(owner), /zkapi-transfer is-revealing/, 'a re-render mid-way continues the fade');
+    owner.fundingRevealAt -= 1000;
+    assert.doesNotMatch(controls.renderFundingAccount(owner), /is-revealing/, 'and later renders are still');
+
+    Object.assign(owner, { fundingFlow: quotedFlow({ ready: true, remainingWei: '0', status: { ethBalance: '5500000000000000' } }) });
+    const funded = controls.renderFundingAccount(owner);
+    assert.doesNotMatch(funded, /data-funding-payment-qr|zkapi-funding-next-pending/, 'once funded, no QR');
+    assert.match(funded, /data-funding-next[^>]*>Deposit</);
+});
+
+test('a fee wobble keeps the amount and QR still; a rise past it updates the amount and says why', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00', config: { funding: { chain_id: 1 } } } });
+    const flow = quotedFlow();
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: flow });
+    assert.match(transferValue(controls.renderFundingAccount(owner), 'Send'), /0\.0055<\/span>/);
+    flow.fee = { ...flow.fee, requiredFeeWei: '480000000000000', feeReserveWei: '520000000000000' };
+    const wobble = controls.renderFundingAccount(owner);
+    assert.match(transferValue(wobble, 'Send'), /0\.0055<\/span>/, 'still enough, so the number does not move');
+    assert.doesNotMatch(wobble, /Network fee went up/);
+    flow.fee = { ...flow.fee, requiredFeeWei: '600000000000000', feeReserveWei: '700000000000000' };
+    const risen = controls.renderFundingAccount(owner);
+    assert.match(transferValue(risen, 'Send'), /0\.0057<\/span>/);
+    assert.match(risen, /Network fee went up · amount updated/);
+    flow.status = { ethBalance: '5500000000000000' };
+    assert.match(plain(controls.renderFundingAccount(owner)), /Network fee went up · send 0\.0002 more/, 'someone who already sent the old amount sees the top-up');
+});
+
+test('the fee hint sits under the amount only when the fee is over a quarter of the deposit', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$2.59' } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
+    assert.doesNotMatch(controls.renderFundingAccount(owner), /data-funding-fee-hint/, 'a 10% fee needs no warning');
+    const small = quotedFlow();
+    small.intent = { ...small.intent, depositWei: '1000000000000000' };
+    owner.fundingFlow = small;
+    assert.match(controls.renderFundingAccount(owner), /<p class="zkapi-fee-hint" data-funding-fee-hint>Network fee is up to <b>\$2\.59<\/b>\. It’s about the same whatever amount you send\.<\/p>/);
+    assert.match(controls.renderFundingAccount(owner), /zkapi-fee-hint-wrap is-entering/, 'the hint opens instead of appearing at full height');
+    owner.fundingFeeHintAt -= 1000;
+    assert.doesNotMatch(controls.renderFundingAccount(owner), /is-entering/);
+});
+
+test('the QR fades in once when it replaces its placeholder, not on later renders', () => {
+    const f = fixture();
+    const { doc } = motionDocument();
+    const animated = [];
+    let current = 'placeholder';
+    const svg = { animate: frames => animated.push(frames) };
+    Object.assign(f.owner, { overlay: { ownerDocument: doc, contains: () => false, querySelectorAll: () => [],
+        querySelector: selector => selector === '[data-funding-qr-placeholder]' ? (current === 'placeholder' ? {} : null)
+            : selector === '[data-funding-payment-qr] svg' ? (current === 'qr' ? svg : null) : null } });
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(animated.length, 0);
+    current = 'qr';
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(animated.length, 1);
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(animated.length, 1, 'a balance poll re-render does not replay it');
 });

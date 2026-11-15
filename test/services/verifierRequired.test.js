@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { signStationKey, trustedStationPins } from '../helpers/trustedStation.js';
 
 const previousWindow = globalThis.window;
 globalThis.window = {
@@ -17,20 +18,21 @@ test.after(() => {
     else globalThis.window = previousWindow;
 });
 
-const KEY_DATA = {
+const KEY_DATA = signStationKey({
     recentlyAttested: true,
     stationId: 'station-dominic-local-v2',
     key: 'child-secret',
     expiresAtUnix: Math.floor(Date.now() / 1000) + 3600,
     stationSignature: 'station-signature',
     orgSignature: 'org-signature'
-};
+});
+const TRUSTED_STATIONS = trustedStationPins(KEY_DATA.stationId);
 const KEY_HASH = '1b208a37bbf953ac';
 
 test('submitKey sends child keys through the verifier path', async () => {
     const originalFetch = networkProxy.fetchWithRetryJson;
     const calls = [];
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     networkProxy.fetchWithRetryJson = async (url, options) => {
         calls.push({ url, options });
         return {
@@ -56,7 +58,7 @@ test('submitKey sends child keys through the verifier path', async () => {
 for (const mismatch of ['station_id', 'key_hash']) {
     test(`verified response rejects a mismatched ${mismatch}`, async () => {
         const originalFetch = networkProxy.fetchWithRetryJson;
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         networkProxy.fetchWithRetryJson = async () => ({
             response: { ok: true, status: 200 },
             data: {
@@ -99,7 +101,7 @@ test('broadcast polling remains active for verifier-backed access', async () => 
     };
 
     try {
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         const result = await verifier.queryBroadcast();
         assert.equal(result.verified_stations.length, 1);
         assert.equal(verifier.verifierOnline, true);
@@ -110,7 +112,7 @@ test('broadcast polling remains active for verifier-backed access', async () => 
 });
 
 test('periodic polling can reuse the initial verifier check without another immediate request', async () => {
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     let calls = 0;
     verifier.queryBroadcast = async () => {
         calls += 1;
@@ -135,7 +137,7 @@ test('a successful HTTP response without verified status fails closed', async ()
     });
 
     try {
-        const result = await new StationVerifier().submitKey(KEY_DATA);
+        const result = await new StationVerifier({ trustedStations: TRUSTED_STATIONS }).submitKey(KEY_DATA);
         assert.equal(result.status, 'rejected');
         assert.match(result.error.message, /invalid success response/);
     } finally {
@@ -151,7 +153,7 @@ test('pending verification does not retain the provisional child key', async () 
     });
 
     try {
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         const result = await verifier.submitKey(KEY_DATA);
 
         assert.equal(result.status, 'pending');
@@ -169,7 +171,7 @@ test('verifier network errors allow outage access with a bounded browser-memory 
     };
 
     try {
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         const result = await verifier.submitKey({
             ...KEY_DATA,
             recentlyAttested: true
@@ -199,7 +201,7 @@ test('verifier failures cannot echo a child key into diagnostics', async () => {
     });
 
     try {
-        const result = await new StationVerifier().submitKey(KEY_DATA);
+        const result = await new StationVerifier({ trustedStations: TRUSTED_STATIONS }).submitKey(KEY_DATA);
 
         assert.equal(result.status, 'rejected');
         assert.doesNotMatch(result.error.message, /child-secret/);
@@ -218,7 +220,7 @@ for (const status of [408, 429, 500, 502, 503, 504]) {
         networkProxy.fetchWithRetryJson = async () => ({ response: { ok: false, status }, data: null });
         networkLogger.clearLogs();
         try {
-            const result = await new StationVerifier().submitKey(KEY_DATA);
+            const result = await new StationVerifier({ trustedStations: TRUSTED_STATIONS }).submitKey(KEY_DATA);
             assert.equal(result.status, 'verifier-unavailable');
             assert.doesNotMatch(JSON.stringify(networkLogger.getAllLogs()), /child-secret/);
         } finally { networkProxy.fetchWithRetryJson = originalFetch; }
@@ -234,7 +236,7 @@ for (const data of [
     test(`explicit refusal on a 503 never becomes outage access: ${JSON.stringify(data)}`, async () => {
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => ({ response: { ok: false, status: 503 }, data });
-        try { assert.equal((await new StationVerifier().submitKey(KEY_DATA)).status, 'rejected'); }
+        try { assert.equal((await new StationVerifier({ trustedStations: TRUSTED_STATIONS }).submitKey(KEY_DATA)).status, 'rejected'); }
         finally { networkProxy.fetchWithRetryJson = originalFetch; }
     });
 }
@@ -243,7 +245,7 @@ for (const status of [400, 401, 403, 404, 409, 422]) {
     test(`HTTP ${status} still blocks inference`, async () => {
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => ({ response: { ok: false, status }, data: {} });
-        try { assert.equal((await new StationVerifier().submitKey(KEY_DATA)).status, 'rejected'); }
+        try { assert.equal((await new StationVerifier({ trustedStations: TRUSTED_STATIONS }).submitKey(KEY_DATA)).status, 'rejected'); }
         finally { networkProxy.fetchWithRetryJson = originalFetch; }
     });
 }
@@ -258,7 +260,7 @@ for (const [error, expected] of [
     test(`transport ${error.name}: ${error.message} (user abort ${error.isUserAbort})`, async () => {
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => { throw error; };
-        try { assert.equal((await new StationVerifier().submitKey(KEY_DATA)).status, expected); }
+        try { assert.equal((await new StationVerifier({ trustedStations: TRUSTED_STATIONS }).submitKey(KEY_DATA)).status, expected); }
         finally { networkProxy.fetchWithRetryJson = originalFetch; }
     });
 }
@@ -267,7 +269,7 @@ test('outages cannot authorize expired, malformed, or known-banned keys', async 
     const originalFetch = networkProxy.fetchWithRetryJson;
     networkProxy.fetchWithRetryJson = async () => { throw new TypeError('Failed to fetch'); };
     try {
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         for (const changes of [{ expiresAtUnix: 1 }, { expiresAtUnix: 'invalid' }, { stationSignature: null }]) {
             assert.equal((await verifier.submitKey({ ...KEY_DATA, ...changes })).status, 'rejected');
         }
@@ -281,7 +283,7 @@ for (const recentlyAttested of [false, undefined, 'true']) {
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => { throw new TypeError('Failed to fetch'); };
         try {
-            const verifier = new StationVerifier();
+            const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
             assert.equal((await verifier.submitKey({ ...KEY_DATA, recentlyAttested })).status, 'rejected');
             assert.equal(verifier.pendingSubmissions.size, 0);
         } finally { networkProxy.fetchWithRetryJson = originalFetch; }
@@ -296,7 +298,7 @@ for (const [status, data, detail] of [
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => ({ response: { ok: false, status }, data });
         try {
-            const verifier = new StationVerifier();
+            const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
             const result = await verifier.submitKey({ ...KEY_DATA, recentlyAttested: false });
             assert.equal(result.status, 'verifier-unavailable');
             assert.equal(result.detail, detail);
@@ -315,7 +317,7 @@ test('background retry upgrades only after matching key verification, without ne
         return { response: { ok: true, status: 200 }, data: { status: 'verified', station_id: KEY_DATA.stationId, key_hash: KEY_HASH } };
     };
     try {
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         const pending = await verifier.submitKey({ ...KEY_DATA, ticketsUsed: [{ finalizedTicket: 'ticket-secret' }] });
         assert.equal(pending.status, 'verifier-unavailable');
         assert.doesNotMatch(JSON.stringify(verifier.pendingSubmissions.get(KEY_HASH).keyData), /ticket-secret|ticketsUsed/);
@@ -337,7 +339,7 @@ for (const responseData of [{ status: 'verified', station_id: 'wrong-station', k
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => { throw new TypeError('Failed to fetch'); };
         try {
-            const verifier = new StationVerifier();
+            const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
             const result = await verifier.submitKey(KEY_DATA);
             let finalResult;
             await verifier.trackPendingAccess({ ...KEY_DATA, verifierSubmitKeyProof: result }, 'session', r => { finalResult = r; });
@@ -354,7 +356,7 @@ test('outage retries stop after three total attempts and preserve an honest unve
     const originalFetch = networkProxy.fetchWithRetryJson;
     networkProxy.fetchWithRetryJson = async () => { throw new TypeError('Failed to fetch'); };
     try {
-        const verifier = new StationVerifier();
+        const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
         const proof = await verifier.submitKey(KEY_DATA);
         let result;
         await verifier.trackPendingAccess({ ...KEY_DATA, verifierSubmitKeyProof: proof }, 'session', r => { result = r; });
@@ -371,7 +373,7 @@ test('outage retries stop after three total attempts and preserve an honest unve
 });
 
 test('restoring pending access resumes verification, but expired access never queues', async () => {
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     const info = { ...KEY_DATA, verifierSubmitKeyProof: { status: 'verifier-unavailable', detail: 'recently_attested_outage' } };
     await verifier.trackPendingAccess({ ...info, expiresAtUnix: 1 }, 'session', () => {});
     assert.equal(verifier.pendingSubmissions.size, 0);
@@ -380,7 +382,7 @@ test('restoring pending access resumes verification, but expired access never qu
 });
 
 test('overlapping polling never submits the same pending key concurrently', async () => {
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     verifier.queuePendingSubmission(KEY_DATA, KEY_HASH, 'recently_attested_outage');
     verifier.pendingSubmissions.get(KEY_HASH).nextRetryAt = 0;
     let complete;
@@ -395,7 +397,7 @@ test('overlapping polling never submits the same pending key concurrently', asyn
 });
 
 test('expired queued credentials are discarded without a request', async () => {
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     verifier.queuePendingSubmission({ ...KEY_DATA, expiresAtUnix: 1 }, KEY_HASH, 'recently_attested_outage');
     const entry = verifier.pendingSubmissions.get(KEY_HASH);
     entry.nextRetryAt = 0;
@@ -415,7 +417,7 @@ for (const [status, data, nextFailure] of [
         const originalFetch = networkProxy.fetchWithRetryJson;
         networkProxy.fetchWithRetryJson = async () => ({ response: { ok: false, status }, data });
         try {
-            const verifier = new StationVerifier();
+            const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
             await verifier.submitKey({ ...KEY_DATA, recentlyAttested: false });
             networkProxy.fetchWithRetryJson = async () => {
                 if (nextFailure === 'timeout') throw new TypeError('Failed to fetch');

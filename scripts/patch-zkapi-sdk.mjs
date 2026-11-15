@@ -5,6 +5,9 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import patch from '../patches/zkapi-browser-sdk-wallet-recovery.mjs';
+import proofCachePatch from '../patches/zkapi-browser-sdk-proof-cache.mjs';
+import providerVerificationPatch from '../patches/zkapi-browser-sdk-provider-verification.mjs';
+import serverTimePatch from '../patches/zkapi-browser-sdk-server-time.mjs';
 import registry from '../deployments/zkapi/registry.json' with { type: 'json' };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -13,12 +16,26 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 // Package name the app's source imports and the first protocol version installs.
 const LEGACY_ALIAS = '@openanonymity/zkapi-browser-sdk';
 const LEGACY_PATCH = 'wallet-recovery-v1';
+const SERVER_TIME_PATCH = serverTimePatch.name;
+// Compatibility patches of the same legacy revision, applied after the recovery
+// patch in a file chain (a later entry starts from the earlier entry's result).
+const PROOF_CACHE_PATCH = proofCachePatch.name;
+const PROVIDER_VERIFICATION_PATCH = providerVerificationPatch.name;
 
 // Reviewed repairs by the name a registry row lists in `sdk.patches`. A patch
 // is bound to one SDK revision and one set of file hashes; a new SDK revision
 // gets its own entry (and its own .vercelignore line), never an edit of this
 // one. A row naming a patch that is not listed here cannot be built.
-const SDK_PATCHES = Object.freeze({ [LEGACY_PATCH]: patch });
+const SDK_PATCHES = Object.freeze({
+    [LEGACY_PATCH]: patch,
+    [PROOF_CACHE_PATCH]: proofCachePatch,
+    [PROVIDER_VERIFICATION_PATCH]: providerVerificationPatch,
+    [SERVER_TIME_PATCH]: serverTimePatch
+});
+
+// The patches of the legacy SDK, in the order their file chains apply.
+export const LEGACY_PATCH_NAMES = Object.freeze([LEGACY_PATCH, PROOF_CACHE_PATCH, PROVIDER_VERIFICATION_PATCH, SERVER_TIME_PATCH]);
+export const zkapiSdkPatches = Object.freeze(LEGACY_PATCH_NAMES.map(name => SDK_PATCHES[name]));
 
 // What each reviewed patch covers, by the protocol wiring name an adapter lists
 // in `requiredWiring` (chat/zkapi/versioning/wiring.mjs). Some wiring has a
@@ -50,24 +67,44 @@ export function zkapiSdkPatchProvenance(name = LEGACY_PATCH) {
         files: Object.fromEntries(entry.files.map(file => [file.file, file.afterSha256])) };
 }
 
-// Apply one reviewed patch to the SDK directory. Returns the files rewritten.
-// Every file is verified before any is modified, and both pristine and
-// already patched sources are accepted byte for byte.
-async function applyPatch(entry, directory) {
+export function zkapiSdkPatchesProvenance() {
+    return LEGACY_PATCH_NAMES.map(name => zkapiSdkPatchProvenance(name));
+}
+
+// Apply the reviewed patches of one SDK directory. A file named by several
+// patches is a chain: each entry must start from the previous entry's result.
+// Pristine files, an intermediate reviewed state and the final result are
+// accepted byte for byte, so an interrupted install or a repeat build is
+// repairable, and every unreviewed state is refused before any file is written.
+async function applyPatches(entries, directory) {
+    const chains = new Map();
+    for (const entry of entries) {
+        for (const file of entry.files) {
+            const chain = chains.get(file.file) || [];
+            if (chain.length && chain.at(-1).afterSha256 !== file.beforeSha256) {
+                throw new Error(`The zkAPI SDK patch chain is inconsistent for ${file.file}.`);
+            }
+            chain.push(file);
+            chains.set(file.file, chain);
+        }
+    }
     const updates = [];
-    for (const file of entry.files) {
-        const target = path.join(directory, file.file);
+    for (const [name, chain] of chains) {
+        const target = path.join(directory, name);
         let source = await fs.readFile(target, 'utf8');
         const hash = digest(source);
-        if (hash === file.afterSha256) continue;
-        if (hash !== file.beforeSha256) {
-            throw new Error(`Unexpected zkAPI SDK contents in ${file.file}. Reinstall or review the recovery patch.`);
+        const completed = chain.findLastIndex(file => hash === file.afterSha256);
+        if (completed === chain.length - 1) continue;
+        if (completed < 0 && hash !== chain[0].beforeSha256) {
+            throw new Error(`Unexpected zkAPI SDK contents in ${name}. Reinstall or review the recovery patch.`);
         }
-        for (const { before, after } of file.replacements) {
-            if (source.split(before).length !== 2) throw new Error(`Recovery patch context changed in ${file.file}.`);
-            source = source.replace(before, after);
+        for (const file of chain.slice(completed + 1)) {
+            for (const { before, after } of file.replacements) {
+                if (source.split(before).length !== 2) throw new Error(`Recovery patch context changed in ${name}.`);
+                source = source.replace(before, after);
+            }
+            if (digest(source) !== file.afterSha256) throw new Error(`Recovery patch result mismatch in ${name}.`);
         }
-        if (digest(source) !== file.afterSha256) throw new Error(`Recovery patch result mismatch in ${file.file}.`);
         updates.push([target, source]);
     }
     return updates;
@@ -99,8 +136,7 @@ export async function patchSdkVersion({ root = repoRoot, alias, source, patches 
     } catch (cause) {
         throw new Error(`The zkAPI SDK package ${alias} is not installed. Run npm install.`, { cause });
     }
-    const updates = [];
-    for (const entry of entries) updates.push(...await applyPatch(entry, directory));
+    const updates = await applyPatches(entries, directory);
     // Validate every file before modifying any. A partial interrupted install
     // remains repairable on the next invocation because each file is checked.
     for (const [target, patched] of updates) await fs.writeFile(target, patched);
@@ -116,7 +152,7 @@ export async function patchZkapiSdk(root = repoRoot) {
         root,
         alias: LEGACY_ALIAS,
         source: `github:OpenAnonymity/zkapi#${patch.revision}`,
-        patches: [LEGACY_PATCH]
+        patches: [...LEGACY_PATCH_NAMES]
     });
 }
 

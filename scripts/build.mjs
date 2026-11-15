@@ -1,3 +1,4 @@
+import { productionProxyUrl } from './proxy-build-setting.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
@@ -10,12 +11,14 @@ import {
     buildZkapiAssets,
     planFromRegistry,
     resolveZkapiNetwork,
+    resolveZkapiVerifierOrigin,
     runtimeVersionTable,
     verifyPlanOnDisk,
     zkapiBuildPlugins,
     zkapiBuildProvenance
 } from './zkapiBuild.mjs';
 import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
+import { injectSentry, resolveSentryConfig } from './sentryBuild.mjs';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
     resolveBuildOrgOrigin,
@@ -47,11 +50,16 @@ const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
+const sentryConfig = resolveSentryConfig();
 const zkapiNetwork = resolveZkapiNetwork();
 const zkapiDeployment = process.env.OA_ZKAPI_DEPLOYMENT || '';
 // The registry is validated before anything is built or cleaned. Null for a
 // ticket-only build, which carries no zkAPI at all.
 const zkapiPlan = zkapiNetwork ? planFromRegistry({ network: zkapiNetwork, deployment: zkapiDeployment }) : null;
+// The OA verifier origin the browser pins at runtime: the one every live
+// version's reviewed profile names (an exact HTTPS origin). Versions of one
+// network sharing an anonymity set must agree, or the build stops here.
+const zkapiVerifierOrigin = resolveZkapiVerifierOrigin({ network: zkapiNetwork, plan: zkapiPlan });
 const configuredWebAuthnRelayUrl = resolveBuildWebAuthnRelayUrl();
 const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
 if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
@@ -73,6 +81,7 @@ const verifierOutagePolicySetting = process.env.OA_VERIFIER_OUTAGE_POLICY || 'ad
 if (!['strict', 'tolerant', 'advisory'].includes(verifierOutagePolicySetting)) {
     throw new Error('[build] OA_VERIFIER_OUTAGE_POLICY must be strict, tolerant or advisory');
 }
+const productionProxyUrlSetting = productionProxyUrl(process.env.OA_PROXY_URL);
 const demoProxyUrlSetting = process.env.OA_DEMO_PROXY_URL || '';
 if (demoProxyUrlSetting) {
     let demoProxyUrl;
@@ -257,6 +266,7 @@ const build = async () => {
             '.otf': 'file'
         },
         define: {
+            '__OA_PHONE_PAIRING__': JSON.stringify(process.env.OA_PHONE_PAIRING === 'true'),
             '__DEV__': 'false',
             '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
             // Registry projection. Empty in ticket-only and SDK-default builds
@@ -271,7 +281,9 @@ const build = async () => {
             ),
             '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
             '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting),
+            '__OA_PROXY_URL__': JSON.stringify(productionProxyUrlSetting),
             '__OA_VERIFIER_ORIGIN__': JSON.stringify(verifierOriginSetting),
+            '__OA_ZKAPI_VERIFIER_ORIGIN__': JSON.stringify(zkapiVerifierOrigin),
             '__OA_VERIFIER_OUTAGE_POLICY__': JSON.stringify(verifierOutagePolicySetting)
         },
         minify: true,
@@ -301,6 +313,12 @@ const build = async () => {
 
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
+    // The vendored relay runtime is copied, not part of the app bundle hash.
+    const libcurlHash = createHash('sha256').update(await fs.readFile(
+        path.join(outDir, 'vendor/libcurl/libcurl_full.js')
+    )).digest('hex').slice(0, 12);
+    html = html.replace("'vendor/libcurl/libcurl_full.js'", `'vendor/libcurl/libcurl_full.js?v=${libcurlHash}'`);
+    html = await injectSentry(html, { outDir, outputs, config: sentryConfig });
 
     if (sameOriginOrg || configuredOrgOrigin) {
         // Never warm production-org DNS in a same-origin or staging build.
@@ -399,6 +417,7 @@ const build = async () => {
                     ? 'same-origin'
                     : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN,
                 webauthnRelayUrl: configuredWebAuthnRelayUrl,
+                zkapiVerifierOrigin,
                 verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai',
                 ...(zkapi ? { zkapi } : {})
             }, null, 2)

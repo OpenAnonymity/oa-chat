@@ -1,10 +1,15 @@
+import { ticketTierPolicyEnabled, accessCoversModel, mergeTicketAccessHistory } from '../services/inference/ticketTierAccess.js';
+import { trackFeatureUsage } from '../services/featureUsage.js';
+import { STILL_WORKING_DELAY_MS } from '../services/streamSegments.js';
+import { waitForSignal } from '../services/inference/reliability.js';
 import { chatDB as defaultChatDB } from '../db.js';
-import { parseReasoningContent } from '../services/reasoningParser.js';
+import { parseReasoningContent, reasoningTextFromDetails } from '../services/reasoningParser.js';
 import {
     acquireVerifiedAccess,
     buildSafeAccessErrorMetadata
 } from './accessController.js';
 import { getMessageTextContent } from '../domain/messageContent.js';
+import { providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
 import { buildCouncilSynthesisMessages } from '../domain/councilPrompts.js';
 import {
     COUNCIL_OUTPUT_SYNTHESIS,
@@ -20,6 +25,8 @@ import {
 const SAVE_INTERVAL_MS = 350;
 const LANE_IDS = ['primary', 'secondary'];
 const SYNTHESIS_LANE_ID = 'synthesis';
+// How long a lane may go quiet after showing output before it says it is
+// still working. Long enough to stay hidden while text is streaming.
 const SYNTHESIS_CONTEXT_MAX_CHARS = 8000;
 
 function isAbortError(error) {
@@ -39,11 +46,15 @@ function throwIfAborted(signal) {
     }
 }
 
+// `HTTP nnn` is the response status only. A provider's mid-stream error code
+// (a numeric error.code inside a 200 stream) is kept apart as its diagnostic
+// code (PROVIDER_CODE_nnn, providerErrorDiagnostic.js), so the lane can say
+// "Provider error 504" and never pass it off as an HTTP 504 response.
 function buildSafeCouncilErrorMessage(error, fallback = 'Request failed.') {
     const status = Number(error?.status ?? error?.response?.status);
-    const code = typeof error?.code === 'string'
+    const code = providerErrorDiagnosticCode(error) || (typeof error?.code === 'string'
         ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
-        : '';
+        : '');
     const details = [];
     if (Number.isFinite(status)) details.push(`HTTP ${status}`);
     if (code) details.push(code);
@@ -61,10 +72,55 @@ function extractResponseContent(result) {
     return '';
 }
 
+function extractImages(result) {
+    const images = Array.isArray(result?.images)
+        ? result.images
+        : result?.data?.choices?.[0]?.message?.images;
+    return Array.isArray(images) && images.length > 0 ? images : null;
+}
+
+// A lane has answered when it produced text or generated images. Image
+// models often answer with images alone, so text is not the only output.
+function hasLaneOutput(entry) {
+    const hasText = typeof entry?.response === 'string' && entry.response.trim().length > 0;
+    const hasImages = Array.isArray(entry?.images) && entry.images.length > 0;
+    return hasText || hasImages;
+}
+
+// What a lane had already shown when it was stopped: text, an image, or
+// reasoning. Stop keeps all of it, the way a single chat keeps its partial.
+function hasLanePartialOutput(entry) {
+    return hasLaneOutput(entry) || (typeof entry?.reasoning === 'string' && entry.reasoning.trim().length > 0);
+}
+
+// A lane that fails before showing anything keeps the label of the model that
+// was asked for: whatever the router reported on the way to the error did not
+// answer, so it is not this lane's response model.
+function markLaneFailed(stageEntry, error) {
+    stageEntry.status = 'error';
+    stageEntry.error = buildSafeCouncilErrorMessage(error);
+    if (!hasLanePartialOutput(stageEntry)) delete stageEntry.responseModel;
+}
+
+// The turn a lane sees in its own history when it was stopped or failed
+// before showing anything. Without it the lane's history runs user, user,
+// user, and the model reads the old requests as still open.
+const STOPPED_LANE_TURN = '[This reply was stopped by the user before it began. That request is no longer open.]';
+const FAILED_LANE_TURN = '[This reply failed before it began. That request is no longer open.]';
+
+function describeLaneForSynthesis(entry) {
+    const text = typeof entry?.response === 'string' ? entry.response.trim() : '';
+    const imageCount = Array.isArray(entry?.images) ? entry.images.length : 0;
+    if (imageCount === 0) return text;
+    const imageNote = `[This response generated ${imageCount} image${imageCount === 1 ? '' : 's'}. The images are not shown in this review; treat them as delivered and judge the response on its text and on whether it did what was asked.]`;
+    return text ? `${text}\n\n${imageNote}` : imageNote;
+}
+
 function extractReasoning(result) {
     const message = result?.data?.choices?.[0]?.message;
-    const reasoning = result?.reasoning || message?.reasoning || message?.reasoning_details || null;
-    return typeof reasoning === 'string' ? parseReasoningContent(reasoning) : null;
+    const reasoning = result?.reasoning || message?.reasoning
+        || reasoningTextFromDetails(message?.reasoning_details) || null;
+    return typeof reasoning === 'string' && reasoning ? parseReasoningContent(reasoning) : null;
 }
 
 function extractCitations(result) {
@@ -178,6 +234,7 @@ export default class CouncilController {
 
         stageEntry.status = 'pending';
         stageEntry.response = '';
+        stageEntry.images = null;
         delete stageEntry.responseModel;
         stageEntry.error = null;
         stageEntry.reasoning = null;
@@ -218,6 +275,7 @@ export default class CouncilController {
             });
             this.updateLaneResponseModel(stageEntry, result?.model || result?.data?.model, entry, session);
             stageEntry.response = extractResponseContent(result);
+            stageEntry.images = extractImages(result);
             stageEntry.reasoning = extractReasoning(result);
             stageEntry.reasoningDuration = result?.reasoningDuration || null;
             stageEntry.streamingReasoning = false;
@@ -242,8 +300,7 @@ export default class CouncilController {
                 stageEntry.status = 'cancelled';
                 stageEntry.cancelledAt = Date.now();
             } else {
-                stageEntry.status = 'error';
-                stageEntry.error = buildSafeCouncilErrorMessage(error);
+                markLaneFailed(stageEntry, error);
                 assistantMessage.council.errors.push({
                     laneId,
                     model: stageEntry.model,
@@ -257,6 +314,9 @@ export default class CouncilController {
         assistantMessage.streamingPhase = null;
         assistantMessage.streamingTokens = null;
         await this.saveAndRender(assistantMessage, session);
+        if (stageEntry.status === 'error' && this.app.chatArea && this.app.isViewingSession(session.id)) {
+            this.app.chatArea.revealCouncilLaneError?.(assistantMessage.id, laneId);
+        }
         await this.app.recomputeSessionCouncilTranscriptHint?.(session);
         if (stageEntry.status === 'complete') {
             this.app.triggerPostTurnMemoryExtraction?.(session);
@@ -410,6 +470,13 @@ export default class CouncilController {
         if (token && verifier?.supports && !usableProof) {
             throw new Error('Refusing to persist a Council lane key without an allowed verification state.');
         }
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+            const history = (session.ticketLaneHistory ||= {});
+            const previous = container[laneId];
+            history[laneId] = [...new Map([...(history[laneId] || []), previous]
+                .filter(item => item?.apiKey && !this.isLaneAccessExpired(item))
+                .map(item => [item.apiKey, item])).values()];
+        }
         container[laneId] = {
             apiKey: token,
             apiKeyInfo: accessInfo.apiKeyInfo || accessInfo.info || accessInfo,
@@ -423,6 +490,12 @@ export default class CouncilController {
 
     clearLaneAccess(session, laneId) {
         const container = this.ensureCouncilAccessContainer(session);
+        if (ticketTierPolicyEnabled() && container[laneId]?.apiKey) {
+            (session.retiredTicketAccess ||= []).push({ key: container[laneId].apiKey, expiresAt: container[laneId].expiresAt });
+        }
+        if (session.ticketLaneHistory?.[laneId]) {
+            session.ticketLaneHistory[laneId] = session.ticketLaneHistory[laneId].filter(item => item.apiKey !== container[laneId]?.apiKey);
+        }
         container[laneId] = {
             apiKey: null,
             apiKeyInfo: null,
@@ -448,11 +521,16 @@ export default class CouncilController {
 
     isLaneAccessUsable(session, laneAccess, entry = null) {
         if (!laneAccess?.apiKey) return false;
+        if ((session.retiredTicketAccess || []).some(info => info.key === laneAccess.apiKey)) return false;
         this.inferenceService.getVerificationAdapter?.(session)?.trackPendingAccess?.(laneAccess.apiKeyInfo, session);
         if (!this.isLaneAccessVerified(session, laneAccess)) return false;
         if (this.isLaneAccessExpired(laneAccess)) return false;
         if (this.isLaneAccessBanned(session, laneAccess)) return false;
-        if (entry?.id && laneAccess.modelId !== entry.id) return false;
+        if (entry?.id) {
+            if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+                if (!accessCoversModel(laneAccess.apiKeyInfo, entry.id, this.getTicketCostForEntry(entry))) return false;
+            } else if (laneAccess.modelId !== entry.id) return false;
+        }
         return true;
     }
 
@@ -526,16 +604,50 @@ export default class CouncilController {
 
     assertSufficientTicketsForEntries(session, entries, label = 'selected model responses') {
         const freshTicketCost = this.calculateFreshTicketRequirement(session, entries);
-        const availableTickets = this.ticketClient.getTicketCount();
+        const heldTickets = this.ticketClient.getHeldTicketCount?.() || 0;
+        const availableTickets = Math.max(0, this.ticketClient.getTicketCount() - heldTickets);
         if (freshTicketCost > availableTickets) {
-            throw new Error(`Not enough tickets for ${label}. Need ${freshTicketCost}, but only ${availableTickets} available.`);
+            throw Object.assign(new Error(heldTickets > 0
+                ? 'Your tickets from the previous version are still being moved. Try again in a moment.'
+                : `Not enough tickets for ${label}. Need ${freshTicketCost}, but only ${availableTickets} available.`), {
+                code: heldTickets > 0 ? 'TICKETS_MOVING' : 'TICKET_SHORTAGE',
+                requiredTickets: freshTicketCost, availableTickets, label
+            });
         }
         return freshTicketCost;
     }
 
+    async refreshStoredTicketAccess(session) {
+        if (!ticketTierPolicyEnabled() || !this.app.usesTicketAccess?.(session)) return;
+        const stored = await this.chatDB.getSession(session.id);
+        if (stored) Object.assign(session, mergeTicketAccessHistory(session, stored));
+    }
+
+    async ensureSufficientTicketsForEntries(session, entries, signal) {
+        throwIfAborted(signal);
+        await this.refreshStoredTicketAccess(session);
+        try {
+            return this.assertSufficientTicketsForEntries(session, entries);
+        } catch (error) {
+            if (error.code !== 'TICKET_SHORTAGE' || !this.app.handleAcquisitionTicketShortage) throw error;
+            const outcome = await waitForSignal(this.app.handleAcquisitionTicketShortage(session, error, signal), signal);
+            throwIfAborted(signal);
+            if (outcome?.retry !== true) throw error;
+            return this.assertSufficientTicketsForEntries(session, entries);
+        }
+    }
+
+    findEligibleLaneAccess(session, entry) {
+        const current = this.getLaneAccess(session, entry.laneId);
+        if (this.isLaneAccessUsable(session, current, entry)) return current;
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+            return (session.ticketLaneHistory?.[entry.laneId] || []).find(item => this.isLaneAccessUsable(session, item, entry)) || null;
+        }
+        return null;
+    }
+
     needsFreshLaneAccess(session, entry) {
-        const laneAccess = this.getLaneAccess(session, entry.laneId);
-        return !this.isLaneAccessUsable(session, laneAccess, entry);
+        return !this.findEligibleLaneAccess(session, entry);
     }
 
     seedPrimaryLaneAccessFromSession(session, entry) {
@@ -552,7 +664,9 @@ export default class CouncilController {
             return null;
         }
         const accessModelId = this.resolveAccessModelId(accessInfo.info || session.apiKeyInfo || null);
-        if (accessModelId !== entry.id) {
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)
+            ? !accessCoversModel(accessInfo.info || session.apiKeyInfo, entry.id, this.getTicketCostForEntry(entry))
+            : accessModelId !== entry.id) {
             return null;
         }
         if (this.isLaneAccessBanned(session, {
@@ -647,11 +761,6 @@ export default class CouncilController {
     async requestLaneAccess(session, entry, typingId, signal = null) {
         throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.getTicketCostForEntry(entry));
-        const availableTickets = this.ticketClient.getTicketCount();
-        if (availableTickets < ticketsRequired) {
-            throw new Error(`Not enough tickets for ${entry.name}. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-        }
-
         const accessLabel = this.inferenceService.getAccessLabel(session);
         if (this.app.floatingPanel) {
             this.app.floatingPanel.showMessage(`Acquiring ${accessLabel} for ${entry.name}...`, 'info');
@@ -668,10 +777,11 @@ export default class CouncilController {
             modelIdOverride: entry.id,
             modelNameOverride: entry.name,
             modelEntryOverride: entry,
-            ticketsRequiredOverride: ticketsRequired,
             ticketRequirementLabel: entry.name,
             signal,
-            onTicketUsed: () => this.app.showToast?.('Ticket already used, trying next available'),
+            onTicketShortage: shortage => this.app.handleAcquisitionTicketShortage?.(session, shortage, signal),
+            onTicketUsed: skipped => this.app.showTicketSweepPending?.(session.id, skipped),
+            onTicketSweepEnd: outcome => this.app.settleTicketSweep?.(session.id, outcome),
             onNetworkSession: (sessionId) => {
                 if (typeof window !== 'undefined' && window.networkLogger) {
                     window.networkLogger.setCurrentSession(sessionId);
@@ -710,10 +820,26 @@ export default class CouncilController {
     }
 
     async ensureLaneAccess(session, entry, typingId, signal = null) {
+        if (ticketTierPolicyEnabled() && this.app.usesTicketAccess?.(session)) {
+            const locks = globalThis.navigator?.locks;
+            if (!locks?.request) throw new Error('Secure ticket access requires browser locking support.');
+            return locks.request(`oa-tier-purchase:${session.id}`, { mode: 'exclusive', ...(signal ? { signal } : {}) }, async () => {
+                const stored = await this.chatDB.getSession(session.id);
+                if (!stored) throw new Error('This chat is no longer available.');
+                Object.assign(session, mergeTicketAccessHistory(session, stored));
+                return this.ensureLaneAccessUnlocked(session, entry, typingId, signal);
+            });
+        }
+        return this.ensureLaneAccessUnlocked(session, entry, typingId, signal);
+    }
+
+    async ensureLaneAccessUnlocked(session, entry, typingId, signal = null) {
         throwIfAborted(signal);
         this.seedPrimaryLaneAccessFromSession(session, entry);
-        const laneAccess = this.getLaneAccess(session, entry.laneId);
-        if (this.isLaneAccessUsable(session, laneAccess, entry)) {
+        const eligible = this.findEligibleLaneAccess(session, entry);
+        const laneAccess = eligible || this.getLaneAccess(session, entry.laneId);
+        if (eligible) {
+            if (eligible !== this.getLaneAccess(session, entry.laneId)) this.setLaneAccess(session, entry.laneId, eligible);
             return laneAccess;
         }
         if (laneAccess?.apiKey && this.isLaneAccessBanned(session, laneAccess)) {
@@ -726,7 +852,7 @@ export default class CouncilController {
     async ensureAccessForEntries(session, entries, typingId, signal = null) {
         throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(entries));
-        this.assertSufficientTicketsForEntries(session, entries);
+        await this.ensureSufficientTicketsForEntries(session, entries, signal);
         for (const entry of entries) {
             await this.ensureLaneAccess(session, entry, typingId, signal);
         }
@@ -853,10 +979,10 @@ export default class CouncilController {
 
     buildSynthesisResponses(stageEntries = []) {
         return stageEntries
-            .filter((entry) => entry?.status === 'complete' && typeof entry.response === 'string' && entry.response.trim())
+            .filter((entry) => entry?.status === 'complete' && hasLaneOutput(entry))
             .map((entry) => ({
                 label: entry.label,
-                response: entry.response
+                response: describeLaneForSynthesis(entry)
             }));
     }
 
@@ -905,7 +1031,7 @@ export default class CouncilController {
         const stageEntries = Array.isArray(message?.council?.stage1)
             ? message.council.stage1
             : [];
-        const completed = stageEntries.filter((entry) => entry?.status === 'complete' && entry.response);
+        const completed = stageEntries.filter((entry) => entry?.status === 'complete' && hasLaneOutput(entry));
         const existingLabel = message?.council?.canonicalStage1Label || null;
         const canonical = completed.find((entry) => entry.label === preferredLabel)
             || completed.find((entry) => entry.label === existingLabel)
@@ -914,6 +1040,7 @@ export default class CouncilController {
 
         if (!canonical) {
             message.content = '';
+            message.images = null;
             message.model = 'Parallel';
             message.citations = null;
             if (message.scrubber) {
@@ -923,6 +1050,7 @@ export default class CouncilController {
         }
 
         message.content = canonical.response;
+        message.images = canonical.images || null;
         message.model = canonical.responseModel || canonical.model;
         message.citations = canonical.citations || null;
         message.council.canonicalStage1Label = canonical.label;
@@ -941,19 +1069,35 @@ export default class CouncilController {
                 }
 
                 const synthesis = message.council.synthesis;
-                if ((synthesis?.status === 'complete' || synthesis?.status === 'partial') && synthesis.response) {
+                if ((synthesis?.status === 'complete' || synthesis?.status === 'partial') && hasLaneOutput(synthesis)) {
                     return {
                         ...message,
                         content: synthesis.response,
+                        images: synthesis.images || null,
                         model: synthesis.responseModel || 'Council'
                     };
                 }
 
                 const stageEntry = this.getStage1EntryForLane(message, entry, entries);
-                if (stageEntry?.status === 'complete' && stageEntry.response) {
+                if (stageEntry?.status === 'complete' && hasLaneOutput(stageEntry)) {
                     return {
                         ...message,
                         content: stageEntry.response,
+                        images: stageEntry.images || null,
+                        model: stageEntry.responseModel || stageEntry.model || entry.name
+                    };
+                }
+                // A stopped lane answers with what it had said, as a single
+                // chat does; a lane that never got to speak still closes its
+                // turn, so the next prompt is the only open request.
+                if (stageEntry?.status === 'cancelled' || stageEntry?.status === 'error') {
+                    const spoke = hasLaneOutput(stageEntry);
+                    return {
+                        ...message,
+                        content: spoke
+                            ? stageEntry.response
+                            : (stageEntry.status === 'cancelled' ? STOPPED_LANE_TURN : FAILED_LANE_TURN),
+                        images: spoke ? (stageEntry.images || null) : null,
                         model: stageEntry.responseModel || stageEntry.model || entry.name
                     };
                 }
@@ -1018,7 +1162,6 @@ export default class CouncilController {
             const synthesisEntry = shouldRunSynthesis ? this.resolveSynthesisEntry(session, entries) : null;
             const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
 
-            this.assertSufficientTicketsForEntries(session, accessEntries);
             const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(accessEntries));
 
             const messages = await this.chatDB.getSessionMessages(session.id);
@@ -1040,6 +1183,9 @@ export default class CouncilController {
 
             await this.saveAndRender(assistantMessage, session);
 
+            // Reserve enough budget for synthesis too before spending on any
+            // opinions. A concurrent send may have changed the wallet since preflight.
+            await this.ensureSufficientTicketsForEntries(session, accessEntries, abortController?.signal || null);
             await this.ensureAccessForEntries(session, entries, typingId, abortController?.signal || null);
 
             if (userMessage?.id) {
@@ -1064,6 +1210,7 @@ export default class CouncilController {
                 await this.saveAndRender(assistantMessage, session, { skipSessionsRender: !force });
             };
 
+            if (!abortController?.signal?.aborted) trackFeatureUsage('parallel_started');
             await Promise.all(entries.map(async (entry, index) => {
                 const stageEntry = assistantMessage.council.stage1[index];
                 try {
@@ -1082,6 +1229,7 @@ export default class CouncilController {
                     });
                     this.updateLaneResponseModel(stageEntry, result?.model || result?.data?.model, entry, session);
                     stageEntry.response = extractResponseContent(result);
+                    stageEntry.images = extractImages(result);
                     stageEntry.reasoning = extractReasoning(result);
                     stageEntry.reasoningDuration = result?.reasoningDuration || null;
                     stageEntry.streamingReasoning = false;
@@ -1106,21 +1254,32 @@ export default class CouncilController {
                         stageEntry.streamingTokens = null;
                         return;
                     }
-                    stageEntry.status = 'error';
-                    stageEntry.error = buildSafeCouncilErrorMessage(error);
+                    markLaneFailed(stageEntry, error);
                     stageEntry.streamingReasoning = false;
                     stageEntry.streamingTokens = null;
                     assistantMessage.council.errors.push({
                         model: entry.name,
                         message: stageEntry.error
                     });
-                    await persistProgress();
+                    // Show the failure now, not at the next throttled save.
+                    await persistProgress(true);
+                    if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                        this.app.chatArea.revealCouncilLaneError?.(assistantMessage.id, entry.laneId);
+                    }
                 }
             }));
 
-            const completed = assistantMessage.council.stage1.filter((entry) => entry.status === 'complete' && entry.response);
+            const completed = assistantMessage.council.stage1.filter((entry) => entry.status === 'complete' && hasLaneOutput(entry));
             const wasCancelled = abortController?.signal?.aborted === true;
-            if (wasCancelled && completed.length === 0) {
+            // Stop keeps every lane's partial output on screen and on disk.
+            // Only a turn in which no lane had shown anything is removed.
+            const stopped = wasCancelled
+                ? assistantMessage.council.stage1.filter((entry) => entry.status === 'cancelled' && hasLanePartialOutput(entry))
+                : [];
+            if (!wasCancelled && completed.length === entries.length) {
+                trackFeatureUsage('parallel_completed');
+            }
+            if (wasCancelled && completed.length === 0 && stopped.length === 0) {
                 await this.chatDB.deleteMessage(assistantMessage.id);
                 await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
                 await this.app.recomputeSessionCouncilTranscriptHint?.(session);
@@ -1131,8 +1290,12 @@ export default class CouncilController {
             }
 
             if (completed.length > 0) {
-                const canonical = completed[0];
+                // Prefer a lane with text as the conversation's canonical
+                // answer; an image-only lane still counts as completed.
+                const canonical = completed.find((entry) => typeof entry.response === 'string' && entry.response.trim())
+                    || completed[0];
                 assistantMessage.content = canonical.response;
+                assistantMessage.images = canonical.images || null;
                 assistantMessage.model = canonical.responseModel || canonical.model;
                 assistantMessage.citations = canonical.citations || null;
                 assistantMessage.council.canonicalStage1Label = canonical.label;
@@ -1149,6 +1312,7 @@ export default class CouncilController {
 
                     try {
                         await this.ensureAccessForEntries(session, [synthesisEntry], null, abortController?.signal || null);
+                        if (!abortController?.signal?.aborted) trackFeatureUsage('council_started');
                         const synthesisResult = await this.runSynthesisCompletion({
                             session,
                             synthesisEntry,
@@ -1167,6 +1331,7 @@ export default class CouncilController {
                         if (!synthesisResponse) {
                             throw new Error('Council synthesis returned an empty response.');
                         }
+                        if (!abortController?.signal?.aborted) trackFeatureUsage('council_completed');
                         const synthesisCitations = extractCitations(synthesisResult);
                         const synthesisStatus = completed.length === entries.length ? 'complete' : 'partial';
                         const synthesisReasoning = extractReasoning(synthesisResult);
@@ -1174,6 +1339,7 @@ export default class CouncilController {
                             synthesisResult?.model || synthesisResult?.data?.model, synthesisEntry, session);
                         const synthesisResponseModel = assistantMessage.council.synthesis.responseModel;
                         assistantMessage.content = synthesisResponse;
+                        assistantMessage.images = extractImages(synthesisResult);
                         assistantMessage.model = synthesisResponseModel || 'Council';
                         assistantMessage.reasoning = synthesisReasoning;
                         assistantMessage.reasoningDuration = synthesisResult?.reasoningDuration || null;
@@ -1185,7 +1351,9 @@ export default class CouncilController {
                             ...(synthesisResponseModel ? { responseModel: synthesisResponseModel } : {}),
                             status: synthesisStatus,
                             response: synthesisResponse,
+                            images: extractImages(synthesisResult),
                             reasoning: synthesisReasoning,
+                            reasoningWithheld: synthesisResult?.reasoningWithheld === true,
                             reasoningDuration: synthesisResult?.reasoningDuration || null,
                             streamingReasoning: false,
                             streamingTokens: null,
@@ -1211,6 +1379,7 @@ export default class CouncilController {
                                 'Council synthesis failed.'
                             );
                             assistantMessage.content = canonical.response;
+                            assistantMessage.images = canonical.images || null;
                             assistantMessage.model = canonical.responseModel || canonical.model;
                             assistantMessage.citations = canonical.citations || null;
                             assistantMessage.council.synthesis = {
@@ -1246,6 +1415,25 @@ export default class CouncilController {
                 } else {
                     assistantMessage.council.statusMessage = null;
                 }
+            } else if (stopped.length > 0) {
+                // Nothing finished, but something was said: the lane with the
+                // most text stands as the turn, exactly as a stopped single
+                // chat keeps its partial answer.
+                const canonical = [...stopped].sort((a, b) =>
+                    String(b.response || '').trim().length - String(a.response || '').trim().length)[0];
+                assistantMessage.content = canonical.response || '';
+                assistantMessage.images = canonical.images || null;
+                assistantMessage.model = canonical.responseModel || canonical.model;
+                assistantMessage.citations = canonical.citations || null;
+                assistantMessage.council.canonicalStage1Label = canonical.label;
+                assistantMessage.council.canonicalModel = canonical.responseModel || canonical.model;
+                assistantMessage.council.statusMessage = 'Stopped before any model finished.';
+                if (assistantMessage.scrubber) {
+                    assistantMessage.scrubber.redactedResponse = canonical.response || '';
+                }
+                if (assistantMessage.council.synthesis) {
+                    assistantMessage.council.synthesis.status = 'skipped';
+                }
             } else {
                 assistantMessage.content = 'All selected models failed to respond.';
                 assistantMessage.model = shouldRunSynthesis ? 'Council' : 'Parallel';
@@ -1268,6 +1456,9 @@ export default class CouncilController {
             if (completed.length > 0) {
                 this.app.triggerPostTurnMemoryExtraction(session);
             }
+            return { completed: completed.length === assistantMessage.council.stage1.length
+                && completed.length > 0 && !abortController.signal.aborted
+                && (!assistantMessage.council.synthesis || assistantMessage.council.synthesis.status === 'complete') };
         } catch (error) {
             if (typingId) this.app.removeTypingIndicator(typingId);
             if (isAbortError(error)) {
@@ -1421,6 +1612,16 @@ export default class CouncilController {
         );
     }
 
+    restoreStillWorkingDisplays(sessionId) {
+        if (!this.app.isViewingSession(sessionId)) return;
+        for (const display of this.stalledLaneDisplays?.values() || []) {
+            if (display.sessionId === sessionId && !display.signal?.aborted) {
+                this.app.chatArea?.setCouncilLaneWorking?.(
+                    display.messageId, display.laneId, true, display.since);
+            }
+        }
+    }
+
     async streamLaneMessagesCompletion({
         session,
         entry,
@@ -1438,9 +1639,11 @@ export default class CouncilController {
         const laneId = entry.laneId || null;
         let content = '';
         let reasoning = '';
+        const images = [];
         let streamingTokenCount = 0;
         let reasoningStartTime = null;
         let reasoningEndTime = null;
+        let streamOpenedAt = null; // thinking is timed from here (see app.js)
         let firstContentChunk = true;
         let lastPersistAt = 0;
         let lastReportedModel = null;
@@ -1471,6 +1674,58 @@ export default class CouncilController {
                 this.app.chatArea.updateCouncilLaneReasoning(assistantMessage.id, laneId, reasoning);
             }
         };
+        const updateImages = () => {
+            if (!assistantMessage?.id || !laneId) return;
+            if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.updateCouncilLaneImages?.(assistantMessage.id, laneId, images);
+            }
+        };
+        // Output can arrive well before the model is done: a sentence before
+        // an image, a preamble before a tool call. When the stream goes quiet
+        // after output, say the model is still working instead of looking
+        // finished. Streaming text needs no label, so it waits for a pause.
+        let stillWorkingTimer = null;
+        let lastOutputAt = Date.now();
+        const displayKey = {}; // Unique to this invocation, including lane regeneration.
+        const setWorking = (working) => {
+            if (laneState) {
+                laneState.stillWorking = working;
+                if (working) laneState.stillWorkingSince = lastOutputAt;
+                else delete laneState.stillWorkingSince;
+            }
+            if (!assistantMessage?.id || !laneId) return;
+            this.stalledLaneDisplays ??= new Map();
+            if (working) this.stalledLaneDisplays.set(displayKey, {
+                sessionId: session.id, messageId: assistantMessage.id, laneId,
+                since: lastOutputAt, signal: abortController?.signal
+            });
+            else this.stalledLaneDisplays.delete(displayKey);
+            if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                this.app.chatArea.setCouncilLaneWorking?.(assistantMessage.id, laneId, working, lastOutputAt);
+            }
+        };
+        const stopStillWorking = () => {
+            if (stillWorkingTimer) {
+                clearTimeout(stillWorkingTimer);
+                stillWorkingTimer = null;
+            }
+            if (laneState?.stillWorking) setWorking(false);
+        };
+        const armStillWorking = () => {
+            stopStillWorking();
+            lastOutputAt = Date.now();
+            stillWorkingTimer = setTimeout(() => {
+                stillWorkingTimer = null;
+                setWorking(true);
+            }, STILL_WORKING_DELAY_MS);
+        };
+        const addImages = (newImages) => {
+            if (typeof this.app.addImagesWithDedup === 'function') {
+                this.app.addImagesWithDedup(images, newImages);
+            } else {
+                images.push(...newImages);
+            }
+        };
         const updateReasoningDuration = (duration) => {
             if (!assistantMessage?.id || !laneId) return;
             if (this.app.chatArea && this.app.isViewingSession(session.id)) {
@@ -1484,24 +1739,42 @@ export default class CouncilController {
                 messages,
                 entry.id,
                 laneSession,
-                (chunk) => {
+                (chunk, imageData) => {
                     markRunning();
-                    if (!chunk) return;
-                    content += chunk;
-                    if (laneState) {
-                        laneState.response = content;
-                        laneState.streamingTokens = Math.ceil(content.length / 4);
+                    const newImages = Array.isArray(imageData?.images) ? imageData.images : [];
+                    if (!chunk && newImages.length === 0) return;
+                    if (chunk) {
+                        content += chunk;
+                        if (laneState) {
+                            laneState.response = content;
+                            laneState.streamingTokens = Math.ceil(content.length / 4);
+                        }
                     }
-                    if (firstContentChunk && reasoningStartTime && reasoning.length > 0) {
+                    if (newImages.length > 0) {
+                        addImages(newImages);
+                        if (laneState) {
+                            laneState.images = [...images];
+                        }
+                    }
+                    if (firstContentChunk && reasoningStartTime && (reasoning.length > 0 || laneState?.reasoningWithheld)) {
                         firstContentChunk = false;
                         reasoningEndTime = Date.now();
                         const reasoningDuration = reasoningEndTime - reasoningStartTime;
                         if (laneState) {
                             laneState.reasoningDuration = reasoningDuration;
+                            laneState.streamingReasoning = false;
                         }
-                        updateReasoningDuration(reasoningDuration);
+                        if (reasoning.length > 0) updateReasoningDuration(reasoningDuration);
+                        else if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                            this.app.chatArea.updateWithheldReasoning?.(assistantMessage.id, false, reasoningDuration, laneId);
+                        }
                     }
-                    updateContent();
+                    if (chunk) updateContent();
+                    if (newImages.length > 0) {
+                        updateImages();
+                        persistSnapshot(true);
+                    }
+                    armStillWorking();
                     persistSnapshot();
                 },
                 (tokenUpdate) => {
@@ -1522,22 +1795,40 @@ export default class CouncilController {
                 searchEnabled,
                 abortController,
                 () => {
+                    streamOpenedAt ??= Date.now();
                     markRunning();
                     persistSnapshot(true);
                 },
-                (reasoningChunk) => {
+                (reasoningChunk, meta) => {
                     markRunning();
+                    if (meta?.withheld) {
+                        stopStillWorking();
+                        reasoningStartTime ??= streamOpenedAt ?? Date.now();
+                        reasoningEndTime = null;
+                        firstContentChunk = true;
+                        if (laneState) {
+                            laneState.reasoningWithheld = true;
+                            laneState.streamingReasoning = true;
+                        }
+                        if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                            this.app.chatArea.updateWithheldReasoning?.(assistantMessage.id, true, null, laneId);
+                        }
+                        persistSnapshot(true);
+                        return;
+                    }
                     if (!reasoningChunk) return;
                     if (!reasoningStartTime) {
-                        reasoningStartTime = Date.now();
+                        reasoningStartTime = streamOpenedAt ?? Date.now();
                     }
                     reasoning += reasoningChunk;
                     // Thinking after an answer segment (tools): settle again at the next content.
                     firstContentChunk = true;
+                    reasoningEndTime = null;
                     if (laneState) {
                         laneState.reasoning = reasoning;
                         laneState.streamingReasoning = true;
                     }
+                    stopStillWorking();
                     updateReasoning();
                     persistSnapshot();
                 },
@@ -1547,6 +1838,7 @@ export default class CouncilController {
                 health => this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, health, entry.name)
             );
         } catch (error) {
+            stopStillWorking();
             if (laneState) {
                 laneState.streamingReasoning = false;
                 laneState.streamingTokens = null;
@@ -1559,18 +1851,25 @@ export default class CouncilController {
             persistSnapshot(true);
             throw error;
         } finally {
+            this.stalledLaneDisplays?.delete(displayKey);
+            if (stillWorkingTimer) {
+                clearTimeout(stillWorkingTimer);
+                stillWorkingTimer = null;
+            }
             this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, null);
         }
 
         const reportedModel = typeof tokenData.model === 'string' && tokenData.model.trim()
             ? tokenData.model.trim() : lastReportedModel || entry.id;
+        stopStillWorking();
         if (laneState) {
             this.updateLaneResponseModel(laneState, reportedModel, entry, session);
             laneState.response = content;
+            laneState.images = images.length > 0 ? [...images] : null;
             laneState.reasoning = tokenData.reasoning || reasoning || null;
             laneState.streamingReasoning = false;
             laneState.streamingTokens = null;
-            if (laneState.reasoning && reasoningStartTime) {
+            if ((laneState.reasoning || laneState.reasoningWithheld) && reasoningStartTime) {
                 const finalReasoningEndTime = reasoningEndTime || Date.now();
                 laneState.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
             }
@@ -1582,6 +1881,10 @@ export default class CouncilController {
                 laneState.reasoning,
                 laneState.reasoningDuration
             );
+        }
+        if (assistantMessage?.id && laneId && laneState?.reasoningWithheld && !laneState.reasoning
+            && this.app.chatArea && this.app.isViewingSession(session.id)) {
+            this.app.chatArea.updateWithheldReasoning?.(assistantMessage.id, false, laneState.reasoningDuration, laneId);
         }
         persistSnapshot(true);
 
@@ -1596,7 +1899,9 @@ export default class CouncilController {
                 completion_tokens: tokenData.completionTokens || streamingTokenCount || null
             },
             model: reportedModel,
+            images: images.length > 0 ? [...images] : null,
             reasoning: tokenData.reasoning || reasoning || null,
+            reasoningWithheld: laneState?.reasoningWithheld === true,
             reasoningDuration: laneState?.reasoningDuration || null,
             citations: tokenData.citations || null,
             data: {
@@ -1604,6 +1909,7 @@ export default class CouncilController {
                     {
                         message: {
                             content,
+                            images: images.length > 0 ? [...images] : null,
                             reasoning: tokenData.reasoning || reasoning || null,
                             annotations: tokenData.citations || null
                         }

@@ -22,6 +22,9 @@ test('reload and explicit shared/local links do not prerender a new chat', async
     await prerenderInitialChat(f);
     assert.equal(f.container.innerHTML, '');
     saveNavigationSelection(null, f.storage);
+    await prerenderInitialChat({ ...f, search: '?c=shared' });
+    assert.equal(f.container.innerHTML, '');
+    // Links made before the `?s=` → `?c=` rename still count as explicit.
     await prerenderInitialChat({ ...f, search: '?s=shared' });
     assert.equal(f.container.innerHTML, '');
 });

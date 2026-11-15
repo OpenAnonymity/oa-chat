@@ -151,8 +151,9 @@ export async function collectChats() {
 
         return { sessions, messages: allMessages };
     } catch (e) {
+        // An empty file that looks like a backup is worse than no file.
         console.error('Failed to collect chats:', e);
-        return { sessions: [], messages: [] };
+        throw e;
     }
 }
 

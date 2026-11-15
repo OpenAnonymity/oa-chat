@@ -16,6 +16,13 @@ import {
 } from '../domain/modelSelection.js';
 import { getDefaultModelConfig, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import { getTicketCost, onModelTiersUpdate } from '../services/modelTiers.js';
+import zeroDataRetention from '../services/zeroDataRetention.js';
+
+// Heroicons shield-check (outline), the icon set used across the picker.
+const ZDR_SHIELD_PATH = 'M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z';
+export function zdrShieldHTML(className = 'zdr-shield') {
+    return `<svg class="${className}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${ZDR_SHIELD_PATH}"></path></svg>`;
+}
 
 export default class ModelPicker {
     /**
@@ -41,6 +48,9 @@ export default class ModelPicker {
         this.modelConfigVersion = 0;
         this.searchDebounceTimer = null;
         this.selectionMode = 'primary';
+        this.focusRequest = 0;
+        this.returnFocusToComposer = false;
+        this.renderedModelsHTML = null;
 
         // Listen for pinned/disabled updates (API fetch completed)
         onPinnedModelsUpdate(() => this._onConfigUpdate());
@@ -93,9 +103,22 @@ export default class ModelPicker {
             const searchTerm = e.target.value;
             clearTimeout(this.searchDebounceTimer);
             this.searchDebounceTimer = setTimeout(() => {
-                this.renderModels(searchTerm);
+                if (!this.app.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.renderModels(searchTerm);
+                }
             }, 80);
         });
+
+        const zdrToggle = this.getZdrToggle();
+        if (zdrToggle && this.boundZdrToggle !== zdrToggle && typeof zdrToggle.addEventListener === 'function') {
+            this.boundZdrToggle = zdrToggle;
+            zdrToggle.addEventListener('click', () => {
+                zeroDataRetention.setEnabled(!zeroDataRetention.isEnabled()).catch(error => {
+                    this.app.showToast?.(error.message, 'error', 6000);
+                });
+            });
+        }
+        this.renderZdrToggle();
 
         // Keyboard navigation
         this.app.elements.modelSearch.addEventListener('keydown', (e) => {
@@ -109,20 +132,30 @@ export default class ModelPicker {
                 if (!option || !this.app.elements.modelsList.contains(option)) {
                     return;
                 }
+                if (option.getAttribute('aria-disabled') === 'true') {
+                    return;
+                }
                 this.selectModel(option.dataset.modelName);
             });
         }
     }
 
     /**
-     * Opens the model picker modal and focuses the search input.
+     * Opens the model picker; touch browsing waits for a tap to focus search.
      */
     open(options = {}) {
+        clearTimeout(this.searchDebounceTimer);
+        const focusRequest = ++this.focusRequest;
         this.selectionMode = options.selectionMode || options.mode || 'primary';
         const modal = this.app.elements.modelPickerModal;
+        const touchLayout = this.usesTouchLayout();
+        const keyboard = options.focusSearch === true
+            || modal.ownerDocument?.documentElement?.hasAttribute('data-keyboard-nav');
+        this.returnFocusToComposer = !touchLayout || keyboard;
         showSurface(modal);
         modal.dataset.selectionMode = this.selectionMode;
         if (this.app.elements.modelSearch) {
+            this.app.elements.modelSearch.value = '';
             this.app.elements.modelSearch.placeholder = this.isSecondarySelectionMode()
                 ? 'Search second model...'
                 : this.isSynthesisSelectionMode()
@@ -131,13 +164,19 @@ export default class ModelPicker {
         }
         this.highlightedIndex = -1;
         const shouldRestoreScroll = this.savedScrollTop > 0;
-        this.renderModels('', shouldRestoreScroll, true);
+        this.renderModels('', shouldRestoreScroll || touchLayout, true);
         // Restore scroll position after browser renders the content
         requestAnimationFrame(() => {
+            if (focusRequest !== this.focusRequest || modal.classList.contains('hidden')) return;
             if (shouldRestoreScroll) {
                 this.app.elements.modelListScrollArea.scrollTop = this.savedScrollTop;
             }
-            this.app.elements.modelSearch.focus();
+            // Browsing the list should not summon the phone keyboard or zoom
+            // the viewport. Hardware-keyboard navigation still focuses search.
+            const target = touchLayout && !keyboard
+                ? modal.querySelector('[role="dialog"]')
+                : this.app.elements.modelSearch;
+            target?.focus({ preventScroll: true });
         });
     }
 
@@ -145,6 +184,8 @@ export default class ModelPicker {
      * Closes the model picker modal and clears the search.
      */
     close() {
+        clearTimeout(this.searchDebounceTimer);
+        const focusRequest = ++this.focusRequest;
         // Save scroll position before hiding (from the scroll container, not inner list)
         this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
         hideSurface(this.app.elements.modelPickerModal);
@@ -153,12 +194,27 @@ export default class ModelPicker {
         this.app.elements.modelSearch.value = '';
         this.app.elements.modelSearch.placeholder = 'Search models...';
         this.selectionMode = 'primary';
-        // Focus input after closing modal
+        // Restore focus without summoning the phone keyboard.
         requestAnimationFrame(() => {
-            if (this.app.elements.messageInput) {
-                this.app.elements.messageInput.focus();
-            }
+            if (focusRequest !== this.focusRequest) return;
+            const target = this.returnFocusToComposer
+                ? this.app.elements.messageInput : this.app.elements.modelPickerBtn;
+            target?.focus({ preventScroll: true });
         });
+    }
+
+    usesTouchLayout() {
+        return this.app.elements.modelPickerModal?.ownerDocument?.defaultView
+            ?.matchMedia?.('(max-width: 767px), (hover: none) and (pointer: coarse)').matches === true;
+    }
+
+    setModelsHTML(html) {
+        // Recompute pricing/selection on every open, but retain the actual rows
+        // when unchanged: replacing them interrupts touch momentum and lays out
+        // hundreds of icons again, even after warmRender prepared the list.
+        if (html === this.renderedModelsHTML) return;
+        this.app.elements.modelsList.innerHTML = html;
+        this.renderedModelsHTML = html;
     }
 
     /**
@@ -167,11 +223,37 @@ export default class ModelPicker {
     toggle(options = {}) {
         const requestedMode = options.selectionMode || options.mode || 'primary';
         if (this.app.elements.modelPickerModal.classList.contains('hidden')) {
-            this.open({ selectionMode: requestedMode });
+            this.open({ ...options, selectionMode: requestedMode });
         } else if (this.selectionMode !== requestedMode) {
-            this.open({ selectionMode: requestedMode });
+            this.open({ ...options, selectionMode: requestedMode });
         } else {
             this.close();
+        }
+    }
+
+    getZdrToggle() {
+        return this.app.elements.modelPickerModal?.querySelector('#zdr-toggle') || null;
+    }
+
+    renderZdrToggle() {
+        const toggle = this.getZdrToggle();
+        if (!toggle) return;
+        const enabled = zeroDataRetention.isEnabled();
+        if (!toggle.classList || typeof toggle.setAttribute !== 'function') return;
+        toggle.classList.toggle('switch-active', enabled);
+        toggle.classList.toggle('switch-inactive', !enabled);
+        toggle.setAttribute('aria-checked', String(enabled));
+        this.app.elements.modelPickerModal?.querySelector('.zdr-picker-row')
+            ?.classList.toggle('zdr-on', enabled);
+    }
+
+    /** Re-renders everything that shows the zero data retention state. */
+    handleZeroDataRetentionChange() {
+        this.renderZdrToggle();
+        this.renderCurrentModel();
+        if (this.app.elements.modelPickerModal && !this.app.elements.modelPickerModal.classList.contains('hidden')) {
+            const searchTerm = this.app.elements.modelSearch?.value || '';
+            this.renderModels(searchTerm, true, true);
         }
     }
 
@@ -195,6 +277,9 @@ export default class ModelPicker {
         let allowedModels = this.app.state.models.filter(model =>
             !this.disabledModels.has(model.id)
         );
+        if (this.isSynthesisSelectionMode()) {
+            allowedModels = allowedModels.filter(model => this.pinnedModels.includes(model.id));
+        }
 
         // Split into non-empty lowercase terms
         const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
@@ -265,7 +350,9 @@ export default class ModelPicker {
             modelsLength,
             this.modelConfigVersion,
             reasoningFlag,
-            loadingFlag
+            loadingFlag,
+            zeroDataRetention.isEnabled() ? 'zdr' : '',
+            zeroDataRetention.hasCatalog() ? 'zdr-list' : ''
         ].join('|');
     }
 
@@ -279,11 +366,7 @@ export default class ModelPicker {
         const renderSignature = this.getRenderSignature(searchTerm);
         if (!force && this.hasRenderedOnce && renderSignature === this.lastRenderSignature) {
             this.highlightedIndex = -1;
-            const modelOptions = this.getModelOptions();
-            if (modelOptions.length > 0) {
-                this.highlightedIndex = 0;
-                this.updateHighlight(modelOptions, skipAutoScroll);
-            }
+            this.updateHighlight(this.getModelOptions(), true);
             return;
         }
 
@@ -292,13 +375,13 @@ export default class ModelPicker {
 
         // Show loading state if models are still being fetched
         if (this.app.state.modelsLoading) {
-            this.app.elements.modelsList.innerHTML = `
+            this.setModelsHTML(`
                 <div class="flex items-center justify-center py-8 text-muted-foreground">
                     <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>
                     <div style="width: 14px; height: 14px; border: 2px solid #9ca3af; border-top-color: #3b82f6; border-radius: 50%; animation: modelpicker-spin 0.6s linear infinite;"></div>
                     <span class="text-sm ml-2">Loading models...</span>
                 </div>
-            `;
+            `);
             return;
         }
 
@@ -308,10 +391,12 @@ export default class ModelPicker {
         this.highlightedIndex = -1;
 
         if (filteredModels.length === 0) {
-            const message = this.app.state.models.length === 0
+            const message = this.isSynthesisSelectionMode() && this.filterModels('').length === 0
+                ? 'No pinned models are available for Council right now.'
+                : this.app.state.models.length === 0
                 ? 'No models are available right now. Try again later.'
                 : 'No models match your search. Try a different name.';
-            this.app.elements.modelsList.innerHTML = `<p role="status" class="px-3 py-8 text-center text-sm text-muted-foreground">${message}</p>`;
+            this.setModelsHTML(`<p role="status" class="px-3 py-8 text-center text-sm text-muted-foreground">${message}</p>`);
             return;
         }
 
@@ -363,14 +448,11 @@ export default class ModelPicker {
             `;
         }
 
-        this.app.elements.modelsList.innerHTML = html;
+        this.setModelsHTML(html);
 
-        // Auto-highlight first item so user can immediately press Enter
-        const modelOptions = this.getModelOptions();
-        if (modelOptions.length > 0) {
-            this.highlightedIndex = 0;
-            this.updateHighlight(modelOptions, skipAutoScroll);
-        }
+        // Only arrow-key navigation adds a focus highlight. Enter still
+        // selects the first eligible result without making it look selected.
+        this.updateHighlight(this.getModelOptions(), true);
     }
 
     warmRender() {
@@ -432,15 +514,27 @@ export default class ModelPicker {
             </span>
         `;
 
+        // Show a shield only while ZDR is enabled and this model has an eligible provider.
+        // While the switch is on, models without one stay listed but cannot be chosen.
+        const zdrEnabled = zeroDataRetention.isEnabled();
+        const supportsZdr = zeroDataRetention.supportsModel(model.id);
+        const zdrBlocked = zdrEnabled && !supportsZdr;
+        const zdrShield = zdrEnabled && supportsZdr
+            ? `<span class="zdr-shield-wrap" title="Supports zero data retention" aria-label="Supports zero data retention" role="img">${zdrShieldHTML()}</span>`
+            : '';
+        const zdrNote = zdrBlocked
+            ? `<span class="sr-only">${zeroDataRetention.hasCatalog() ? 'No zero data retention providers' : 'Checking zero data retention providers…'}</span>`
+            : '';
+
         return `
-            <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''}" data-model-name="${model.name}">
+            <div class="model-option px-2 py-1.5 rounded-sm cursor-pointer transition-colors hover:bg-accent ${isSelected ? 'bg-accent' : ''} ${zdrBlocked ? 'zdr-unavailable' : ''}" data-model-name="${model.name}"${zdrBlocked ? ' aria-disabled="true"' : ''}>
                 <div class="flex items-center gap-2">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                         ${iconData.html}
                     </div>
                     <div class="flex-1 min-w-0">
-                        <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
-                        ${pricing ? `<div class="mt-0.5 truncate text-[10px] text-muted-foreground" title="${escapePricing(pricing.description)}">${escapePricing(pricing.label)}</div>` : ''}
+                        <div class="zdr-name-line"><div class="font-medium text-sm text-foreground truncate">${model.name}</div>${zdrShield}</div>
+                        ${zdrNote || (pricing ? `<div class="mt-0.5 truncate text-[10px] text-muted-foreground" title="${escapePricing(pricing.description)}">${escapePricing(pricing.label)}</div>` : '')}
                     </div>
                     ${checkmarkSlot}
                     ${paymentBadge}
@@ -454,15 +548,19 @@ export default class ModelPicker {
      * @param {string} modelName - Display name chosen by the user
      */
     async selectModel(modelName) {
-        if (this.isSecondarySelectionMode() && this.app.actions.selectCouncilSecondaryModel) {
+        // Keep the picker over the composer until the choice has applied.
+        // Closing earlier lets an immediate Send capture the previous model.
+        const secondary = this.isSecondarySelectionMode();
+        const synthesis = this.isSynthesisSelectionMode();
+        if (secondary && this.app.actions.selectCouncilSecondaryModel) {
             await this.app.actions.selectCouncilSecondaryModel(modelName);
-        } else if (this.isSynthesisSelectionMode() && this.app.actions.selectCouncilSynthesisModel) {
+        } else if (synthesis && this.app.actions.selectCouncilSynthesisModel) {
             await this.app.actions.selectCouncilSynthesisModel(modelName);
         } else {
             await this.app.actions.selectModel(modelName);
         }
         this.app.refreshEditModelPickerButton?.();
-        this.close(); // close() handles input focus
+        this.close();
     }
 
     /**
@@ -518,18 +616,26 @@ export default class ModelPicker {
         const shortModelName = getComposerModelDisplayName(currentModelName);
         const hoverModelName = getProviderlessModelDisplayName(currentModelName) || 'Select model';
 
+        const currentModelId = model?.id || currentModelName;
+        const zdrEnforced = zeroDataRetention.isEnabled() && zeroDataRetention.supportsModel(currentModelId);
+        const zdrBlocked = zeroDataRetention.isEnabled() && !zdrEnforced && zeroDataRetention.hasCatalog();
+        const zdrChipHtml = zdrBlocked
+            ? '<span class="zdr-chip-note text-muted-foreground">· not ZDR</span>' : '';
+
         this.app.elements.modelPickerBtn.innerHTML = `
             <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 ${bgClass}">
                 ${iconContent}
             </div>
             <span class="model-name-container min-w-0">${shortModelName}</span>
+            ${zdrChipHtml}
             ${shortcutHtml}
         `;
         this.app.elements.modelPickerBtn.classList.add('gap-1.5');
         this.app.elements.modelPickerBtn.title = hoverModelName;
         this.app.elements.modelPickerBtn.setAttribute('data-tooltip', hoverModelName);
         this.app.elements.modelPickerBtn.setAttribute('data-tooltip-position', 'top');
-        this.app.elements.modelPickerBtn.setAttribute('aria-label', `Primary model: ${hoverModelName}`);
+        const zdrLabel = zdrEnforced ? ', zero data retention on' : zdrBlocked ? ', no zero data retention providers' : '';
+        this.app.elements.modelPickerBtn.setAttribute('aria-label', `Primary model: ${hoverModelName}${zdrLabel}`);
 
         this.app.refreshEditModelPickerButton?.();
     }
@@ -575,7 +681,8 @@ export default class ModelPicker {
         if (!this.app.elements.modelsList) {
             return [];
         }
-        return Array.from(this.app.elements.modelsList.querySelectorAll('.model-option'));
+        // Rows blocked by zero data retention are skipped by keyboard and Enter.
+        return Array.from(this.app.elements.modelsList.querySelectorAll('.model-option:not([aria-disabled="true"])'));
     }
 
     /**

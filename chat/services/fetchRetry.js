@@ -116,6 +116,7 @@ function sleep(ms) {
  * @param {Object} [config.fetchConfig={}] - Extra config to pass to fetchFn (3rd argument)
  * @param {AbortSignal} [config.signal] - External abort signal (user cancellation)
  * @param {string} [config.context='Request'] - Context for error messages
+ * @param {function} [config.prepareAttempt] - Synchronous policy check/transform before each dispatch
  * @param {function} [config.onRetry] - Callback called before each retry (attempt, error, response)
  * @returns {Promise<Response>} The HTTP response
  * @throws {Error} If all attempts fail or a non-retryable error occurs
@@ -142,7 +143,8 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
         fetchConfig = {},
         signal: externalSignal,
         context = 'Request',
-        onRetry
+        onRetry,
+        prepareAttempt
     } = config;
 
     let lastError = null;
@@ -157,6 +159,8 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
             throw abortError;
         }
 
+        // Policy refusals must escape the retry loop, not become transport errors.
+        const attemptInit = prepareAttempt ? prepareAttempt(init) : init;
         let timeoutId = null;
         let handedOff = false;
         try {
@@ -175,7 +179,7 @@ async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline 
             }
 
             const fetchInit = {
-                ...init,
+                ...attemptInit,
                 ...(fetchSignal && { signal: fetchSignal })
             };
 

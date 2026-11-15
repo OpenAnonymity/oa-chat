@@ -146,13 +146,22 @@ export function findModelByNameOrId(models = [], modelNameOrId = '', normalizeMo
         || null;
 }
 
+// A reported model is a concrete identifier. A router answers "unknown" when
+// the request never reached a provider; that names nothing and must not
+// replace the requested model's label.
+export function isReportedModelId(value) {
+    if (typeof value !== 'string') return false;
+    const candidate = value.trim();
+    return candidate.length > 0 && candidate.toLowerCase() !== 'unknown';
+}
+
 // Response IDs can differ from the requested router and may be absent from the
 // local catalog. Never use the router's label as a fallback for a concrete ID.
 export function resolveResponseModelName(reportedModel, {
     models = [], requestedModelId = '', requestedModelName = '',
     getDisplayName = (_id, fallback) => fallback
 } = {}) {
-    if (typeof reportedModel !== 'string' || !reportedModel.trim()) return null;
+    if (!isReportedModelId(reportedModel)) return null;
     const modelId = reportedModel.trim();
     const baseModelId = modelId.split(':')[0];
     const catalogModel = models.find(model => model.id === modelId)

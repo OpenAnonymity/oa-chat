@@ -1,3 +1,4 @@
+import { trackFeatureUsage } from '../services/featureUsage.js';
 import { showSurface, hideSurface, setDisclosure } from '../ui/uiMotion.js';
 /**
  * MemoryEditor — Modal UI for browsing and editing memory files.
@@ -103,6 +104,7 @@ class MemoryEditor {
 
         this.render();
         showSurface(this.overlay);
+        trackFeatureUsage('memory_opened');
 
         this.overlay.onclick = (event) => {
             if (event.target === this.overlay) {

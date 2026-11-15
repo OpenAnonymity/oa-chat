@@ -1,3 +1,4 @@
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -285,6 +286,50 @@ test('scrubber binds a new chat before session persistence and updates only its 
 });
 
 
+test('first-use ticket charge is reported with the result, not over the scrubbing spinner', async () => {
+    const originalRedact = scrubberService.redactPrompt;
+    const scrub = deferred();
+    const f = fixture();
+    const loading = [];
+    f.app.showLoadingToast = message => {
+        const entry = { message, stopped: 0 };
+        loading.push(entry);
+        return () => { entry.stopped += 1; };
+    };
+    f.messageInput.value = 'My name is Alex';
+    scrubberService.redactPrompt = async (_text, _session, options) => {
+        options.onTicketSpent(1);
+        return scrub.promise;
+    };
+    try {
+        const work = f.input.runScrubberShortcut();
+        await Promise.resolve();
+        assert.equal(loading.length, 1);
+        assert.match(loading[0].message, /^Scrubbing input query/);
+        assert.equal(loading[0].stopped, 0, 'the spinner stays up while the scrub runs');
+        assert.equal(f.toasts.length, 0, 'no toast replaces the spinner when the ticket is charged');
+        scrub.resolve({ success: true, text: 'My name is [PERSON_1]' });
+        await work;
+        assert.equal(loading[0].stopped, 1);
+        assert.deepEqual(f.toasts, [['PII removed · 1 ticket used', 'success']]);
+    } finally {
+        scrubberService.redactPrompt = originalRedact;
+    }
+});
+
+test('scrubs on an existing key report no ticket', async () => {
+    const originalRedact = scrubberService.redactPrompt;
+    const f = fixture();
+    f.messageInput.value = 'Plain draft';
+    scrubberService.redactPrompt = async () => ({ success: true, text: 'Plain draft' });
+    try {
+        await f.input.runScrubberShortcut();
+        assert.deepEqual(f.toasts, [['No PII detected', 'success']]);
+    } finally {
+        scrubberService.redactPrompt = originalRedact;
+    }
+});
+
 test('pending scrub resizes newly wrapped text without another draft input', () => {
     const previousWindow = globalThis.window;
     globalThis.window = { innerHeight: 900 };
@@ -375,4 +420,85 @@ test('the composer rewrites only a paste that needs trimming, keeping native pas
         input.handleTextPaste(withFile);
         assert.equal(withFile.prevented, false, 'files stay with the document-level handler');
     } finally { globalThis.document = oldDocument; }
+});
+
+
+test('Tab Tab counts accepted operations and usable results without draft contents', async () => {
+    const original = scrubberService.redactPrompt;
+    try {
+        for (const scenario of ['success', 'failed', 'navigated', 'unsupported', 'empty', 'busy']) {
+            const f = fixture({ backend: scenario === 'unsupported' ? 'zkapi' : 'openrouter' });
+            f.messageInput.value = scenario === 'empty' ? '' : 'Private draft';
+            if (scenario === 'busy') f.input.scrubberState.isRunning = true;
+            const calls = [];
+            setFeatureUsageReporter((...args) => calls.push(args));
+            scrubberService.redactPrompt = async () => {
+                if (scenario === 'navigated') f.navigate({ id: 'other', inferenceBackend: 'openrouter' });
+                return { success: scenario !== 'failed', text: 'Redacted draft' };
+            };
+            await f.input.runScrubberShortcut();
+            assert.deepEqual(calls, (scenario === 'success' ? ['scrubber_started', 'scrubber_completed']
+                : ['failed', 'navigated'].includes(scenario) ? ['scrubber_started'] : []).map(code => [code]), scenario);
+        }
+    } finally { scrubberService.redactPrompt = original; setFeatureUsageReporter(null); }
+});
+
+
+test('memory reply settings count deliberate transitions, not implicit panel enable or blocked actions', async () => {
+    const f = fixture();
+    f.input.updateMemoryToggleUI = () => {};
+    f.app.memoryMode = false;
+    const events = [];
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        await f.input.setMemoryContextEnabled(true); // Panel open, not explicit preference toggle.
+        assert.deepEqual(events, []);
+        await f.input.setMemoryContextEnabled(false, { userAction: true });
+        await f.input.setMemoryContextEnabled(false, { userAction: true });
+        await f.input.setMemoryContextEnabled(true, { userAction: true });
+        assert.deepEqual(events, ['settings_changed', 'setting_memory_replies_back', 'settings_changed', 'default_changed', 'setting_memory_replies_away']);
+        events.length = 0;
+        f.app.memoryFeatureEnabled = false;
+        await f.input.setMemoryContextEnabled(true, { userAction: true });
+        assert.deepEqual(events, []);
+        f.app.memoryFeatureEnabled = true;
+        f.app.data.saveSetting = async () => { throw new Error('storage failed'); };
+        await assert.rejects(f.input.setMemoryContextEnabled(true, { userAction: true }), /storage failed/);
+        assert.deepEqual(events, []);
+    } finally { setFeatureUsageReporter(null); }
+});
+
+
+test('theme click analytics distinguish changing custom choices from restoring System', async () => {
+    const { default: themeManager } = await import('../../chat/services/themeManager.js');
+    const original = { preference: themeManager.preference, apply: themeManager.applyTheme, notify: themeManager.notify };
+    const { default: preferencesStore } = await import('../../chat/services/preferencesStore.js');
+    const save = preferencesStore.savePreference;
+    const input = Object.create(ChatInput.prototype);
+    let click;
+    input.app = { elements: { themeToggle: { addEventListener: (_type, handler) => { click = handler; } } } };
+    const events = [];
+    preferencesStore.savePreference = async () => {};
+    themeManager.applyTheme = () => {};
+    themeManager.notify = () => {};
+    themeManager.preference = 'system';
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        input.setupThemeControls();
+        const choose = value => click({ stopPropagation() {}, target: { closest: () => ({ dataset: { themeOption: value } }) } });
+        choose('dark');
+        choose('dark');
+        choose('light');
+        choose('system');
+        assert.deepEqual(events, ['settings_changed', 'default_changed', 'setting_theme_away', 'settings_changed', 'setting_theme_other', 'settings_changed', 'setting_theme_back']);
+        events.length = 0;
+        themeManager.setPreference('dark'); // Sync/import callers bypass the UI hook.
+        assert.deepEqual(events, []);
+    } finally {
+        themeManager.preference = original.preference;
+        themeManager.applyTheme = original.apply;
+        themeManager.notify = original.notify;
+        preferencesStore.savePreference = save;
+        setFeatureUsageReporter(null);
+    }
 });

@@ -125,6 +125,7 @@ class NetworkProxy {
             connectionVerified: this.state.connectionVerified,
             fallbackActive: this.state.fallbackActive,
             lastError: this.state.lastError,
+            connectOnNextRequest: !!this.state.connectOnNextRequest,
             lastFailureAt: this.state.lastFailureAt,
             lastSuccessAt: this.state.lastSuccessAt,
             transport: this.state.transport,
@@ -381,8 +382,14 @@ class NetworkProxy {
         this.state.initialized = true;
 
         if (this.state.settings.enabled) {
+            // A relay that isn't up yet at startup (the WASM still loading,
+            // a slow first handshake) is not a failure: the first request
+            // connects it. Only a request that fails reports "Unavailable",
+            // instead of a fresh chat greeting the user with an error that
+            // the next message disproves.
             await this.ensureProxyApplied().catch((error) => {
-                this.state.lastError = error;
+                console.warn('[networkProxy] Relay not ready at startup; it connects on the next request:', error?.message || error);
+                this.state.connectOnNextRequest = true;
             });
         }
 
@@ -410,7 +417,7 @@ class NetworkProxy {
 
     async updateSettings(partial, options = {}) {
         // Serialize concurrent calls to prevent rapid toggle race conditions
-        if (this.updateSettingsLock) {
+        while (this.updateSettingsLock) {
             await this.updateSettingsLock;
         }
 
@@ -419,7 +426,11 @@ class NetworkProxy {
 
         try {
             const wasEnabled = this.state.settings.enabled;
-            this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
+            const next = this.normalizeSettings({ ...this.state.settings, ...partial });
+            if (!next.enabled && this.activeRequestCount > 0) {
+                throw new Error('Cannot disable proxy while requests are in progress');
+            }
+            this.state.settings = next;
 
             if (!options.skipPersist) {
                 await this.saveSettings(this.state.settings);
@@ -469,7 +480,8 @@ class NetworkProxy {
         }
 
         try {
-            console.debug('[networkProxy] Ensuring proxy is applied, url:', url);
+            const relayHost = new URL(url).host;
+            console.debug('[networkProxy] Ensuring proxy is applied, host:', relayHost);
             const libcurl = await this.ensureLibcurlReady();
 
             console.debug('[networkProxy] Got libcurl:', {
@@ -493,7 +505,7 @@ class NetworkProxy {
 
             const needsReconnect = force || this.state.activeProxyUrl !== url;
             if (needsReconnect) {
-                console.log('[networkProxy] Setting websocket to:', url);
+                console.log('[networkProxy] Setting websocket to:', relayHost);
 
                 // Enable TLS inspection BEFORE creating session (to capture first handshake)
                 this.enableTlsInspection();
@@ -516,7 +528,7 @@ class NetworkProxy {
 
                 // Create new session that will use the new proxy URL
                 this.httpSession = new libcurl.HTTPSession();
-                console.log('[networkProxy] Created new HTTPSession for proxy:', url);
+                console.log('[networkProxy] Created new HTTPSession for proxy:', relayHost);
 
                 this.state.activeProxyUrl = url;
                 this.state.usingProxy = false;
@@ -526,6 +538,7 @@ class NetworkProxy {
             this.state.ready = true;
             this.state.fallbackActive = false;
             this.state.lastError = null;
+            this.state.connectOnNextRequest = false;
 
             // Skip eager verification - rely on lazy verification during first real request
             // This avoids WASM crashes from libcurl's internal setInterval loops when rapidly toggling
@@ -603,27 +616,11 @@ class NetworkProxy {
             }
         };
 
-        // Create a TransformStream that passes data through and decrements on close/cancel
-        const trackingStream = new TransformStream({
-            transform(chunk, controller) {
-                controller.enqueue(chunk);
-            },
-            flush() {
-                // Stream completed normally
-                decrementOnce();
-            },
-            abort() {
-                // Stream errored
-                decrementOnce();
-            },
-            cancel() {
-                // Stream was cancelled (e.g., user stopped generation)
-                decrementOnce();
-            }
-        });
-
-        // Pipe the original body through our tracking stream
-        const trackedBody = originalBody.pipeThrough(trackingStream);
+        // Some browsers still ignore transformer.cancel. Observe pipe settlement
+        // too, while retaining prompt cancellation where the callback is supported.
+        const trackingStream = new TransformStream({ flush: decrementOnce, cancel: decrementOnce });
+        originalBody.pipeTo(trackingStream.writable).then(decrementOnce, decrementOnce);
+        const trackedBody = trackingStream.readable;
 
         // Return a new Response with the tracked body
         return new Response(trackedBody, {
@@ -677,6 +674,11 @@ class NetworkProxy {
     async fetch(resource, init = {}, config = {}) {
         const preferProxy = config.bypassProxy ? false : this.state.settings.enabled;
         const forceProxy = !!config.forceProxy;
+        let policyError = null;
+        const prepareDispatch = () => {
+            try { return config.prepareAttempt ? config.prepareAttempt(init) : init; }
+            catch (error) { policyError = error; throw error; }
+        };
 
         const url = typeof resource === 'string' ? resource : resource.url;
         console.log('[networkProxy.fetch] Request to:', url?.substring(0, 100), 'preferProxy:', preferProxy);
@@ -686,7 +688,7 @@ class NetworkProxy {
             this.state.transport = 'direct';
             // Don't set fallbackActive here - this is an intentional bypass, not a failure fallback
             // Use credentials: 'omit' to prevent third-party cookie storage
-            return fetch(resource, { ...init, credentials: 'omit' });
+            return fetch(resource, { ...prepareDispatch(), credentials: 'omit' });
         }
 
         // Track active proxy requests to prevent toggle during in-flight operations
@@ -710,7 +712,8 @@ class NetworkProxy {
             const captureHost = transportHints.shouldCaptureTlsForUrl(url);
             const certSubject = this.tlsInfo.certSubject?.toLowerCase() || '';
             const needsTlsCapture = !!captureHost && !certSubject.includes(captureHost.toLowerCase());
-            const fetchInit = (config.inspectTls || needsTlsCapture) ? { ...init, _libcurl_verbose: 1 } : init;
+            const dispatchInit = prepareDispatch();
+            const fetchInit = (config.inspectTls || needsTlsCapture) ? { ...dispatchInit, _libcurl_verbose: 1 } : dispatchInit;
             const response = await this.fetchThroughProxy(resource, fetchInit);
             const duration = Date.now() - startTime;
             console.log('[networkProxy.fetch] ✅ HTTPSession.fetch succeeded in', duration + 'ms', 'status:', response.status);
@@ -744,12 +747,13 @@ class NetworkProxy {
             // The request's own abort says nothing about the relay: it must
             // not flip the System Panel to "Unavailable" or send later
             // requests direct.
-            if (init.signal?.aborted) {
+            if (error === policyError || init.signal?.aborted) {
                 this.emitChange();
                 throw error;
             }
 
             console.error('[networkProxy.fetch] HTTPSession.fetch failed:', error);
+            this.state.connectOnNextRequest = false;
             this.state.usingProxy = false;
             this.state.connectionVerified = false;
             this.state.lastFailureAt = Date.now();
@@ -765,7 +769,7 @@ class NetworkProxy {
             // later requests can retry it instead of silently remaining direct.
             console.warn('[networkProxy.fetch] Proxy failed, retrying direct for this request:', url?.substring(0, 100));
             this.state.fallbackActive = true;
-            const directRequest = fetch(resource, { ...init, credentials: 'omit' });
+            const directRequest = fetch(resource, { ...prepareDispatch(), credentials: 'omit' });
 
             // Emit change to update UI to show failure status
             this.emitChange();
@@ -792,7 +796,7 @@ class NetworkProxy {
         return fetchRetry(url, init, {
             ...retryConfig,
             fetchFn: this.fetch.bind(this),
-            fetchConfig: proxyConfig
+            fetchConfig: { ...proxyConfig, prepareAttempt: config.prepareAttempt }
         });
     }
 
@@ -809,7 +813,7 @@ class NetworkProxy {
         return fetchRetryJson(url, init, {
             ...retryConfig,
             fetchFn: this.fetch.bind(this),
-            fetchConfig: proxyConfig
+            fetchConfig: { ...proxyConfig, prepareAttempt: config.prepareAttempt }
         });
     }
 }

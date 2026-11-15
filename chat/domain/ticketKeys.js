@@ -1,3 +1,5 @@
+import { getErrorMessage } from './errorMessage.js';
+
 const TOKEN_KEY_ID_OFFSET = 2 + 32 + 32;
 const TOKEN_KEY_ID_LENGTH = 32;
 
@@ -107,13 +109,14 @@ export function getStructuredTicketError(data, fallbackMessage) {
         detail?.error ||
         data?.message ||
         data?.error ||
-        (typeof data === 'string' ? data : null) ||
-        fallbackMessage
+        (typeof data === 'string' ? data : null)
     );
 
     return {
         code: detail?.error_code || data?.error_code || null,
-        message: typeof message === 'string' ? message : fallbackMessage,
+        message: getErrorMessage(message, getErrorMessage(data, fallbackMessage)),
+        // Display extraction must not broaden the legacy spent-ticket heuristic.
+        classificationMessage: typeof message === 'string' ? message : fallbackMessage,
         invalidatedKeyId: normalizeTicketKeyId(
             detail?.invalidated_key_id || data?.invalidated_key_id
         ),

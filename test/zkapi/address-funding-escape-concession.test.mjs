@@ -20,13 +20,22 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import test from 'node:test';
+import test, { afterEach, beforeEach, mock } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Transaction, Wallet, getAddress } from 'ethers';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { AddressFundingProvider, addressFundingWallet, CONCESSION_UNCONFIRMED_MESSAGE } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { runAddressAction } from '../../chat/zkapi/services/addressFunding.js';
+
+// The wallet-paid fee review that precedes a withdrawal action (the host's own,
+// covered by address-funding-actions): a funded one, so these tests are about
+// what the authorization carries.
+beforeEach(() => {
+    fundedBudget = mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', async () => ({ shortfallWei: '0', feeReserveWei: '0' }));
+});
+afterEach(() => fundedBudget?.mock.restore());
+let fundedBudget = null;
 import { concessionV1 } from '../../chat/zkapi/versioning/adapters/concessionV1.mjs';
 import { noteBoundV1 } from '../../chat/zkapi/versioning/adapters/noteBoundV1.mjs';
 import { installActiveVersion, resetActiveVersionForTests } from '../../chat/zkapi/versioning/activeVersion.mjs';

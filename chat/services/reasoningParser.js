@@ -237,6 +237,47 @@ export function extractReasoningStructure(reasoning) {
  * Provider-specific parsers.
  * If a specific provider needs custom handling, add it here.
  */
+/**
+ * The words in a provider's structured `reasoning_details` (OpenRouter's
+ * normalized form, sent on the streaming delta and the final message).
+ * `reasoning.text` carries the model's own thinking, `reasoning.summary` a
+ * provider-written summary; `reasoning.encrypted` carries nothing readable
+ * and image payloads are handled by the image path. Untyped entries are
+ * read by field.
+ *
+ * @param {Array} details - The `reasoning_details` array (or anything else)
+ * @returns {string} The readable reasoning, in order; '' when there is none
+ */
+export function reasoningTextFromDetails(details) {
+    if (!Array.isArray(details)) return '';
+    let text = '';
+    for (const detail of details) {
+        if (!detail || typeof detail !== 'object') continue;
+        const type = typeof detail.type === 'string' ? detail.type : '';
+        if (type && type !== 'reasoning.text' && type !== 'reasoning.summary') continue;
+        const words = typeof detail.text === 'string' ? detail.text
+            : typeof detail.summary === 'string' ? detail.summary
+            : '';
+        text += words;
+    }
+    return text;
+}
+
+/**
+ * Whether `reasoning_details` says the model reasoned but the provider
+ * withheld the words (an encrypted or otherwise wordless reasoning entry).
+ *
+ * @param {Array} details - The `reasoning_details` array (or anything else)
+ * @returns {boolean}
+ */
+export function hasWithheldReasoning(details) {
+    if (!Array.isArray(details)) return false;
+    return details.some(detail => detail && typeof detail === 'object'
+        && typeof detail.type === 'string' && detail.type.startsWith('reasoning.')
+        && detail.type !== 'reasoning.text' && detail.type !== 'reasoning.summary'
+        && typeof detail.text !== 'string' && typeof detail.summary !== 'string');
+}
+
 const providerParsers = {
     // Example: OpenAI o1 models might have specific formatting
     // 'openai-o1': (content) => { ... },

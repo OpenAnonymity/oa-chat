@@ -8,7 +8,7 @@ import { proofSetupKind } from '../chat/zkapi/versioning/adapters/concessionV1.m
 import noteBoundV1 from '../chat/zkapi/versioning/adapters/noteBoundV1.mjs';
 import { getAdapter } from '../chat/zkapi/versioning/adapters/index.mjs';
 import { serializeConfig } from '../chat/zkapi/versioning/registryModel.mjs';
-import { patchSdkVersion, patchZkapiSdk, zkapiSdkPatchProvenance } from './patch-zkapi-sdk.mjs';
+import { LEGACY_PATCH_NAMES, patchSdkVersion, patchZkapiSdk, zkapiSdkPatchProvenance } from './patch-zkapi-sdk.mjs';
 import { facadeRequired, zkapiFacadePlugin } from './zkapiFacadePlugin.mjs';
 import {
     CANONICAL_SDK_ALIAS,
@@ -82,6 +82,30 @@ export function readZkapiBuildConfig({ network, deployment = process.env.OA_ZKAP
     }
     const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
     return JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/config', `${network}.json`), 'utf8'));
+}
+
+// Ticket and private-payment builds can use different verifiers. Keep the
+// payment pin even without a named registry deployment; never silently fall
+// back to the ticket verifier when this optional runtime is enabled.
+export function resolveZkapiVerifierOrigin({ network, plan }) {
+    if (!network) return '';
+    const configs = plan?.mode === 'sdk-default'
+        ? [readZkapiBuildConfig({ network, deployment: '' })]
+        : plan?.versions?.map(version => version.config) || [];
+    const origins = configs.map(config => config?.trusted_deployment?.verifier_url);
+    if (!origins.length || origins.some(value => !value)) {
+        throw new Error('[build] zkAPI verifier pin is required for every live version');
+    }
+    for (const value of origins) {
+        const origin = new URL(value);
+        if (origin.protocol !== 'https:' || origin.origin !== value || origin.username || origin.password) {
+            throw new Error('[build] zkAPI verifier pin must be an exact HTTPS origin');
+        }
+    }
+    if (new Set(origins).size !== 1) {
+        throw new Error('[build] live zkAPI versions pin different verifier origins');
+    }
+    return origins[0];
 }
 
 /**
@@ -555,12 +579,12 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
 
     if (plan.mode === 'sdk-default') {
         const { dependency, revision } = lockedDependency(lock, CANONICAL_SDK_ALIAS);
-        const recoveryPatch = patchRecords(['wallet-recovery-v1'], revision)[0];
+        const patches = patchRecords(LEGACY_PATCH_NAMES, revision);
         return {
             network,
             ...(sdkAssets?.deployment ? { deployment: sdkAssets.deployment } : {}),
             oaChatRevision: resolveRevision(),
-            sdk: { version: dependency.version, revision, patches: [recoveryPatch], assets: sdkAssets?.manifest || null },
+            sdk: { version: dependency.version, revision, patches, assets: sdkAssets?.manifest || null },
             files: await artifactFiles(outDir)
         };
     }

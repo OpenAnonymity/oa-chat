@@ -9,7 +9,7 @@ import { applyZkapiModeClass } from '../services/zkapiModeClass.js';
 import { getZkapiExperience, renderZkapiComposerStatus } from '../components/ZkapiStateExperience.js';
 
 /** Keep the payment choice in the toolbar and funding in the System Panel. */
-export function createPaymentModeUi(runtime) {
+export function createPaymentModeUi(runtime, { providerVerifier } = {}) {
     const zkUi = createZkapiUi(runtime);
     let app;
     let privateBalance;
@@ -55,6 +55,7 @@ export function createPaymentModeUi(runtime) {
             button.disabled = busy;
         }
         slideTabs(modeControl, previous);
+        if (mode !== 'zkapi' && privateBalance?.isOpen) privateBalance.close({ forModeChange: true });
         privateBalance?.restorePendingOperation();
         renderSettlementComposer();
     }
@@ -77,7 +78,11 @@ export function createPaymentModeUi(runtime) {
                 welcome.init = async () => {};
                 return welcome;
             },
-            rightPanel: facade => new PaymentModeRightPanel(facade)
+            rightPanel: facade => {
+                const panel = new PaymentModeRightPanel(facade);
+                panel.providerVerifier = providerVerifier;
+                return panel;
+            }
         },
         mountShell() {
             document.getElementById('chat-toolbar').classList.add('payment-mode-toolbar');
@@ -93,7 +98,7 @@ export function createPaymentModeUi(runtime) {
                 const button = event.target.closest('[data-payment-mode]');
                 if (!button || button.disabled) return;
                 try {
-                    await runtime.changeMode(button.dataset.paymentMode);
+                    await runtime.changeMode(button.dataset.paymentMode, { userAction: true });
                 } catch (error) { app.showToast(error.message || 'Could not switch payment method. Please try again.', 'error'); }
                 renderControls();
             });
@@ -108,10 +113,9 @@ export function createPaymentModeUi(runtime) {
             privateBalance = new ZkapiAccountModal(app, {
                 triggerId: null,
                 overlayId: 'payment-balance-modal',
-                // Explicit same-tab dialog intent survives a restored OA chat.
-                // Without it, do not surface unrelated zkAPI work over OA.
-                canRestore: ({ hasSavedModal = false } = {}) => !app.restoringInitialConversation
-                    && (hasSavedModal || runtime.getMode() === 'zkapi')
+                // Saved presentation intent never overrides the current payment mode.
+                canOpen: () => !app.restoringInitialConversation && runtime.getMode() === 'zkapi',
+                canRestore: () => !app.restoringInitialConversation && runtime.getMode() === 'zkapi'
             });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();

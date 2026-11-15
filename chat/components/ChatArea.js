@@ -1,5 +1,7 @@
+import { buildStillWorkingLabel, startStillWorkingClock } from './stillWorkingClock.js';
 import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
-import { restoredResponseForDisplay } from '../ui/restoredResponse.js';
+import { restoredResponseForDisplay, wasReplyStreaming } from '../ui/restoredResponse.js';
+import { probeTurnOwnership, whenTurnReleased, OWNERSHIP_ELSEWHERE, OWNERSHIP_NONE } from '../services/turnOwnership.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 import { syncScrollFade, syncAllScrollFades, watchScrollFade } from '../ui/scrollFade.js';
 /**
@@ -50,6 +52,9 @@ export default class ChatArea {
         this.streamingCodeCopyPointerWindowMs = 1200;
         // Render generation counter - used to cancel stale renders during rapid session switching
         this.renderGeneration = 0;
+        // Waits for another tab to finish the reply this tab painted from
+        // storage (restoredResponse.js); dropped by the next render.
+        this.turnReleaseWatch = null;
         this.memoryPromptModal = null;
         this.memoryPromptModalKeyHandler = null;
         this.quickAsk = {
@@ -332,6 +337,16 @@ export default class ChatArea {
                 }
                 return;
             }
+        });
+
+        // A drag on the edit box's resize corner sets the size the person
+        // wants; auto-grow keeps at least that much from then on.
+        messagesContainer.addEventListener('pointerup', (e) => {
+            const textarea = e.target.closest?.('.edit-prompt-textarea');
+            if (!textarea) return;
+            const height = Math.round(textarea.getBoundingClientRect().height);
+            const autoHeight = Number(textarea.dataset.autoHeight || 0);
+            if (height && Math.abs(height - autoHeight) > 1) textarea.dataset.manualHeight = String(height);
         });
 
         // Auto-grow edit textarea on input (debounced via requestAnimationFrame)
@@ -1359,6 +1374,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
         const sessionId = session.id;
+        const modelNameOverride = session.model;
         this.setMessageActionBusy(triggerButton, true);
         const mutationToken = this.app.beginSessionMutation(sessionId, { exclusive: true, interruptStreaming: true });
         if (!mutationToken) {
@@ -1385,19 +1401,8 @@ export default class ChatArea {
             }
             const userMessageId = userMessage.id;
 
-            // Delete the assistant message and all messages after it
-            const messagesToDelete = messages.slice(messageIndex);
-            for (const msg of messagesToDelete) {
-                await this.app.data.deleteMessage(msg.id);
-            }
-
-            // Re-render messages to remove deleted messages from UI
-            const remainingMessages = messages.slice(0, messageIndex);
-            await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
-            await this.render();
-
-            // Trigger regeneration by calling the app's regenerateResponse method
-            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken });
+            // The app keeps the old transcript on disk until a replacement completes.
+            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken, replaceFromMessageId: messageId, modelNameOverride });
         } finally {
             this.app.endSessionMutation(sessionId, mutationToken);
             this.setMessageActionBusy(triggerButton, false);
@@ -1705,6 +1710,7 @@ export default class ChatArea {
         const session = this.app.getCurrentSession();
         if (!session) return;
         const sessionId = session.id;
+        const modelNameOverride = session.model;
         this.setMessageActionBusy(triggerButton, true);
         const mutationToken = this.app.beginSessionMutation(sessionId, { exclusive: true, interruptStreaming: true });
         if (!mutationToken) {
@@ -1737,7 +1743,7 @@ export default class ChatArea {
             const remainingMessages = messages.slice(0, messageIndex + 1);
             await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
             await this.render();
-            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken });
+            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken, modelNameOverride });
         } finally {
             this.app.endSessionMutation(sessionId, mutationToken);
             this.setMessageActionBusy(triggerButton, false);
@@ -1775,6 +1781,24 @@ export default class ChatArea {
     }
 
     /**
+     * Repaint the chat once the tab writing its reply lets go of the turn
+     * (it settled, or that page went away), unless this render was superseded
+     * or this tab has started writing in the chat itself.
+     */
+    watchTurnRelease(sessionId, renderGeneration) {
+        const watch = new AbortController();
+        this.turnReleaseWatch = watch;
+        whenTurnReleased(sessionId, watch.signal).then(released => {
+            if (!released || watch.signal.aborted || renderGeneration !== this.renderGeneration) return;
+            if (this.turnReleaseWatch === watch) this.turnReleaseWatch = null;
+            // Components see the app through its facade (appInterface.js):
+            // state and renderMessages are on it, isViewingSession is not.
+            if (this.app.state?.currentSessionId !== sessionId || this.app.isCurrentSessionStreaming()) return;
+            void this.app.renderMessages();
+        }).catch(() => {});
+    }
+
+    /**
      * Renders all messages for the current session.
      * Handles empty states, message rendering, LaTeX processing, and scroll behavior.
      *
@@ -1796,6 +1820,8 @@ export default class ChatArea {
      *    so only NEW content that arrives after the switch animates.
      */
     async render() {
+        this.turnReleaseWatch?.abort();
+        this.turnReleaseWatch = null;
         // Increment render generation - used to cancel stale renders during rapid session switching
         const currentGeneration = ++this.renderGeneration;
         cancelChatArrival(this.app.elements.messagesContainer);
@@ -1834,7 +1860,7 @@ export default class ChatArea {
         }
 
         // Load messages from IndexedDB
-        const messages = await this.app.data.getSessionMessages(session.id);
+        let messages = await this.app.data.getSessionMessages(session.id);
 
         // Check if this render is stale (a newer render was triggered while we were loading messages)
         if (currentGeneration !== this.renderGeneration) {
@@ -1856,6 +1882,10 @@ export default class ChatArea {
             return;
         }
 
+        // Live reasoning state can be newer than the last periodic database save.
+        messages = messages.map(message => ({ ...message,
+            ...this.app.getStreamingReplyDisplay?.(message.id, session.id) }));
+
         // Build HTML for all messages using shared templates
         const helpers = {
             processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
@@ -1867,6 +1897,25 @@ export default class ChatArea {
         const streamingPhase = this.app.getCurrentSessionStreamingPhase
             ? this.app.getCurrentSessionStreamingPhase()
             : 'waiting';
+
+        // A reply saved mid-stream that this tab is not writing: ask the turn
+        // lock whether another tab still is, so the row reads "answering in
+        // another tab" rather than an interrupted turn with Retry.
+        let restoredOwnership = null;
+        if (!isSessionStreaming && messages.some(wasReplyStreaming)) {
+            restoredOwnership = await probeTurnOwnership(session.id);
+            if (currentGeneration !== this.renderGeneration) return;
+            if (restoredOwnership === OWNERSHIP_ELSEWHERE) {
+                this.watchTurnRelease(session.id, currentGeneration);
+            } else if (restoredOwnership === OWNERSHIP_NONE) {
+                // The lock is let go only once the settled row is on disk, so
+                // a snapshot read while the turn was still finishing is
+                // re-read: a reply that just completed is never painted as
+                // interrupted.
+                messages = await this.app.data.getSessionMessages(session.id);
+                if (currentGeneration !== this.renderGeneration) return;
+            }
+        }
 
         // Check if this is an imported (or forked from import) session with new messages added
         // importedFrom = share import (can still receive updates)
@@ -1893,7 +1942,7 @@ export default class ChatArea {
             options.isSessionStreaming = isSessionStreaming;
             options.pendingPhase = streamingPhase;
             options.pendingProgress = this.app.getSessionPendingProgress?.(session.id) || null;
-            const normalizedMessage = restoredResponseForDisplay(message, isSessionStreaming);
+            const normalizedMessage = restoredResponseForDisplay(message, isSessionStreaming, restoredOwnership);
 
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 
@@ -1936,6 +1985,7 @@ export default class ChatArea {
         this.app.detachStalePromptSlideUpEffect?.();
         const detachedQuickAskWindow = this.detachQuickAskWindowForRender(session.id);
         messagesContainer.innerHTML = messagesHtml;
+        this.app.restoreStreamingReplyDisplays?.(session.id);
         this.restoreQuickAskWindowAfterRender(detachedQuickAskWindow, session.id);
         const promptSlideMessageId = this.app.getPromptSlideUpMessageIdForSession?.(
             session.id,
@@ -2049,6 +2099,17 @@ export default class ChatArea {
         scope.querySelectorAll('.message-content').forEach(el => {
             renderMathContent(el);
         });
+    }
+
+    /**
+     * Renders the math in every content element of one message. A Parallel
+     * turn has one per lane; rendering only the first (`querySelector`) left
+     * the other lanes' \(…\) as text once the turn finished (2026-10-14).
+     */
+    renderMessageMath(messageEl) {
+        if (!messageEl) return;
+        if (messageEl.matches?.('.message-content')) renderMathContent(messageEl);
+        messageEl.querySelectorAll?.('.message-content').forEach(el => renderMathContent(el));
     }
 
     /**
@@ -2322,8 +2383,148 @@ export default class ChatArea {
         const contentShell = document.createElement('div');
         contentShell.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center council-lane-content-shell';
         contentShell.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose council-lane-content"></div>';
-        bodyEl.appendChild(contentShell);
+        // Text sits above any generated images and the "still working" line.
+        const trailingEl = bodyEl.querySelector(':scope > .council-lane-images, :scope > .council-lane-working');
+        bodyEl.insertBefore(contentShell, trailingEl || null);
         return contentShell.querySelector('.council-lane-content');
+    }
+
+    updateCouncilLaneImages(messageId, laneId, images) {
+        if (!Array.isArray(images) || images.length === 0) return;
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return;
+        this.removeCouncilLanePending(bodyEl);
+
+        let imagesEl = bodyEl.querySelector(':scope > .council-lane-images');
+        const isNew = !imagesEl;
+        if (!imagesEl) {
+            imagesEl = document.createElement('div');
+            imagesEl.className = 'council-lane-images';
+            bodyEl.insertBefore(imagesEl, bodyEl.querySelector(':scope > .council-lane-working'));
+        }
+        const { buildGeneratedImages } = window.MessageTemplates || {};
+        if (buildGeneratedImages) {
+            imagesEl.innerHTML = buildGeneratedImages(images);
+        }
+        if (isNew) this.revealCouncilLanePart(imagesEl);
+        this.app.updateActivePromptScrollSpacer();
+        this.app.updateScrollButtonVisibility();
+    }
+
+    /** Keep late reasoning in the same position as the full message template. */
+    insertSingleReasoningTrace(messageId, html) {
+        const row = document.querySelector(`[data-message-id="${messageId}"]`);
+        const header = row?.querySelector('[data-assistant-header]');
+        if (!header) return;
+        // A standalone access trace precedes reasoning in the restored template.
+        const accessTrace = header.parentElement.querySelector(':scope > .kept-access-trace');
+        document.getElementById(`reasoning-${messageId}`)?.remove();
+        (accessTrace || header).insertAdjacentHTML('afterend', html);
+    }
+
+    /** A provider may first signal hidden reasoning after its answer has begun. */
+    updateWithheldReasoning(messageId, thinking, duration, laneId = null) {
+        const reasoningId = laneId ? this.getCouncilLaneReasoningId(messageId, laneId) : messageId;
+        if (!document.getElementById(`reasoning-${reasoningId}`)) {
+            const html = buildReasoningTrace('', reasoningId, thinking,
+                null, duration, null, { withheld: true });
+            if (laneId) {
+                const body = this.getCouncilLaneBody(messageId, laneId);
+                if (!body) return;
+                this.removeCouncilLanePending(body);
+                body.insertAdjacentHTML('afterbegin', html);
+            } else {
+                this.insertSingleReasoningTrace(messageId, html);
+            }
+        }
+        if (thinking) this.resumeReasoningDisplay(reasoningId);
+        else this.settleThinkingHeader(reasoningId, duration);
+    }
+
+    /** Shows or clears the "Still working…" line under a single reply whose text has stalled. */
+    setStreamingStillWorking(messageId, working, since = Date.now() - 1000) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageEl) return;
+        const existing = messageEl.querySelector('.message-still-working');
+        if (!working) {
+            if (existing) this.dismissCouncilLanePart(existing);
+            return;
+        }
+        if (existing) {
+            existing.dataset.stillWorkingSince = String(Math.round(since));
+            startStillWorkingClock();
+            if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
+            return;
+        }
+        const bubble = messageEl.querySelector('.message-content')?.closest('.message-assistant');
+        if (!bubble) return;
+        const workingEl = document.createElement('div');
+        workingEl.className = 'message-still-working';
+        workingEl.setAttribute('role', 'status');
+        workingEl.dataset.stillWorkingSince = String(Math.round(since));
+        workingEl.innerHTML = buildStillWorkingLabel(since);
+        bubble.insertAdjacentElement('afterend', workingEl);
+        this.revealCouncilLanePart(workingEl);
+        startStillWorkingClock();
+    }
+
+    /** Shows or clears a lane's "Still working…" line under output that has already arrived. */
+    setCouncilLaneWorking(messageId, laneId, working, since = Date.now() - 1000) {
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return;
+        const existing = bodyEl.querySelector(':scope > .council-lane-working');
+        if (!working) {
+            if (existing) this.dismissCouncilLanePart(existing);
+            return;
+        }
+        if (existing) {
+            existing.dataset.stillWorkingSince = String(Math.round(since));
+            startStillWorkingClock();
+            // Coming back while it fades out: turn around from where it is.
+            if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
+            return;
+        }
+        const workingEl = document.createElement('div');
+        workingEl.className = 'council-lane-working';
+        workingEl.setAttribute('role', 'status');
+        workingEl.dataset.councilLaneWorking = '';
+        workingEl.dataset.stillWorkingSince = String(Math.round(since));
+        workingEl.innerHTML = buildStillWorkingLabel(since);
+        bodyEl.appendChild(workingEl);
+        this.revealCouncilLanePart(workingEl);
+        startStillWorkingClock();
+    }
+
+    /** Fades in a lane's part when it arrives mid-stream (a re-render shows it at rest). */
+    revealCouncilLanePart(el, { fromCurrent = false } = {}) {
+        if (!el) return;
+        clearTimeout(el._councilLeaveTimer);
+        el._councilLeaveTimer = null;
+        el.classList.add('council-lane-reveal');
+        if (!fromCurrent) {
+            el.dataset.reveal = 'enter';
+            void el.offsetWidth;
+        }
+        el.dataset.reveal = 'shown';
+    }
+
+    /** Fades a lane's part out, a little faster than it came in, then removes it. */
+    dismissCouncilLanePart(el) {
+        if (!el || el.dataset.reveal === 'leave') return;
+        el.classList.add('council-lane-reveal');
+        el.dataset.reveal = 'leave';
+        const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        el._councilLeaveTimer = setTimeout(() => {
+            if (el.dataset.reveal === 'leave') el.remove();
+        }, reduced ? 80 : 160);
+    }
+
+    /** Fades in a lane's failure notice after the message re-rendered with it. */
+    revealCouncilLaneError(messageId, laneId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const panel = Array.from(messageEl?.querySelectorAll('.council-response-panel') || [])
+            .find(element => element.dataset.councilLaneId === laneId);
+        this.revealCouncilLanePart(panel?.querySelector('.council-lane-error'));
     }
 
     updateCouncilLaneContent(messageId, laneId, content) {
@@ -2360,13 +2561,12 @@ export default class ChatArea {
         );
         const traceEl = traceWrapper.firstElementChild;
         if (!traceEl) return null;
+        // Replace a header-only withheld trace when visible reasoning arrives.
+        document.getElementById(`reasoning-${reasoningId}`)?.remove();
 
-        const firstContentShell = bodyEl.querySelector('.council-lane-content-shell');
-        if (firstContentShell) {
-            bodyEl.insertBefore(traceEl, firstContentShell);
-        } else {
-            bodyEl.appendChild(traceEl);
-        }
+        // Thinking always leads the lane, above text, images and status.
+        const firstOutputEl = bodyEl.querySelector(':scope > .council-lane-content-shell, :scope > .council-lane-images, :scope > .council-lane-working');
+        bodyEl.insertBefore(traceEl, firstOutputEl || null);
         return document.getElementById(`reasoning-content-${reasoningId}`);
     }
 
@@ -2482,6 +2682,11 @@ export default class ChatArea {
         }
         const displayContent = state.targetContent.substring(0, state.displayedLength);
         updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
+
+        if (state.displayedLength >= targetLength) {
+            clearInterval(state.interval);
+            state.interval = null;
+        }
 
         if (!state.autoScrollPaused) {
             reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
@@ -2603,6 +2808,11 @@ export default class ChatArea {
             this.typewriter.displayedLength = settledLength;
             document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
         }
+        // Some models answer first, then reveal their first reasoning during a tool call.
+        if (!document.getElementById(`reasoning-content-${messageId}`)) {
+            this.insertSingleReasoningTrace(messageId, buildReasoningTrace(reasoning, messageId, true));
+        }
+        this.resumeReasoningDisplay(messageId);
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -2718,7 +2928,11 @@ export default class ChatArea {
         if (!messageId) return;
 
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
-        if (!reasoningContentEl) return;
+        if (!reasoningContentEl) {
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
+            return;
+        }
 
         // Set up scroll tracking on first access
         this.setupReasoningScrollTracking(reasoningContentEl);
@@ -2774,8 +2988,10 @@ export default class ChatArea {
         };
 
         if (displayedLength >= targetLength) {
-            // Caught up to target - update content, wait for more
+            // Render same-length corrections once, then sleep until new data.
             updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(targetContent));
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
             // Only auto-scroll if user hasn't scrolled up
             if (!this.reasoningAutoScrollPaused) {
                 reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
@@ -2791,6 +3007,10 @@ export default class ChatArea {
         // Update displayed content
         const displayContent = targetContent.substring(0, newLength);
         updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
+        if (newLength >= targetLength) {
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
+        }
 
         // Only auto-scroll if user hasn't manually scrolled up
         if (!this.reasoningAutoScrollPaused) {
@@ -2870,13 +3090,7 @@ export default class ChatArea {
         return { summaries, sections };
     }
 
-    /**
-     * Extracts a meaningful subtitle from reasoning content.
-     * Only uses explicit subtitle markers (## headings or **bold** text).
-     * Returns "Thinking..." if no markers are found (e.g., Claude models).
-     * @param {string} reasoning - The reasoning content
-     * @returns {string} The subtitle text
-     */
+    /** Use the provider’s latest explicit heading while reasoning streams. */
     extractReasoningSubtitle(reasoning) {
         if (!reasoning || reasoning.trim().length === 0) {
             return 'Thinking...';
@@ -2906,7 +3120,7 @@ export default class ChatArea {
      * @returns {string} Formatted duration string
      */
     formatReasoningDuration(durationMs) {
-        if (!durationMs) return '';
+        if (!Number.isFinite(durationMs) || durationMs <= 0) return '';
 
         const seconds = Math.round(durationMs / 1000);
 
@@ -2934,6 +3148,37 @@ export default class ChatArea {
     settleReasoningDisplay(messageId, reasoning, reasoningDuration) {
         this.settledReasoningIds.set(messageId, reasoning?.length || 0);
         this.finalizeReasoningDisplay(messageId, reasoning, reasoningDuration);
+    }
+
+    /**
+     * The model is thinking again after part of its answer (a tool call in
+     * between). Its settled header goes back to the shimmering "Thinking...";
+     * the next answer words settle it with the new duration.
+     * @param {string} messageId - The message ID
+     */
+    resumeReasoningDisplay(messageId) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.textContent = 'Thinking...';
+        subtitleEl.classList.add('reasoning-subtitle-streaming');
+    }
+
+    /**
+     * The thinking is over: the header takes its duration. Completion also
+     * calls this for visible traces. Disclosed words settle through
+     * settleReasoningDisplay; hidden reasoning has only this header.
+     * @param {string} messageId - The message ID
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleThinkingHeader(messageId, reasoningDuration) {
+        const subtitleEl = document.getElementById(`reasoning-subtitle-${messageId}`);
+        if (!subtitleEl) return;
+        subtitleEl.classList.remove('reasoning-subtitle-streaming');
+        const withheld = Boolean(subtitleEl.closest('.reasoning-trace-withheld'));
+        const duration = this.formatReasoningDuration(reasoningDuration);
+        subtitleEl.textContent = withheld
+            ? (duration || 'Thought')
+            : (duration || 'Reasoning complete');
     }
 
     /**
@@ -3012,12 +3257,8 @@ export default class ChatArea {
             if (!alreadyUpdated) {
                 // Subtitle hasn't been updated yet, update it now
                 subtitleEl.classList.remove('reasoning-subtitle-streaming');
-                if (reasoningDuration) {
-                    subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration);
-                } else {
-                    // Fallback if no duration is available
-                    subtitleEl.textContent = 'Reasoning complete';
-                }
+                // Preserve the original live completion fallback when no time is known.
+                subtitleEl.textContent = this.formatReasoningDuration(reasoningDuration) || 'Reasoning complete';
             }
             // If already updated, we skip the re-render to avoid redundancy
         }
@@ -3106,10 +3347,7 @@ export default class ChatArea {
             if (newMessageEl) {
                 existingMessageEl.replaceWith(newMessageEl);
                 // Re-run LaTeX on the replaced element
-                const contentEl = newMessageEl.querySelector('.message-content');
-                if (contentEl) {
-                    renderMathContent(contentEl);
-                }
+                this.renderMessageMath(newMessageEl);
                 // Update scroll button visibility (no auto-scroll for appended messages)
                 this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
@@ -3129,10 +3367,7 @@ export default class ChatArea {
                 existingTypingIndicator.replaceWith(newMessageEl);
                 messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
 
-                const contentEl = newMessageEl.querySelector('.message-content');
-                if (contentEl) {
-                    renderMathContent(contentEl);
-                }
+                this.renderMessageMath(newMessageEl);
                 this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
@@ -3164,10 +3399,7 @@ export default class ChatArea {
                 reasoningTrace.classList.add('fade-in');
             }
 
-            const contentEl = newMessageEl.querySelector('.message-content');
-            if (contentEl) {
-                renderMathContent(contentEl);
-            }
+            this.renderMessageMath(newMessageEl);
         }
 
         // Update scroll button visibility (no auto-scroll for appended messages)
@@ -3393,8 +3625,11 @@ export default class ChatArea {
         // Reset to minimum to get true scrollHeight
         textarea.style.height = '0';
         // Set height to scrollHeight, respecting CSS min-height (80px via CSS)
-        const newHeight = Math.max(textarea.scrollHeight, 80);
+        // and any size the person dragged it to.
+        const manualHeight = Number(textarea.dataset.manualHeight || 0);
+        const newHeight = Math.max(textarea.scrollHeight, 80, manualHeight);
         textarea.style.height = newHeight + 'px';
+        textarea.dataset.autoHeight = String(Math.round(textarea.getBoundingClientRect().height));
         // Restore overflow for manual resize capability
         textarea.style.overflow = prevOverflow || '';
     }

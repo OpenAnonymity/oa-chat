@@ -54,6 +54,7 @@ function panelFixture() {
     const panel = Object.create(PaymentModeRightPanel.prototype);
     panel.currentSession = session;
     panel.paymentMode = 'tickets';
+    panel.closingNoticeDelayMs = 0;
     panel.app = {
         getCurrentSession: () => session,
         integration: { getMode: () => 'tickets', getTransition: () => transition }
@@ -80,7 +81,7 @@ test('ticket funding preserves controls and private closure recovery after failu
             assert.match(html, /Recovery record saved\. &lt;Try later&gt;/);
             assert.doesNotMatch(html, /zkapi-state-spinner/);
         } else if (['settling', 'waiting'].includes(phase)) {
-            assert.match(html, /Closing previous chat/);
+            assert.match(html, /Updating your balance/);
         }
         assert.match(html, /role="status" aria-live="polite"/);
         assert.doesNotMatch(html, /Ready for a new chat|Sending will wait|<Try later>/);
@@ -226,7 +227,7 @@ for (const commercial of [false, true]) {
                     assert.match(html, /04:12/);
                     assert.equal(panel.getKeyDisplayInfo().hoverContentHtml, null);
                 } else {
-                    assert.ok(html.includes(mode === 'tickets' ? 'Requested on message send' : 'Key created when you send'));
+                    assert.ok(html.includes('Requested on message send'));
                     assert.match(html, /To be assigned/);
                 }
                 assert.ok(html.indexOf('Ephemeral Access Key') < html.indexOf('Network Proxy'));
@@ -267,7 +268,9 @@ test('mode changes preserve single private access and commercial Parallel lane c
             assert.match(html, /parallel-fixture-station/);
             assert.match(html, /Requested on message send/);
             assert.match(html, /You can keep using Tickets\./);
-            assert.doesNotMatch(html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/);
+            assert.match(html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/, 'a quick close never flashes a notice');
+            panel.closingSince -= 1000;
+            assert.doesNotMatch(panel.generateTopSectionHTML().match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/, 'a slow close says so');
             assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
         } else {
             assert.match(html, />Ephemeral Access Key<\/span>/);
@@ -277,4 +280,38 @@ test('mode changes preserve single private access and commercial Parallel lane c
         assert.doesNotMatch(html, /sk-parallel-fixture-secret-0123456789/);
     }
     assert.equal(session.councilConfig.enabled, true, 'payment selection does not discard the saved Parallel preference');
+});
+
+test('switching to Tickets mid-close shows no notice when the close finishes quickly', t => {
+    const { panel, setTransition } = panelFixture();
+    panel.closingNoticeDelayMs = 700;
+    let hidden = true;
+    const notice = { get hidden() { return hidden; }, set hidden(v) { hidden = v; }, innerHTML: '' };
+    t.mock.method(document, 'getElementById', () => notice);
+    setTransition({ phase: 'settling' });
+    panel.updateBackgroundClosingNotice();
+    assert.equal(hidden, true, 'not yet');
+    setTransition({ phase: 'ready' });
+    panel.updateBackgroundClosingNotice();
+    assert.equal(hidden, true);
+    assert.equal(panel.closingNoticeTimer, null, 'the pending reveal is cancelled');
+    setTransition({ phase: 'error' });
+    panel.updateBackgroundClosingNotice();
+    assert.equal(hidden, false, 'a failure shows at once');
+});
+
+test('payment and ticket Learn more keep their verifier instances separate across mode changes', () => {
+    const { panel } = panelFixture();
+    const ticket = { verifierUrl: 'https://verifier2.openanonymity.ai' };
+    const payment = { verifierUrl: 'https://verifier-production-20260917.openanonymity.ai' };
+    panel.app.services = { verifier: ticket };
+    panel.providerVerifier = payment;
+    let mode = 'tickets';
+    panel.app.integration.getMode = () => mode;
+    assert.equal(panel.getAttestationVerifier(), ticket);
+    mode = 'zkapi';
+    assert.equal(panel.getAttestationVerifier(), payment);
+    mode = 'tickets';
+    assert.equal(panel.getAttestationVerifier(), ticket);
+    assert.equal(panel.app.services.verifier, ticket);
 });

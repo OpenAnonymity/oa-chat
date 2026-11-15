@@ -251,3 +251,106 @@ test('an outcome that lands mid-turn waits for the arrow to finish its turn', t 
         assert.equal(f.swap.dataset.state, 'b');
     } finally { f.cleanup(); }
 });
+
+test('relayed requests starting and ending do not remount the panel; a status change redraws only the icon', () => {
+    const f = fixture();
+    try {
+        let renders = 0;
+        f.panel.renderTopSectionOnly = () => { renders += 1; };
+        f.panel.proxySettings = { enabled: true };
+        f.panel.proxyStatus = { ready: true };
+        const icon = { outerHTML: '' };
+        document.querySelector = selector => selector === '.oa-proxy-status-icon' ? icon : null;
+        f.panel.updateProxyFeedback = () => {};
+        for (let i = 0; i < 4; i++) f.panel.handleProxyChange({ settings: { enabled: true }, status: { ready: true } });
+        assert.equal(renders, 0, 'request-count churn changes nothing visible');
+        f.panel.handleProxyChange({ settings: { enabled: true }, status: { ready: true, connectionVerified: true, usingProxy: true } });
+        assert.equal(renders, 0, 'connected redraws in place');
+        assert.match(icon.outerHTML, /data-proxy-state="connected"/);
+        f.panel.handleProxyChange({ settings: { enabled: false }, status: {} });
+        assert.equal(renders, 1, 'switching the relay off changes the layout');
+    } finally { f.cleanup(); }
+});
+
+test('a relay that was not up at startup reads as connecting on the next request, not Unavailable', () => {
+    const f = fixture();
+    try {
+        const meta = f.panel.getProxyStatusMeta({ enabled: true }, { connectOnNextRequest: true });
+        assert.equal(meta.state, 'ready');
+        assert.match(meta.label, /next request/);
+        assert.equal(f.panel.getProxyStatusMeta({ enabled: true }, { connectOnNextRequest: true, lastError: new Error('x') }).state, 'unavailable', 'a failed request still says so');
+    } finally { f.cleanup(); }
+});
+
+test('relay failures only update presentation, including during another active request', () => {
+    const f = fixture();
+    try {
+        let writes = 0;
+        let active = true;
+        f.networkProxy.updateSettings = () => { writes++; };
+        f.networkProxy.hasActiveRequests = () => active;
+        f.panel.proxySettings = { enabled: true, fallbackToDirect: false };
+        const settings = f.panel.proxySettings;
+        const icon = { outerHTML: '' };
+        document.querySelector = selector => selector === '.oa-proxy-status-icon' ? icon : null;
+        const presentations = [];
+        f.panel.updateProxyFeedback = () => presentations.push(f.panel.getProxyStatusMeta().state);
+        for (const busy of [true, false]) {
+            active = busy;
+            f.panel.handleProxyChange({ settings, status: { ready: true, usingProxy: true, connectionVerified: true } });
+            f.panel.handleProxyChange({ settings, status: { lastError: new Error('synthetic relay failure') } });
+            f.panel.handleProxyChange({ settings, status: { lastError: new Error('repeated failure') } });
+            assert.equal(writes, 0, 'a failed request must never mutate the relay preference');
+            assert.equal(f.panel.proxySettings.enabled, true);
+            assert.equal(f.panel.proxySettings.fallbackToDirect, false);
+            assert.match(icon.outerHTML, /data-proxy-state="unavailable"/);
+            f.panel.handleProxyChange({ settings, status: { ready: true, usingProxy: true, connectionVerified: true } });
+            assert.match(icon.outerHTML, /data-proxy-state="connected"/);
+        }
+        assert.deepEqual(presentations, ['connected', 'unavailable', 'connected', 'unavailable', 'connected']);
+    } finally { f.cleanup(); }
+});
+
+test('a failed relayed request preserves another stream and recovers without replaying it', async () => {
+    const { default: singleton } = await import('../../chat/services/networkProxy.js');
+    const f = fixture();
+    const previousFetch = globalThis.fetch;
+    const proxy = Object.create(Object.getPrototypeOf(singleton));
+    Object.assign(proxy, { state: { ...singleton.state, settings: { enabled: true, fallbackToDirect: false }, lastError: null },
+        tlsInfo: { ...singleton.tlsInfo }, activeRequestCount: 0, httpSession: {},
+        ensureProxyApplied: async () => {} });
+    f.panel.app.services.networkProxy = proxy;
+    f.panel.updateProxyFeedback = () => {};
+    proxy.emitChange = () => f.panel.handleProxyChange({ settings: proxy.getSettings(), status: proxy.getStatus() });
+    let saves = 0, relayCalls = 0, directCalls = 0, body;
+    proxy.saveSettings = async () => { saves++; };
+    globalThis.fetch = async () => { directCalls++; return new Response(null, { status: 204 }); };
+    proxy.fetchThroughProxy = async () => {
+        relayCalls++;
+        if (relayCalls === 1) return new Response(new ReadableStream({ start(c) { body = c; } }));
+        if (relayCalls === 2 || relayCalls === 3) throw new Error('synthetic relay refused');
+        return new Response(null, { status: 204 });
+    };
+    try {
+        const streaming = await proxy.fetch('https://example.invalid/stream');
+        await assert.rejects(proxy.fetch('https://example.invalid/failed'), /synthetic relay refused/);
+        assert.equal(proxy.activeRequestCount, 1);
+        assert.equal(directCalls, 0, 'fallback disabled must fail closed');
+        assert.equal(saves, 0);
+        assert.equal(proxy.getSettings().enabled, true);
+        assert.equal(f.panel.getProxyStatusMeta().state, 'unavailable');
+        await assert.rejects(proxy.updateSettings({ enabled: false }), /requests are in progress/);
+        proxy.state.settings.fallbackToDirect = true;
+        await assert.rejects(proxy.fetch('https://example.invalid/forced', {}, { forceProxy: true }), /synthetic relay refused/);
+        assert.equal(directCalls, 0, 'forceProxy must not fall back either');
+        const recovered = await proxy.fetch('https://example.invalid/recovery');
+        assert.equal(recovered.status, 204);
+        assert.equal(f.panel.getProxyStatusMeta().state, 'connected');
+        body.enqueue(new TextEncoder().encode('original stream survived'));
+        body.close();
+        assert.equal(await streaming.text(), 'original stream survived');
+        assert.equal(proxy.activeRequestCount, 0);
+        assert.equal(relayCalls, 4, 'status updates must not replay an inference or acquisition');
+        assert.equal(saves, 0);
+    } finally { globalThis.fetch = previousFetch; f.cleanup(); }
+});

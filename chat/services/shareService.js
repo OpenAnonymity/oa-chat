@@ -5,6 +5,7 @@
 
 import { encrypt, decrypt } from './shareEncryption.js';
 import { getShareBaseUrl } from './appRoutes.js';
+import { conversationQuery } from './conversationLink.js';
 import { ORG_API_BASE } from './orgEndpoints.js';
 import inferenceService from './inference/inferenceService.js';
 import networkProxy from './networkProxy.js';
@@ -349,7 +350,7 @@ export function validatePayload(payload) {
  */
 export function buildShareUrl(shareId) {
     const normalizedId = normalizeShareId(shareId);
-    return `${getShareBaseUrl()}?s=${normalizedId}`;
+    return `${getShareBaseUrl()}${conversationQuery(normalizedId)}`;
 }
 
 /**

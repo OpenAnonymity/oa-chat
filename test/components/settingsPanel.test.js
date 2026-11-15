@@ -45,7 +45,7 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
         'All', 'Chat history', 'ChatGPT', 'Memories',
         'Share feedback',
         'Scrubber model',
-        'Save memories', 'Always attach retrieval', 'Memory model',
+        'Use memories without asking', 'Memory model',
         'Web search', 'Council review', 'Council model', 'Effort'
     ]);
     // Memory export/import work whether Memory is on or off: the memories
@@ -150,4 +150,54 @@ test('the Delete confirmation paints above the Account card', () => {
     // be above them, and the card isolates its own stacking context.
     assert.match(css, /\.settings-confirm-layer \{[^}]*position: absolute;[^}]*z-index: 2;/s);
     assert.match(css, /\.settings-dialog \{[^}]*position: relative;\s*isolation: isolate;/s);
+});
+
+test('Memory: the section title carries its switch, and its settings fold away while it is off', () => {
+    const html = read('chat/index.html');
+    const start = html.indexOf('<section id="memory-settings-section"');
+    const section = html.slice(start, html.indexOf('</section>', start));
+    assert.match(section, /<div class="settings-heading-row">[\s\S]*id="settings-memory-title"[\s\S]*<button id="memory-feature-toggle"[^>]*aria-controls="memory-settings-children"[^>]*aria-labelledby="settings-memory-title"/);
+    assert.match(section, /<div id="memory-settings-children" class="settings-children t-acc" data-open="false">\s*<div class="t-acc-panel"><div class="t-acc-panel-inner">/);
+    assert.ok(section.indexOf('memory-auto-include-toggle') > section.indexOf('memory-settings-children'));
+    assert.ok(section.indexOf('memory-agent-model-select') > section.indexOf('memory-settings-children'));
+    const input = read('chat/components/ChatInput.js');
+    assert.match(input, /this\.setSettingsChildrenOpen\('memory-settings-children', memoryFeatureEnabled, \{ instant \}\)/);
+    assert.match(input, /this\.refreshMemorySettingsUI\(\{ instant: true \}\);\n\s*this\.refreshMultiModelSettingsUI\(\{ instant: true \}\)/, 'opening the gear does not animate the folds');
+    assert.match(input, /if \(inner\) inner\.inert = !open;/, 'folded settings take no focus');
+    const css = read('chat/styles.css');
+    assert.match(css, /\.settings-heading-row \{ display: flex;[^}]*min-height: var\(--settings-row-h\);/);
+    assert.match(css, /\.settings-children\[data-open="true"\]\[data-settled\] \.t-acc-panel-inner \{ overflow: visible; \}/);
+});
+
+test('Council model folds under Council review, and a fold never moves the switch just clicked', () => {
+    const html = read('chat/index.html');
+    assert.match(html, /<button id="council-review-toggle"[^>]*aria-controls="council-review-children"/);
+    assert.match(html, /<div id="council-review-children" class="settings-children t-acc" data-open="false">\s*<div class="t-acc-panel"><div class="t-acc-panel-inner">\s*<div id="council-review-model-row"/);
+    const input = read('chat/components/ChatInput.js');
+    assert.match(input, /this\.setSettingsChildrenOpen\('council-review-children', isCouncilReviewEnabled && councilSupported, \{ instant \}\)/);
+    // The panel hangs from its bottom edge; an animated fold first holds the top edge.
+    // Folding away holds the top edge; unfolding grows up from rest (never over the composer).
+    assert.match(input, /if \(!open\) this\.pinSettingsMenuTop\(\);\n\s*else this\.prepareSettingsMenuGrowth\(inner\?\.scrollHeight \|\| 0\);\n\s*children\.dataset\.open = String\(open\);/);
+    assert.match(input, /if \(growth <= room \+ 1\) return;/, 'rows that fit the gap a fold left fill it in place');
+    assert.match(input, /menu\.style\.top = `\$\{rect\.top\}px`;\n\s*menu\.style\.bottom = 'auto';/);
+});
+
+test('after a fold, the panel glides back above the composer once the pointer has left it', () => {
+    const input = read('chat/components/ChatInput.js');
+    assert.match(input, /this\.settingsMenuAnchor = availableAbove >= 220\n\s*\? \{ bottom: menu\.style\.bottom, maxHeight: menu\.style\.maxHeight \}/);
+    assert.match(input, /if \(!menu\.matches\?\.\('\:hover'\)\) \{\n\s*this\.restoreSettingsMenuAnchor\(\);/, 'a keyboard toggle re-anchors at once');
+    assert.match(input, /menu\.addEventListener\('pointerleave', this\.settingsMenuReanchorOnLeave\)/);
+    assert.match(input, /menu\.style\.transition = 'translate 260ms cubic-bezier\(0\.22, 1, 0\.36, 1\)';/);
+});
+
+test('folding a scrollable settings menu keeps the composer boundary', async t => {
+    const { default: ChatInput } = await import('../../chat/components/ChatInput.js');
+    const original = globalThis.window;
+    globalThis.window = { innerHeight: 600, visualViewport: { offsetTop: 0, height: 600 } };
+    t.after(() => { if (original === undefined) delete globalThis.window; else globalThis.window = original; });
+    const menu = { style: { bottom: '200px', maxHeight: '350px' }, classList: { contains: () => false },
+        getBoundingClientRect: () => ({ top: 50, bottom: 400 }) };
+    ChatInput.prototype.pinSettingsMenuTop.call({ app: { elements: { settingsMenu: menu } }, settingsMenuAnchor: { bottom: '200px', maxHeight: '350px' } });
+    assert.equal(menu.style.top, '50px');
+    assert.equal(menu.style.maxHeight, '350px', 'never expand into the 200px composer area');
 });

@@ -349,7 +349,7 @@ test('identity-backed sync pushes encrypted tickets and restores them on a fresh
     try {
         const pushResult = await syncService.sync();
         assert.equal(pushResult.success, true);
-        assert.equal(remoteBlobs.length, 2);
+        assert.equal(remoteBlobs.length, 3);
         assert.ok(remoteBlobs.every(blob =>
             typeof blob.id === 'string' &&
             typeof blob.ciphertext === 'string' &&
@@ -465,7 +465,7 @@ test('empty ticket wallets are encrypted so the remote snapshot can be cleared',
 
     try {
         const blobs = await syncService._collectLocalBlobs(key);
-        assert.equal(blobs.length, 2);
+        assert.equal(blobs.length, 3);
         assert.ok(blobs.every(blob =>
             typeof blob.id === 'string' &&
             typeof blob.ciphertext === 'string' &&

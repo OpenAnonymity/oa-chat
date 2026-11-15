@@ -67,8 +67,15 @@ test('PRF passkey wrapper round-trips a random account master key', async () => 
     const restore = installBrowserCredentials({
         // Simulate authenticators that confirm PRF support on create but return
         // the result only from the follow-up assertion.
-        create: async () => credential(CREDENTIAL_ID, null, true),
-        get: async () => {
+        create: async ({ publicKey }) => {
+            assert.deepEqual(publicKey.hints, ['client-device']);
+            assert.equal(publicKey.authenticatorSelection.authenticatorAttachment, undefined);
+            assert.equal(publicKey.authenticatorSelection.userVerification, 'required');
+            return credential(CREDENTIAL_ID, null, true);
+        },
+        get: async ({ publicKey }) => {
+            assert.deepEqual(publicKey.hints, ['client-device']);
+            assert.equal(publicKey.userVerification, 'required');
             getCalls += 1;
             return credential(CREDENTIAL_ID, prf, true);
         }

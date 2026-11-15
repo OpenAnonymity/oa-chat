@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { restoredResponseForDisplay } from '../../chat/ui/restoredResponse.js';
+import { restoredResponseForDisplay, wasReplyStreaming } from '../../chat/ui/restoredResponse.js';
+import { OWNERSHIP_ELSEWHERE, OWNERSHIP_NONE, OWNERSHIP_UNKNOWN } from '../../chat/services/turnOwnership.js';
 
 function installTemplateGlobals() {
     const originalDocument = globalThis.document;
@@ -67,8 +68,8 @@ test('a saved pending response is displayed as disconnected without changing sto
             const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
             assert.doesNotMatch(html, /data-streaming-pending="true"/);
             assert.match(html, /no longer connected/);
-            assert.match(html, /Retrying sends a new request/);
-            assert.match(html, /Retry response/);
+            assert.doesNotMatch(html, /Retrying sends a new request/);
+            assert.match(html, /class="[^"]*response-error/);
             assert.doesNotMatch(html, /Model provider returned no response/);
             assert.doesNotMatch(html, /Private access secured|Verify private key/);
             assert.equal(saved.accessTrace.steps[0].state, 'active');
@@ -90,14 +91,80 @@ test('a pending turn saved before the first chunk is displayed as an interrupted
             isLocalOnly: true, pendingTurn: true });
         const display = restoredResponseForDisplay(saved, false);
         assert.match(display.inferenceError, /no reply was received/);
-        assert.match(display.inferenceError, /Retrying sends a new request/);
+        assert.match(display.inferenceError, /Check any other open tab before retrying\.$/);
         const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
-        assert.match(html, /Retry response/);
+        assert.match(html, /response-error/);
+        assert.match(html, /regenerate-message-btn/);
         assert.doesNotMatch(html, /data-streaming-pending="true"/);
         assert.doesNotMatch(html, /Model provider returned no response/);
         assert.equal(restoredResponseForDisplay(saved, true), saved, 'a live pending turn in this tab is untouched');
         // A local-only row that is not a pending turn keeps the old behaviour.
         assert.equal(restoredResponseForDisplay({ ...saved, pendingTurn: false }, false).inferenceError, undefined);
+    } finally { restoreGlobals(); }
+});
+
+test('a reply another tab is still writing is shown as answering elsewhere, with no error and no actions', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const placeholder = Object.freeze({ id: 'row', sessionId: 'chat', role: 'assistant', content: '', model: 'Test',
+            timestamp: 1, streamingPending: true, streamingPhase: 'requesting-key', streamingTokens: 0 });
+        const partial = Object.freeze({ ...placeholder, streamingPending: false, content: 'Half an answer', streamingTokens: 4 });
+        const pendingTurn = Object.freeze({ ...placeholder, isLocalOnly: true, pendingTurn: true });
+        for (const saved of [placeholder, partial, pendingTurn]) {
+            assert.equal(wasReplyStreaming(saved), true);
+            const display = restoredResponseForDisplay(saved, false, OWNERSHIP_ELSEWHERE);
+            assert.equal(display.answeringElsewhere, true);
+            assert.equal(display.inferenceError, undefined);
+            assert.equal(display.streamingPending, false);
+            assert.equal(display.streamingTokens, null);
+            assert.equal(display.content, saved.content, 'what has arrived so far stays visible');
+            const html = buildMessageHTML(display, helpers, [], 'Test');
+            assert.match(html, /Answering in another tab/);
+            assert.match(html, /pending-response-streaming/);
+            assert.doesNotMatch(html, /response-error|no longer connected|connection to this/);
+            assert.doesNotMatch(html, /copy-message-btn|regenerate-message-btn/, 'no actions on a reply still being written');
+            assert.doesNotMatch(html, /Model provider returned no response/);
+            assert.doesNotMatch(html, /data-streaming-pending="true"/);
+            assert.equal(saved.streamingPending, placeholder === saved || pendingTurn === saved, 'stored state untouched');
+        }
+        // A reply that already carries its own error keeps it, whoever holds the turn.
+        const failed = { ...partial, inferenceError: 'Provider error' };
+        assert.equal(restoredResponseForDisplay(failed, false, OWNERSHIP_ELSEWHERE).inferenceError, 'Provider error');
+        assert.equal(restoredResponseForDisplay(failed, false, OWNERSHIP_ELSEWHERE).answeringElsewhere, undefined);
+        // This tab's own live reply is never normalized, whatever the lock says.
+        assert.equal(restoredResponseForDisplay(partial, true, OWNERSHIP_ELSEWHERE), partial);
+        assert.equal(wasReplyStreaming({ role: 'assistant', content: 'done', streamingTokens: null }), false);
+        assert.equal(wasReplyStreaming({ role: 'user', streamingPending: true }), false);
+    } finally { restoreGlobals(); }
+});
+
+test('the interrupted copy says what the turn lock knows: connection lost, or check other tabs when it cannot tell', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const reply = Object.freeze({ id: 'row', sessionId: 'chat', role: 'assistant', content: 'Half an answer',
+            model: 'Test', timestamp: 1, streamingTokens: 4 });
+        const pendingTurn = Object.freeze({ ...reply, content: '', streamingPending: true, streamingTokens: 0,
+            isLocalOnly: true, pendingTurn: true });
+        // Nobody holds the turn: the tab that was writing it is gone.
+        const lost = restoredResponseForDisplay(reply, false, OWNERSHIP_NONE);
+        assert.match(lost.inferenceError, /^The connection to this reply was lost before it finished\.$/);
+        assert.doesNotMatch(lost.inferenceError, /other open tab/);
+        assert.match(restoredResponseForDisplay(pendingTurn, false, OWNERSHIP_NONE).inferenceError,
+            /^The connection to this request was lost before a reply arrived\.$/);
+        const html = buildMessageHTML(lost, helpers, [], 'Test');
+        assert.match(html, /response-error/);
+        assert.doesNotMatch(html, /Answering in another tab/);
+        // No Web Locks (or no answer): the cautious copy stays.
+        for (const ownership of [OWNERSHIP_UNKNOWN, null, undefined]) {
+            assert.match(restoredResponseForDisplay(reply, false, ownership).inferenceError,
+                /no longer connected to the response\. Check any other open tab/);
+            assert.match(restoredResponseForDisplay(pendingTurn, false, ownership).inferenceError,
+                /no reply was received\. Check any other open tab/);
+        }
     } finally { restoreGlobals(); }
 });
 
@@ -137,13 +204,14 @@ test('interrupted answers keep their content and show an escaped error with retr
         const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
         const message = {id:'partial-answer',role:'assistant',content:'Partial answer',model:'Test',timestamp:new Date().toISOString()};
         const render = value => buildMessageHTML(value,{processContentWithLatex:escapeHtml,formatTime:()=>''},[],'Test');
-        assert.doesNotMatch(render(message), /inference-failure-warning/);
+        assert.doesNotMatch(render(message), /response-error/);
         const html = render({...message,inferenceError:'Response interrupted <script>alert(1)</script>'});
         assert.match(html, /Partial answer/);
-        assert.match(html, /Response interrupted &lt;script&gt;/);
-        assert.doesNotMatch(html, /<script>/);
-        assert.match(html, /regenerate-message-btn inference-retry-button/);
-        assert.match(html, /Retry response/);
+        // The same line as a reply that failed before any text, after the answer.
+        assert.match(html, /class="[^"]*response-error"[\s\S]*<strong>Error:<\/strong> Response interrupted &lt;script&gt;/);
+        assert.ok(html.indexOf('Partial answer') < html.indexOf('response-error'));
+        assert.doesNotMatch(html, /<script>|inference-failure-warning|Retry response/);
+        assert.match(html, /regenerate-message-btn/, 'retry is the action row');
     } finally { restoreGlobals(); }
 });
 
@@ -284,4 +352,96 @@ test('standalone typing indicators expose session and model hooks for pre-output
         assert.match(html, /<div data-assistant-model-icon\b/);
         assert.match(html, /Waiting for response/);
     } finally { restoreGlobals(); }
+});
+
+test('a failed Parallel lane reads as one plain sentence with a way to try again', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const lanes = [
+            { label: 'Response A', laneId: 'primary', model: 'GPT', status: 'complete', response: 'Hello' },
+            { label: 'Response B', laneId: 'secondary', model: 'Image', status: 'error', error: 'Request failed. (HTTP 429)' }
+        ];
+        const parallel = buildMessageHTML({
+            id: 'm1', role: 'assistant', model: 'Parallel', content: 'Hello',
+            council: { enabled: true, stage1: lanes, errors: [{ model: 'Image', message: 'Request failed. (HTTP 429)' }] }
+        }, helpers, [], 'GPT');
+        assert.match(parallel, /response-error[\s\S]*<strong>Error:<\/strong> Too many requests \(HTTP 429\)\./);
+        assert.match(parallel, /regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
+        assert.doesNotMatch(parallel, /council-lane-error|council-lane-retry-btn/);
+        assert.doesNotMatch(parallel, /model request failed|Request failed\.|council-stage-warning|>Failed</);
+
+        // With a Council review the lane cannot be retried on its own.
+        const council = buildMessageHTML({
+            id: 'm2', role: 'assistant', model: 'Council', content: '',
+            council: { enabled: true, stage1: lanes, synthesis: { model: 'Fable', status: 'partial', response: 'Review' } }
+        }, helpers, [], 'GPT');
+        assert.match(council, /Too many requests \(HTTP 429\)\./);
+        assert.doesNotMatch(council, /data-council-lane-id="secondary"[^>]*data-tooltip="Regenerate/);
+    } finally { restoreGlobals(); }
+});
+
+test('lane images render, and a quiet running lane says it is still working', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+        const html = buildMessageHTML({
+            id: 'm3', role: 'assistant', model: 'Parallel', content: '',
+            council: { enabled: true, stage1: [
+                { label: 'Response A', laneId: 'primary', model: 'Image', status: 'complete', response: '', images: [image] },
+                { label: 'Response B', laneId: 'secondary', model: 'GPT Image', status: 'running', response: 'Making it now.', stillWorking: true, stillWorkingSince: Date.now() - 4200 }
+            ] }
+        }, helpers, [], 'Image');
+        assert.match(html, /class="council-lane-images"[\s\S]*data:image\/png;base64,AAAA/);
+        assert.doesNotMatch(html, /copy-council-lane-btn/, 'image-only answers have nothing to copy as text');
+        assert.match(html, /regenerate-council-lane-btn/, 'image-only answers can still regenerate');
+        assert.match(html, /Still working<span aria-hidden="true"> · <span class="still-working-seconds">4<\/span>s<\/span>/, 'the lane says how long it has been quiet');
+        assert.match(html, /data-still-working-since="\d+"/, 'a re-render keeps counting from the stored start');
+
+        const streaming = buildMessageHTML({
+            id: 'm4', role: 'assistant', model: 'Parallel', content: '',
+            council: { enabled: true, stage1: [
+                { label: 'Response A', laneId: 'primary', model: 'GPT', status: 'running', response: 'Streaming text' }
+            ] }
+        }, helpers, [], 'GPT');
+        assert.doesNotMatch(streaming, /Still working/, 'text that is still arriving needs no label');
+    } finally { restoreGlobals(); }
+});
+
+test('describeCouncilLaneError states the error: the status by name, the code as detail', async () => {
+    const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'Too many requests.', detail: 'Error 429' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 503, PROVIDER_ERROR)'), { message: 'Service unavailable.', detail: 'Error 503' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 418)'), { message: 'Request failed.', detail: 'Error 418' });
+    assert.deepEqual(describeCouncilLaneError('Request failed.'), { message: 'Request failed.', detail: '' });
+    assert.equal(describeCouncilLaneError('Context window exceeded').message, 'Context window exceeded');
+});
+
+test('lane display distinguishes provider SSE codes from actual HTTP errors', async () => {
+    const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_429)'),
+        { message: 'Too many requests.', detail: 'Provider error 429' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_502)'),
+        { message: 'Bad gateway.', detail: 'Provider error 502' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_STREAM_ERROR)'),
+        { message: 'The provider reported an error.', detail: '' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_123456)'),
+        { message: 'Request failed.', detail: '' });
+});
+
+test('stopped replacement keeps the original reply with a neutral, retryable status', async () => {
+    const restore = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const saved = {id:'original',sessionId:'chat',role:'assistant',content:'The original answer.',model:'Test',timestamp:1,regenerationNotice:'stopped'};
+        const html = buildMessageHTML(saved, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
+        assert.match(html,/The original answer/);
+        assert.match(html,/Stopped\. Your previous answer was kept\./);
+        assert.match(html,/regeneration-status/);
+        assert.match(html,/Retry response/);
+        assert.doesNotMatch(html,/inference-failure-warning/);
+    } finally { restore(); }
 });

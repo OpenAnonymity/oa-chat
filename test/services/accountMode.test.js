@@ -1,3 +1,4 @@
+import storageEvents from '../../chat/services/storageEvents.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -40,6 +41,8 @@ test('a later storage NotFoundError is never reported as a missing passkey', asy
         state: { ...accountService.state }
     };
     accountService.persistMasterKey = async () => { throw laterFailure; };
+    accountService.state.accountId = '7777777777777777';
+    accountService.state.sessionVerified = true;
     const masterKey = new Uint8Array(32).fill(9);
     try {
         await assert.rejects(
@@ -230,7 +233,10 @@ test('username login returns the exact opaque challenge transaction ID', async (
         configurable: true,
         value: {
             credentials: {
-                async get() {
+                async get({ publicKey }) {
+                    assert.deepEqual(publicKey.hints, ['client-device']);
+                    assert.equal(publicKey.userVerification, 'required');
+                    assert.equal(publicKey.rpId, 'localhost');
                     return {
                         id: 'credential-id',
                         rawId: new Uint8Array([1]).buffer,
@@ -266,45 +272,6 @@ test('username login returns the exact opaque challenge transaction ID', async (
             Object.defineProperty(globalThis, 'navigator', originalNavigator);
         } else {
             delete globalThis.navigator;
-        }
-    }
-});
-
-test('conditional auto-unlock retains the saved username login path', async () => {
-    const originalState = { ...accountService.state };
-    const originalUsernameUnlock = accountService.unlockWithUsername;
-    const originalPasskeyUnlock = accountService.unlockWithPasskey;
-    const originalCredential = globalThis.PublicKeyCredential;
-    const calls = [];
-
-    Object.assign(accountService.state, {
-        accountId: '1234567890123456',
-        username: 'winter-owl',
-        googleLinked: false,
-        passkeySupported: true,
-        busy: false
-    });
-    accountService.unlockWithUsername = async (...args) => calls.push(['username', ...args]);
-    accountService.unlockWithPasskey = async (...args) => calls.push(['accountId', ...args]);
-    globalThis.PublicKeyCredential = {
-        isConditionalMediationAvailable: async () => true
-    };
-
-    try {
-        await accountService.maybeAutoUnlock();
-        assert.deepEqual(calls, [[
-            'username',
-            'winter-owl',
-            { mediation: 'silent', silent: true }
-        ]]);
-    } finally {
-        accountService.unlockWithUsername = originalUsernameUnlock;
-        accountService.unlockWithPasskey = originalPasskeyUnlock;
-        Object.assign(accountService.state, originalState);
-        if (originalCredential === undefined) {
-            delete globalThis.PublicKeyCredential;
-        } else {
-            globalThis.PublicKeyCredential = originalCredential;
         }
     }
 });
@@ -355,7 +322,11 @@ test('username accounts use identity-backed deferred redemption sync', async () 
     }
 });
 
-test('username registration uploads no recovery material', async () => {
+test('username registration uploads no recovery material', async t => {
+    const before = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    const values = new Map();
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) } });
+    t.after(() => before ? Object.defineProperty(globalThis, 'sessionStorage', before) : delete globalThis.sessionStorage);
     const originalState = { ...accountService.state };
     const originalPendingAccount = accountService.pendingAccount;
     const originalMasterKey = accountService.masterKey;
@@ -724,6 +695,10 @@ test('a landing-page completion token finishes Google sign-in without a second p
         fetch: sessionService.fetch,
         verifySession: sessionService.verifySession,
         getSetting: chatDB.getSetting,
+        saveSetting: chatDB.saveSetting,
+        updateSettings: chatDB.updateSettings,
+        storageInit: storageEvents.init,
+        storageBroadcast: storageEvents.broadcast,
         persistSettings: accountService.persistSettings,
         clearPersistedMasterKey: accountService.clearPersistedMasterKey,
         fetchOAuthKeyring: accountService.fetchOAuthKeyring,
@@ -745,6 +720,10 @@ test('a landing-page completion token finishes Google sign-in without a second p
     };
     sessionService.verifySession = async () => true;
     chatDB.getSetting = async () => null;
+    chatDB.saveSetting = async () => {};
+    chatDB.updateSettings = async () => {};
+    storageEvents.init = () => {};
+    storageEvents.broadcast = () => {};
     accountService.persistSettings = async () => {};
     accountService.clearPersistedMasterKey = async () => {};
     accountService.fetchOAuthKeyring = async () => ({ encryptionMode: 'PRF', wrappers: [] });
@@ -768,6 +747,10 @@ test('a landing-page completion token finishes Google sign-in without a second p
         sessionService.fetch = originals.fetch;
         sessionService.verifySession = originals.verifySession;
         chatDB.getSetting = originals.getSetting;
+        chatDB.saveSetting = originals.saveSetting;
+        chatDB.updateSettings = originals.updateSettings;
+        storageEvents.init = originals.storageInit;
+        storageEvents.broadcast = originals.storageBroadcast;
         accountService.persistSettings = originals.persistSettings;
         accountService.clearPersistedMasterKey = originals.clearPersistedMasterKey;
         accountService.fetchOAuthKeyring = originals.fetchOAuthKeyring;

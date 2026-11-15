@@ -271,6 +271,34 @@ body {
     touch-action: pan-y;
 }
 
+#model-list-scroll-area {
+    height: 270px;
+    min-height: 0;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+    #model-picker-modal {
+        top: var(--composer-viewport-top, 0px);
+        bottom: auto;
+        height: var(--composer-viewport-height, 100dvh);
+    }
+
+    #model-picker-modal > [role="dialog"] {
+        max-height: calc(100% - 2rem);
+        min-height: 0;
+    }
+
+    #model-picker-modal .model-picker-search { flex-shrink: 0; }
+    #model-list-scroll-area { height: min(55dvh, 420px); }
+    #model-search { min-width: 0; min-height: 44px; font-size: 16px; }
+    #close-modal-btn { min-width: 44px; min-height: 44px; }
+    #close-modal-btn > svg { margin: auto; }
+    #model-list-scroll-area .model-option { min-height: 44px; align-content: center; }
+}
+
 code, pre, kbd, .font-mono {
     font-family: var(--font-mono);
 }
@@ -648,39 +676,142 @@ html.switching-theme *::after {
     overflow: hidden;
 }
 
-.session-scroll-fade {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 2;
-    height: 2.5rem;
-    pointer-events: none;
-    background: linear-gradient(
-        to bottom,
-        hsl(var(--color-background) / 0),
-        hsl(var(--color-background) / 0.72) 58%,
-        hsl(var(--color-background) / 0.98)
-    );
-    -webkit-backdrop-filter: blur(2px);
-    backdrop-filter: blur(2px);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48%, #000);
-    mask-image: linear-gradient(to bottom, transparent, #000 48%, #000);
-    opacity: 0;
-    transition: opacity 0.12s ease-out;
-}
-
-.session-scroll-shell.has-more-below .session-scroll-fade {
-    opacity: 1;
-}
-
 .session-list-end-spacer {
-    height: 40px;
-    flex: 0 0 40px;
+    height: 8px;
+    flex: 0 0 8px;
+}
+
+/* One spacing model for full and virtualized lists, so row fitting
+   (Sidebar.applyRowFit) can predict where every row edge lands. */
+#sessions-list {
+    gap: 0;
+}
+
+#sessions-list .chat-session,
+#sessions-list .model-category-header {
+    height: var(--session-row-h, 2.25rem);
+}
+
+/* The row buttons float over the end of the title instead of reserving
+   space beside it, so titles use the full row until hover. While hidden
+   they are also untouchable (visibility), so a tap on visible title text
+   always opens the chat. */
+.session-row-actions {
+    position: absolute;
+    top: 0;
+    right: 0.25rem;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.12s ease-out, visibility 0s linear 0.12s;
+}
+
+.chat-session:focus-within .session-row-actions,
+.chat-session[data-menu-open] .session-row-actions {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0s;
+}
+
+.chat-session:focus-within .session-title-wrap,
+.chat-session[data-menu-open] .session-title-wrap {
+    /* Star + menu buttons cover the last ~3.4rem of the title. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+    mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+}
+
+@media (hover: hover) {
+    .chat-session:hover .session-row-actions {
+        visibility: visible;
+        opacity: 1;
+        transition-delay: 0s;
+    }
+
+    .chat-session:hover .session-title-wrap {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+        mask-image: linear-gradient(to right, #000 calc(100% - 4.25rem), transparent calc(100% - 3rem));
+    }
+}
+
+/* Touch: no hover to reveal buttons, so the open chat shows them beside
+   its title (title makes room, no overlap). Other chats: tap to open. */
+@media (hover: none) {
+    .chat-session.active .session-row-actions {
+        visibility: visible;
+        opacity: 1;
+        transition: none;
+    }
+
+    .chat-session.active .session-title-wrap {
+        padding-right: 3.5rem;
+        -webkit-mask-image: none;
+        mask-image: none;
+    }
+}
+
+/* Renaming: show the whole editable title, caret included. */
+.chat-session[data-renaming] .session-row-actions {
+    display: none;
+}
+
+.chat-session[data-renaming] .session-title-wrap {
+    padding-right: 0;
+    -webkit-mask-image: none;
+    mask-image: none;
+}
+
+.session-row-actions .session-star-btn {
+    width: 1.625rem;
+    height: 1.75rem;
+}
+
+.session-menu-separator {
+    height: 1px;
+    margin: 0.25rem 0.375rem;
+    background: hsl(var(--color-border));
+}
+
+/* Full title beside the sidebar for chats whose title is cut off. */
+.session-hover-card {
+    position: fixed;
+    z-index: 10004;
+    max-width: 18rem;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    background: hsl(var(--color-popover, var(--color-background)));
+    color: hsl(var(--color-foreground));
+    box-shadow: 0 8px 24px hsl(var(--color-foreground) / 0.12);
+    pointer-events: none;
+    animation: sessionHoverCardIn 0.12s ease-out;
+}
+
+.session-hover-card-title {
+    font-size: 0.875rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.session-hover-card-time {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground));
+}
+
+@keyframes sessionHoverCardIn {
+    from { opacity: 0; transform: translateX(-2px); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .session-hover-card { animation: none; }
+    .session-row-actions { transition: none; }
 }
 
 .chat-session {
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease;
     -webkit-tap-highlight-color: transparent; /* Remove iOS tap highlight */
 }
 
@@ -743,6 +874,33 @@ html.switching-theme *::after {
 .chat-session .session-menu-btn {
     width: 1.75rem;
     padding: 0;
+}
+
+/* An open row menu is shown at body level (Sidebar.openSessionMenu) so the
+   scrolling list can't clip it; the sidebar sets top/left and, when the
+   window is too short for it, max-height. */
+.session-menu.session-menu--floating {
+    position: fixed;
+    right: auto;
+    z-index: 10005;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* Stacked items: with no narrow sidebar to wrap them, inline-block buttons
+   would size the menu to one long row. */
+.session-menu--floating > button {
+    display: block;
+}
+
+/* Keep the row lit and its buttons visible while its menu is open,
+   even after the pointer moves onto the menu. */
+.chat-session[data-menu-open] {
+    background-color: hsl(var(--color-hover));
+}
+.chat-session[data-menu-open] .session-menu-btn,
+.chat-session[data-menu-open] .session-star-btn {
+    opacity: 1;
 }
 
 .chat-session .session-menu-btn svg {
@@ -1227,12 +1385,6 @@ a.quick-ask-source:focus-visible {
     line-height: 1.45;
 }
 
-.council-stage-warning {
-    color: hsl(var(--color-destructive));
-    font-size: 0.78rem;
-    line-height: 1.4;
-}
-
 .council-tabs {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
@@ -1358,6 +1510,10 @@ a.quick-ask-source:focus-visible {
 }
 
 .council-response-model-name {
+    /* Match the single-response assistant model label. */
+    font-size: 0.7rem;
+    font-weight: 500;
+    line-height: 1rem;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1405,10 +1561,174 @@ a.quick-ask-source:focus-visible {
     line-height: 1.5;
 }
 
-.council-response-placeholder-error {
-    color: hsl(var(--color-destructive));
-    border-style: solid;
-    background: hsl(var(--color-destructive) / 0.07);
+/* A failed lane: one quiet line in the lane's own column, not a red box.
+   The icon carries the error tone; the sentence stays readable text. The
+   icon sits in the same column as the "Thought for" sparkle above answers. */
+.council-lane-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.75rem 0.5rem;
+}
+
+.council-lane-error-icon {
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    /* Optical: centre the 16px glyph on the first 14px/20px text line. */
+    margin-top: 0.125rem;
+    color: hsl(var(--color-destructive-text));
+}
+
+.council-lane-error-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.125rem;
+    min-width: 0;
+}
+
+.council-lane-error-message {
+    margin: 0;
+    color: hsl(var(--color-foreground) / 0.88);
+    font-size: 0.875rem;
+    line-height: 1.43;
+    text-wrap: pretty;
+    overflow-wrap: break-word;
+}
+
+.council-lane-error-detail {
+    margin: 0;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.75rem;
+    line-height: 1.33;
+    font-variant-numeric: tabular-nums;
+}
+
+.council-lane-retry-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 1.75rem;
+    margin-top: 0.5rem;
+    /* Icon side gets less padding so the pair looks centred. */
+    padding: 0 0.625rem 0 0.5rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1;
+    transition:
+        background-color 150ms ease,
+        border-color 150ms ease,
+        transform 100ms ease;
+}
+
+.council-lane-retry-btn svg {
+    width: 0.875rem;
+    height: 0.875rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: transform 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.council-lane-retry-btn:hover {
+    background: hsl(var(--color-muted) / 0.6);
+    border-color: hsl(var(--color-border) / 1);
+}
+
+.council-lane-retry-btn:hover svg {
+    transform: rotate(-30deg);
+}
+
+.council-lane-retry-btn:active {
+    transform: scale(0.97);
+}
+
+.council-lane-retry-btn:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+/* Lane parts that arrive mid-stream (images, "Still working…", a failure
+   notice) enter with the transitions.dev reveal: a fade from a 2px blur and
+   a 4px rise. They leave by fading, faster and without travel. Transitions,
+   so a reversal turns around mid-way. A re-render shows them at rest. */
+.council-lane-reveal {
+    transition:
+        opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        filter 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.council-lane-reveal[data-reveal="enter"] {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(4px);
+    transition: none;
+}
+.council-lane-reveal[data-reveal="leave"] {
+    opacity: 0;
+    filter: blur(1px);
+    transition:
+        opacity 150ms ease-in,
+        filter 150ms ease-in;
+}
+@media (prefers-reduced-motion: reduce) {
+    .council-lane-reveal,
+    .council-lane-reveal[data-reveal="leave"] {
+        transform: none;
+        filter: none;
+        transition: opacity 80ms linear;
+    }
+    .council-lane-reveal[data-reveal="enter"] { transform: none; filter: none; }
+}
+
+/* Output already shown, model not finished: same shimmer as the pending
+   line, starting on the response text's left edge — 1rem + the 1px border
+   in bubble mode, 0.5rem in flat mode (the bubble's own padding there). */
+.council-lane-working,
+.message-still-working {
+    padding: 0 1rem 0.5rem calc(1rem + 1px);
+    line-height: 1.25;
+}
+html.flat-mode .council-lane-working,
+html.flat-mode .message-still-working {
+    padding-left: 0.5rem;
+}
+
+/* A lane stopped mid-answer keeps its text; one quiet line closes it. */
+.council-response-stopped {
+    padding: 0.125rem 1rem 0.5rem;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.75rem;
+    line-height: 1.25;
+}
+
+/* Stopped before it spoke: the placeholder carries the lane's Try again. */
+.council-response-placeholder-stopped {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+}
+
+.council-response-placeholder-stopped .council-lane-retry-btn {
+    margin-top: 0.625rem;
+}
+
+.council-lane-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.25rem 1rem 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .council-lane-retry-btn,
+    .council-lane-retry-btn svg {
+        transition-duration: 0ms;
+    }
 }
 
 @media (max-width: 820px) {
@@ -1451,6 +1771,10 @@ a.quick-ask-source:focus-visible {
 /* Reasoning trace styles for thinking models */
 /* NOTE: Removed fadeIn animation to prevent flash on session switch.
    Animation is added via .fade-in class in appendMessage() for new messages only. */
+/* Thinking not shared by the provider: the header alone, nothing to open. */
+.reasoning-trace-withheld .reasoning-toggle { cursor: default; }
+.reasoning-trace-withheld .reasoning-toggle:hover { background: transparent; }
+
 .reasoning-trace {
     margin-bottom: 0;
 }
@@ -1887,6 +2211,8 @@ a.quick-ask-source:focus-visible {
 .pending-response-label {
     font-size: 0.75rem;
     color: hsl(var(--color-muted-foreground) / 0.8);
+    /* A count that ticks up in place ("Skipping already-used tickets · 12") must not jitter. */
+    font-variant-numeric: tabular-nums;
 }
 
 @keyframes pendingResponseShimmer {
@@ -2161,7 +2487,7 @@ a.quick-ask-source:focus-visible {
     background: transparent;
     border: none;
     cursor: pointer;
-    transition: all 0.12s ease;
+    transition: color 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
     white-space: nowrap;
 }
 
@@ -2738,7 +3064,6 @@ a.quick-ask-source:focus-visible {
 
 /* Citations section styles */
 .citations-section {
-    animation: fadeIn 0.3s ease-in;
     margin-top: 0.5rem;
     margin-bottom: 0;
 }
@@ -2824,7 +3149,7 @@ a.quick-ask-source:focus-visible {
     border: 1px solid hsl(var(--color-border));
     border-radius: 0.75rem;
     text-decoration: none;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
     flex-shrink: 0;
     overflow: hidden;
@@ -2857,9 +3182,9 @@ a.quick-ask-source:focus-visible {
     will-change: scroll-position;
 }
 
-/* Override display:flex when hidden - needed because display:flex comes after .hidden in cascade */
-.citations-carousel.hidden {
-    display: none;
+/* The shared accordion clips the cards during both directions of motion. */
+.citations-section .t-acc-panel-inner {
+    min-width: 0;
 }
 
 .citation-card-header {
@@ -2964,7 +3289,7 @@ a.quick-ask-source:focus-visible {
     margin-right: 0.1em;
     padding: 0.1em 0.2em;
     border-radius: 0.2em;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
     text-decoration: none;
     line-height: 0;
     vertical-align: super;
@@ -2993,7 +3318,7 @@ a.quick-ask-source:focus-visible {
     font-size: 0.65rem;
     font-weight: 500;
     text-decoration: none;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
     white-space: nowrap;
     max-width: 160px;
     overflow: hidden;
@@ -3089,6 +3414,10 @@ a.quick-ask-source:focus-visible {
 /* The app toast: one line of 13px, tight padding, a 10px radius. Wallet
    progress and feature notices all pass through it, so it stays small. */
 #app-toast {
+    /* Centred with left: 50% and a translate, an auto width shrinks to the
+       right half of the viewport. Size to the content so the max-width below
+       is what limits a line, especially on phones. */
+    width: max-content;
     max-width: min(24rem, calc(100vw - 2rem));
     padding: 0.5rem 0.875rem;
     border-radius: 0.625rem;
@@ -3340,7 +3669,7 @@ a.quick-ask-source:focus-visible {
     border: none;
     border-radius: 0.25rem;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease, background-color 0.15s ease;
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -3403,6 +3732,21 @@ a.quick-ask-source:focus-visible {
     background-color: transparent;
     padding: 0;
     font-size: inherit;
+}
+
+/* Display equations are indivisible: keep every term reachable within the
+   message instead of overflowing into the clipped chat/lane container. */
+.prose .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-block: 0.25em;
+}
+
+.prose .katex-display > .katex {
+    width: max-content;
+    min-width: 100%;
+    text-align: center;
 }
 
 .prose hr {
@@ -4061,7 +4405,7 @@ html.flat-mode.dark .file-attachment-icon .text-destructive {
 
 /* Legacy Network Log Styles (for compatibility) */
 .network-log-entry {
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease;
 }
 
 .network-log-header:hover {
@@ -4346,11 +4690,6 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     height: 36px;
 }
 .sidebar-header-actions { padding-left: 36px; }
-/* Bring the trash glyph toward the toggle without overlapping their hit areas. */
-.sidebar-header-actions #delete-history-btn {
-    justify-content: flex-start;
-    padding-left: 2px;
-}
 .sidebar-header-actions #new-chat-btn { min-width: 0; }
 .sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
 .left-sidebar-toggle-space {
@@ -5067,7 +5406,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     border-radius: 3px;
     color: hsl(var(--color-muted-foreground));
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
     padding: 0;
 }
 
@@ -5107,7 +5446,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     border: none;
     border-radius: 2px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, transform 0.15s ease;
     padding: 0;
     flex-shrink: 0;
 }
@@ -5259,6 +5598,19 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     border-radius: 9999px;
     transition: background-color 0.2s ease;
     cursor: pointer;
+}
+
+.switch-toggle[data-busy] {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+/* Request activity must not look like the user's relay preference is changing.
+   Retain the busy cursor/aria guard and the existing deliberate-toggle motion. */
+#proxy-toggle-btn[data-busy]:not(:disabled) {
+    opacity: 1;
+    transition: background var(--toggle-track) var(--toggle-ease);
 }
 
 .switch-toggle:disabled {
@@ -6133,6 +6485,10 @@ html {
 }
 
 .edit-prompt-textarea {
+    /* Sized by its height, not by the column it sits in: with flex-1's
+       0% basis the column ignored the height, so neither auto-grow nor a
+       drag on the resize corner could change it. */
+    flex: 0 0 auto;
     appearance: none;
     border: 0;
     font-size: 0.875rem;
@@ -6238,20 +6594,29 @@ html {
     display: contents;
 }
 
+/* History and the account row stack; the list never runs underneath. */
+#sidebar > .sidebar-main-content {
+    flex: 1 1 0;
+    min-height: 0;
+    height: auto;
+}
+
 .sidebar-main-content {
-    padding-bottom: 3.5rem !important;
+    padding-bottom: 0 !important;
+}
+
+/* Let history meet the footer separator without a fixed blank strip. */
+.sidebar-history-frame {
+    padding-bottom: 0;
 }
 
 .account-nav {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    left: 0;
+    position: relative;
+    flex: 0 0 auto;
     z-index: 30;
     padding: 0;
     border-top: 1px solid hsl(var(--color-border));
-    background: hsl(var(--color-background) / 0.96);
-    backdrop-filter: blur(12px);
+    background: hsl(var(--color-background));
 }
 
 .account-nav-row {
@@ -8181,6 +8546,10 @@ div:has(> #input-card.scrubber-preview-expanded) {
     pointer-events: none;
 }
 
+.scroll-to-bottom-btn.hidden {
+    display: none;
+}
+
 .scroll-to-bottom-btn.visible {
     opacity: 1;
     pointer-events: auto;
@@ -8658,9 +9027,12 @@ div:has(> #input-card.scrubber-preview-expanded) {
     padding: 0;
     border: 1px solid hsl(var(--color-border) / 0.7);
     border-radius: 1rem;
+    /* One edge (the border) and one short, steep shadow. A second 1px ring
+       outside the border drew a double edge, and a 48–60px shadow on a dark
+       page bands into a visible box around the panel. */
     box-shadow:
-        0 0 0 1px hsl(var(--color-foreground) / 0.04),
-        0 16px 48px -16px rgb(0 0 0 / 0.35);
+        0 1px 2px -1px rgb(0 0 0 / 0.08),
+        0 10px 28px -12px rgb(0 0 0 / 0.22);
     color: hsl(var(--color-popover-foreground));
     font-size: 0.75rem;
     line-height: 1.3;
@@ -8671,9 +9043,9 @@ div:has(> #input-card.scrubber-preview-expanded) {
 }
 .dark .settings-panel {
     --settings-segment-on: hsl(var(--color-foreground) / 0.14);
-    box-shadow:
-        0 0 0 1px hsl(0 0% 100% / 0.06),
-        0 24px 60px -20px rgb(0 0 0 / 0.7);
+    /* Dark elevation comes from the lighter surface and the border; the
+       shadow only grounds the bottom edge. */
+    box-shadow: 0 10px 24px -12px rgb(0 0 0 / 0.5);
 }
 
 .settings-section {
@@ -9203,6 +9575,27 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 [data-tooltip]:hover::before,
 .chat-mode-html-tooltip::before,
 .sidebar-toggle-tooltip::before { display: none !important; }
+/* When tooltips open. Passing over a control shows nothing: the first
+   tooltip waits --tooltip-open-delay. Once one has been seen, the next one
+   within a moment opens at once and without motion (html[data-tooltip-warm],
+   set by the inline script in index.html), so scanning a toolbar stays quick.
+   Keyboard focus is not delayed. */
+:root { --tooltip-open-delay: 500ms; }
+@media (hover: hover) and (pointer: fine) {
+    [data-tooltip]:hover::after,
+    .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
+    #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
+        animation-delay: var(--tooltip-open-delay);
+        animation-fill-mode: backwards;
+    }
+    html[data-tooltip-warm] [data-tooltip]:hover::after,
+    html[data-tooltip-warm] .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
+    html[data-tooltip-warm] #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    html[data-tooltip-warm] .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
+        animation: none;
+    }
+}
 /* Position: to the left of the element, centred on it. For controls at
    the edge of a clipping container (the toolbar's payment method marks):
    a tooltip below would be cut off, one beside never leaves the row. */
@@ -9236,8 +9629,20 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .chat-mode-html-tooltip { gap: 0.25rem; }
 
-.settings-heading-with-info { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
-.settings-heading-with-info .settings-section-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; color: hsl(var(--color-foreground)); }
+/* Privacy and Memory keep the shared small-caps section title; the heading only adds the info button. */
+.settings-heading-with-info { display: flex; align-items: center; gap: 0; margin-bottom: 0.25rem; }
+/* A section whose title carries its own switch (Memory): title left, switch
+   on the rows' right edge, as tall as a row. Its settings fold beneath. */
+.settings-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: var(--settings-row-h); }
+.settings-heading-row .settings-heading-with-info { margin-bottom: 0; }
+.settings-children[data-instant] .t-acc-panel,
+.settings-children[data-instant] .t-acc-panel-inner { transition: none !important; }
+/* Open and settled: lift the fold's clip so a row's tooltip can rise above it. */
+.settings-children[data-open="true"][data-settled] .t-acc-panel-inner { overflow: visible; }
+.settings-heading-with-info .settings-section-title { margin: 0; }
+/* The 24px target overlaps the title's line, so these headings stay as tall as the other section titles. */
+.settings-heading-with-info .settings-info-button { margin-block: -6px; }
+.settings-heading-with-info .settings-info-button svg { width: 12px; height: 12px; }
 .settings-info-button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground) / 0.7); }
 .settings-info-button svg { width: 14px; height: 14px; }
 .settings-info-button:hover { background: hsl(var(--color-muted)); }
@@ -9249,7 +9654,6 @@ html[data-keyboard-nav] .settings-info-button:focus-visible { outline: 2px solid
 [data-info-tooltip][data-tooltip]:hover::after, [data-info-tooltip][data-tooltip]:hover::before { display: none; }
 
 /* Approved motion studies: quiet travel, shared timings, native controls. */
-:root { --modal-scale: .98; --modal-scale-close: .98; --dropdown-pre-scale: .98; --dropdown-closing-scale: .99; --text-swap-blur: 1px; --icon-swap-blur: 1px; --icon-swap-start-scale: .85; }
 [data-motion-phase] > .t-modal { animation: none; }
 [data-motion-phase="closing"] { pointer-events: none; }
 [data-motion-phase="open"] > .t-modal { opacity: 1; }
@@ -9816,6 +10220,8 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 }
 .citation-site-icon { width: 1rem; height: 1rem; object-fit: contain; flex-shrink: 0; }
 .citations-toggle-favicon .citation-site-icon { width: .75rem; height: .75rem; }
+.citations-toggle-favicon img.citation-site-icon { width: 13px; height: 13px; border-radius: 50%; object-fit: cover; }
+.citation-favicon-fallback:has(> img.citation-site-icon) { background: transparent; }
 
 /* Transitions.dev — verifier check */
 :root {
@@ -10018,6 +10424,10 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
+/* A failed reply reads like a reply: "Error: …" in answer type (MessageTemplates
+   buildResponseErrorHtml). Below a partial answer it sits as the next line. */
+.response-error .prose p { margin: 0; }
+
 .inference-failure-warning {
     padding: 0.65rem 0.85rem;
     border-inline-start: 2px solid light-dark(#ae3440, #e79ca3);
@@ -10027,6 +10437,15 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
     font-size: 0.8125rem;
     line-height: 1.5;
     overflow-wrap: anywhere;
+}
+.regeneration-status {
+    padding: 0.65rem 0.85rem;
+    border-inline-start: 2px solid hsl(var(--color-muted-foreground));
+    background: hsl(var(--color-muted));
+    color: hsl(var(--color-muted-foreground));
+    border-radius: 0 0.375rem 0.375rem 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
 }
 .inference-retry-button {
     display: inline-block;
@@ -10081,6 +10500,9 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 html[data-composer-compact="true"] .composer-bottom-actions { gap: 4px; }
 html[data-composer-compact="true"] .model-shortcut,
 html[data-composer-compact="true"] #scrubber-shortcut-hint { display: none !important; }
+/* The hidden shortcut must not reserve 150px (or the 64px long-draft gap).
+   Visible rewrite-preview controls retain their more-specific reservation. */
+html[data-composer-compact="true"] #message-input { padding-right: 0 !important; }
 html[data-composer-compact="true"] #settings-btn > svg { display: none; }
 html[data-composer-compact="true"] #settings-btn > .composer-more-glyph {
     display: block !important;
@@ -10162,3 +10584,92 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
 
 /* Account recovery and passkey errors must remain legible in dark themes. */
 .dark #account-modal .text-destructive { color: #fca5a5; }
+
+/* App-level tuning follows the verbatim motion recipes so their defaults do
+   not override it. Dialogs, menus, tabs and both rails share quiet movement. */
+:root { --modal-scale: .98; --modal-scale-close: .98; --dropdown-pre-scale: .98; --dropdown-closing-scale: .99; --text-swap-blur: 1px; --icon-swap-blur: 1px; --icon-swap-start-scale: .85; }
+:root {
+    --sidebar-open-duration: var(--modal-open-dur);
+    --sidebar-close-duration: var(--modal-close-dur);
+    --sidebar-close-ease: var(--modal-ease);
+    --system-panel-open-duration: var(--modal-open-dur);
+    --system-panel-close-duration: var(--modal-close-dur);
+    --system-panel-close-ease: var(--modal-ease);
+}
+@media (max-width: 767px) {
+    /* Scrolling text need not be re-blurred behind fixed phone controls. */
+    #input-card, .settings-menu-glass {
+        background: hsl(var(--color-card));
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat-session, .mem-header-btn, .citation-card-modern, .inline-citation,
+    .inline-link-button, .code-block-copy-btn, .network-log-entry,
+    .nav-btn, .message-indicator { transition: none; }
+}
+
+/* Zero data retention (model picker). The row sits under search without its
+   own divider so the switch reads as part of the search header. The shield
+   uses the existing status green; rows a model cannot serve under ZDR stay
+   visible (so the person sees why) but are dimmed and inert. */
+.zdr-picker-row { display: flex; flex-shrink: 0; align-items: center; gap: .375rem; padding: .5rem .75rem .125rem 1rem; }
+.zdr-picker-title { font-size: .8125rem; font-weight: 500; color: hsl(var(--color-foreground)); }
+.zdr-picker-row .settings-info-button { margin-block: -6px; margin-left: -2px; }
+.zdr-picker-row .settings-info-button svg { width: 12px; height: 12px; }
+.zdr-picker-row > .zdr-shield-wrap { color: hsl(var(--color-muted-foreground)); }
+.zdr-picker-row.zdr-on > .zdr-shield-wrap { color: var(--color-status-success); }
+.zdr-shield-wrap { display: inline-flex; flex-shrink: 0; align-items: center; color: var(--color-status-success); }
+.zdr-shield { width: 14px; height: 14px; }
+.zdr-name-line { display: flex; align-items: center; gap: .3125rem; min-width: 0; }
+.zdr-name-line > .truncate { min-width: 0; }
+.model-option.zdr-unavailable { opacity: .45; cursor: not-allowed; }
+.model-option.zdr-unavailable:hover { background-color: transparent; }
+.zdr-chip-note { font-size: 11px; white-space: nowrap; }
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+    .zdr-picker-row { min-height: 44px; padding-block: .25rem; }
+}
+
+/* Phone touch-layout follow-up; laptop and Electron layouts are unchanged. */
+@media (max-width: 767px) {
+    /* The sheet slides; its width is fixed by the host, and its border
+       may stay while it is off screen. Animating transform alone keeps
+       the slide on the compositor. */
+    html[data-phone-app-panels] #right-panel {
+        transition-property: transform;
+        transition-duration: var(--system-panel-open-duration);
+        transition-timing-function: var(--system-panel-open-ease);
+    }
+    html[data-phone-app-panels][data-right-panel-hidden="true"] #right-panel {
+        border-left-width: 1px;
+        transition-duration: var(--system-panel-close-duration);
+        transition-timing-function: var(--system-panel-close-ease);
+    }
+    /* The settings panel spans the card below it; it grows from the card's
+       middle, not from a corner. */
+    html[data-phone-app-panels] #settings-menu.t-dropdown { transform-origin: bottom center; }
+    /* Segment thumbs sit on solid surfaces here (the panel's glass is off
+       on phones): a blur behind them has nothing to blur and costs a pass. */
+    html[data-phone-app-panels] .display-toggle-indicator,
+    html[data-phone-app-panels] .theme-toggle-indicator,
+    html[data-phone-app-panels] .chat-mode-toggle-indicator,
+    html[data-phone-app-panels] .expiry-toggle-indicator {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+    html[data-phone-app-panels] #model-picker-modal { align-items: flex-start; }
+    html[data-phone-app-panels] #model-picker-modal > [role="dialog"] {
+        margin-top: max(1rem, env(safe-area-inset-top, 0px));
+    }
+    html[data-phone-app-panels] #model-list-scroll-area {
+        height: auto;
+        max-height: min(55dvh, 420px);
+    }
+}
+@media (max-width: 767px) and (prefers-reduced-motion: reduce) {
+    html[data-phone-app-panels] #right-panel,
+    html[data-phone-app-panels][data-right-panel-hidden="true"] #right-panel {
+        transition: none;
+    }
+}

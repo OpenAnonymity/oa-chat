@@ -821,7 +821,7 @@ test('all seven UX proposals render the same status UI beside the version notice
         const plain = renderPanel({ config: { ux_proposal: proposal }, transition: { phase: 'settling' } }).html;
         zkapiClient.oaVersioning = fakeFacade({ state: holderWith(8 * DAY) });
         const { panel, html: versioned } = renderPanel({ config: { ux_proposal: proposal }, transition: { phase: 'settling' } });
-        assert.match(versioned, /<strong>Closing previous chat<\/strong>/);
+        assert.match(versioned, /<strong>Updating your balance<\/strong>/);
         assert.match(versioned, /data-zkapi-settlement-action="stop"/);
         assert.match(versioned, /id="zkapi-panel-fund"/);
         // The notice sits before the proposal's own block, so removing the

@@ -5,9 +5,11 @@ tradeoffs behind it.
 
 ## What Gets Searched
 
-Sidebar search checks three session fields:
+Sidebar search checks these session fields:
 
 - `session.title`: the visible chat title.
+- `session.previousTitles`: names the chat had before a rename (newest first,
+  at most 5), so a renamed chat is still found by its old name.
 - `session.titleSearchText`: the legacy first-user-prompt text, only for
   non-manual titles.
 - `session.conversationSearchText`: a bounded text index built from non-local
@@ -63,6 +65,14 @@ Star/date filters are applied before text matching. Lazy
 `conversationSearchText` backfill only runs for sessions that already pass those
 session-level filters and only when a text query is present.
 
+Successful chat deletion removes the row from both the paged session list and
+the cached search/filter results before rendering. The completed-deletion ID is
+also recorded before rendering: a search reading an older database snapshot
+skips it, and checks collected matches again before publishing or caching them.
+This covers deletion while lazy indexing or a cooperative batch yield is in
+progress. Failed storage deletion keeps the chat searchable. These guards use
+the existing in-memory deletion set; no new storage or telemetry is added.
+
 ## Efficiency Tradeoff
 
 The current approach stores up to about 12k characters per session in IndexedDB.
@@ -73,3 +83,10 @@ The downside is bounded recall: very long chats may not match content from the
 middle of the conversation if it falls outside the first-message-plus-recent-turns
 window. A more accurate alternative would be an inverted index or semantic index,
 but that would add more code, storage, migration work, and update complexity.
+
+Large indexed histories yield to the browser after each 50 scanned sessions.
+Previously that loop could contain no asynchronous work at all, delaying input
+and cancellation despite the search request-generation checks. Every resumed
+batch checks the request generation again, and an obsolete database result is
+discarded before sorting. Matching, ordering, limits and lazy indexing are
+unchanged; this is cooperative scheduling, not a new search index or cache.

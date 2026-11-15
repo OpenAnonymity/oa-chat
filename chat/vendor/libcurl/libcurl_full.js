@@ -637,7 +637,7 @@ Several C libraries are used, and their licenses are listed below:
   }
 
   assert_ready() {
-    if (!this.session_ptr) {
+    if (!this.session_ptr || this.closing) {
       throw new Error("session has been removed");
     }
   }
@@ -681,20 +681,23 @@ Several C libraries are used, and their licenses are listed below:
   }
 
   remove_request_now(request_ptr) {
+    // OA lifecycle fix: a queued removal can run after close_now cleaned it.
+    // Never pass the same freed request back into WASM.
+    let request_index = this.requests_list.indexOf(request_ptr);
+    if (request_index === -1) return;
+    this.requests_list.splice(request_index, 1);
     if (this.session_ptr) {
       _session_remove_request(this.session_ptr, request_ptr);
     }
     _request_cleanup(request_ptr);
     
-    let request_index = this.requests_list.indexOf(request_ptr);
-    if (request_index !== -1) {
-      this.requests_list.splice(request_index, 1);
-    }
   }
 
   //remove the request on the next iteration of the loop
   remove_request(request_ptr) {
-    this.assert_ready();
+    // close_now owns all remaining handles once shutdown starts. A late
+    // AbortSignal callback must not schedule another cleanup or throw.
+    if (!this.session_ptr || this.closing) return;
     setTimeout(() => {
       this.remove_request_now(request_ptr);
     }, 1)
@@ -718,6 +721,8 @@ Several C libraries are used, and their licenses are listed below:
   }
 
   event_loop_func() {
+    // A callback already queued before clearInterval must also be harmless.
+    if (!this.session_ptr || this.closing) return;
     let libcurl_active = _session_get_active(this.session_ptr);
     if (libcurl_active || this.active_requests) {
       _session_perform(this.session_ptr);
@@ -729,7 +734,12 @@ Several C libraries are used, and their licenses are listed below:
   }
 
   close_now() {
-    for (let request_ptr of this.requests_list) {
+    if (!this.session_ptr) return;
+    this.closing = true;
+    clearInterval(this.event_loop);
+    this.event_loop = null;
+    // Removal mutates requests_list; iterate a snapshot so no handle is skipped.
+    for (let request_ptr of [...this.requests_list]) {
       this.remove_request_now(request_ptr);
     }
     _session_cleanup(this.session_ptr);
@@ -740,7 +750,11 @@ Several C libraries are used, and their licenses are listed below:
   }
 
   close() {
-    this.assert_ready();
+    if (!this.session_ptr || this.closing) return;
+    this.closing = true;
+    // Stop polling before deferred cleanup frees the native multi handle.
+    clearInterval(this.event_loop);
+    this.event_loop = null;
     setTimeout(() => {
       this.close_now();
     }, 1);

@@ -39,7 +39,7 @@ Rules:
 - Refer only to Response A and Response B.
 - Do not mention model names, provider names, or hidden identities, even if a draft includes them.
 - Be specific. Do not praise both responses generically.
-- If one response is clearly stronger, say so and explain why.
+- Focus on specific differences, useful contributions, and limitations; avoid declaring an overall winner.
 - If both are incomplete, synthesize the best answer and state the missing caveats.
 - If only one response is available, review it as a partial comparison and clearly state that the other response was unavailable.
 - Do not assign scores, grades, or ranked lists.

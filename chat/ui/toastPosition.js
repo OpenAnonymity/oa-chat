@@ -22,12 +22,27 @@ export function watchToastPosition(toast, environment) {
     update();
 }
 
+// Toasts belong to the conversation, so they centre on the chat column (the
+// composer's horizontal middle), not on the window: with a sidebar or the
+// tickets panel open the two differ, and a window-centred toast reads as off
+// centre. Without a measurable composer the stylesheet's 50% stands.
+function centerOnChat(toast, doc) {
+    const rect = doc.getElementById?.('input-card')?.getBoundingClientRect?.();
+    if (!rect || !(rect.width > 0) || !Number.isFinite(rect.left)) {
+        toast.style.left = '';
+        return null;
+    }
+    toast.style.left = `${Math.round(rect.left + rect.width / 2)}px`;
+    return rect.width;
+}
+
 export function positionAppToast(toast, { document: doc, window: view }) {
     if (!toast) return;
+    const columnWidth = centerOnChat(toast, doc);
     if (toast.dataset.position === 'top-center') {
         toast.style.top = 'calc(env(safe-area-inset-top, 0px) + 72px)';
         toast.style.bottom = 'auto';
-        toast.style.maxWidth = 'calc(100vw - 32px)';
+        toast.style.maxWidth = columnWidth ? `min(calc(100vw - 32px), ${Math.max(0, columnWidth - 32)}px)` : 'calc(100vw - 32px)';
         toast.style.textAlign = 'center';
         return;
     }
@@ -42,6 +57,24 @@ export function positionAppToast(toast, { document: doc, window: view }) {
     const viewportTop = viewport?.offsetTop || 0;
     const viewportHeight = viewport?.height || view.innerHeight;
     const maxTop = viewportTop + viewportHeight - toast.offsetHeight - 16;
-    toast.style.top = `${Math.max(viewportTop + 16, Math.min(top, maxTop))}px`;
+    // A bottom sheet (a dialog across the width of a phone) covers the
+    // composer; a notice placed above the composer would sit on the sheet's
+    // rows. Keep it above the sheet instead.
+    const sheetTop = bottomSheetTop(doc, view);
+    const clearOfSheet = sheetTop === null ? Infinity : sheetTop - 12 - toast.offsetHeight;
+    toast.style.top = `${Math.max(viewportTop + 16, Math.min(top, maxTop, clearOfSheet))}px`;
     toast.style.bottom = 'auto';
+}
+
+function bottomSheetTop(doc, view) {
+    const width = view.innerWidth || 0;
+    if (!width || typeof doc.querySelectorAll !== 'function') return null;
+    let top = null;
+    for (const dialog of doc.querySelectorAll('[aria-modal="true"]')) {
+        const rect = dialog.getBoundingClientRect?.();
+        if (!rect || rect.height <= 0 || rect.width < width * 0.9) continue;
+        if (rect.bottom < (view.innerHeight || 0) - 8) continue;
+        top = top === null ? rect.top : Math.min(top, rect.top);
+    }
+    return top;
 }

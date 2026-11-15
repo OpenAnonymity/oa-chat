@@ -25,6 +25,13 @@ let modelTickets = {};
 let initializationPromise = null;
 let cacheLoaded = false;
 let livePricingReady = false;
+// A previously validated map is sufficient for a non-spending budget preview,
+// even while a foreground/periodic refresh is in flight. Redemption never uses
+// this flag: it still requires the result of its live pricing refresh.
+let previewPricingReady = false;
+let pricingFetchedAt = 0;
+const PRICING_MAX_AGE_MS = 10 * 60_000;
+let stopAutomaticRefresh = null;
 
 /**
  * Patterns for detecting model characteristics when not explicitly tiered.
@@ -97,7 +104,7 @@ async function fetchModelTickets() {
     try {
         const { response, data } = await fetchRetryJson(
             `${ORG_API_BASE}/chat/model-tickets`,
-            { credentials: 'omit' },
+            { credentials: 'omit', cache: 'no-store' },
             {
                 context: 'Model tickets',
                 maxAttempts: 3,
@@ -117,9 +124,12 @@ async function fetchModelTickets() {
  * Loads from cache immediately, then fetches fresh data in background.
  * Call this early in app init (non-blocking).
  */
-export function initModelTiers() {
-    if (livePricingReady) return Promise.resolve(true);
+export function initModelTiers({ forceRefresh = false } = {}) {
     if (initializationPromise) return initializationPromise;
+    if (!forceRefresh && livePricingReady && Date.now() - pricingFetchedAt < PRICING_MAX_AGE_MS) {
+        return Promise.resolve(true);
+    }
+    livePricingReady = false;
 
     // Load cached data first (synchronous, fast)
     loadCache();
@@ -139,6 +149,8 @@ export function initModelTiers() {
             modelTickets = ticketsData;
             saveCache(ticketsData);
             livePricingReady = true;
+            previewPricingReady = true;
+            pricingFetchedAt = Date.now();
             eventTarget.dispatchEvent(new CustomEvent('update'));
             return true;
         }
@@ -147,7 +159,7 @@ export function initModelTiers() {
     })().finally(() => {
         // A failed refresh must remain retryable. Cached and heuristic prices
         // are display hints only and must never authorize ticket redemption.
-        if (!livePricingReady) initializationPromise = null;
+        initializationPromise = null;
     });
 
     return initializationPromise;
@@ -183,13 +195,24 @@ async function waitForInitialization(promise, signal) {
  * The app starts initialization in the background, so this usually resolves
  * immediately while preventing an early send from using stale fallback costs.
  */
-export async function ensureModelTiersReady({ signal = null } = {}) {
-    const ready = await waitForInitialization(initModelTiers(), signal);
+export async function ensureModelTiersReady({ signal = null, forceRefresh = false } = {}) {
+    if (signal?.aborted) throw createPricingAbortError();
+    const ready = await waitForInitialization(initModelTiers({ forceRefresh }), signal);
+    if (signal?.aborted) throw createPricingAbortError();
     if (!ready) {
         const error = new Error('Live model pricing is unavailable. Please try again.');
         error.code = 'MODEL_TIER_CONFIG_UNAVAILABLE';
         throw error;
     }
+}
+
+/** Accepting a prompt is not authorization to spend. Reuse this page's last
+ * validated map for that preview, keeping background refreshes off the click
+ * path. A persisted cache alone never satisfies the initial live load. */
+export async function ensureModelTiersPreviewReady({ signal = null } = {}) {
+    if (signal?.aborted) throw createPricingAbortError();
+    if (previewPricingReady) return;
+    await ensureModelTiersReady({ signal });
 }
 
 /**
@@ -265,3 +288,42 @@ export function hasEnoughTickets(availableTickets, modelId, reasoningEnabled = f
 
 // Load cache on module init (synchronous)
 loadCache();
+
+/**
+ * Refresh immediately before redemption. The org validates ticket counts,
+ * not a model's price, so an older price could still select a valid tier.
+ * The courtesy preflight uses the loaded map; only this spending boundary
+ * requires a fresh map. Concurrent callers share the same refresh.
+ */
+export async function getAccessTicketCost(modelId, { signal = null, forceRefresh = true } = {}) {
+    await ensureModelTiersReady({ signal, forceRefresh });
+    const baseModelId = String(modelId || '').replace(/:online$/, '');
+    const tickets = Object.hasOwn(modelTickets, baseModelId) ? modelTickets[baseModelId] : null;
+    if (!Number.isSafeInteger(tickets) || tickets <= 0) {
+        const error = new Error('This model is no longer available. Please choose another model.');
+        error.code = 'MODEL_TIER_UNAVAILABLE';
+        throw error;
+    }
+    return tickets;
+}
+
+/** Keep picker badges fresh while the app is open, without background-tab polling. */
+export function startModelTierRefresh() {
+    if (stopAutomaticRefresh) return stopAutomaticRefresh;
+    const refresh = forceRefresh => { initModelTiers({ forceRefresh }).catch(() => {}); };
+    const onVisibilityChange = () => {
+        if (document.visibilityState === 'visible') refresh(true);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const timer = setInterval(() => {
+        if (document.visibilityState === 'visible') refresh(true);
+    }, PRICING_MAX_AGE_MS);
+    timer.unref?.();
+    stopAutomaticRefresh = () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        clearInterval(timer);
+        stopAutomaticRefresh = null;
+    };
+    refresh(false);
+    return stopAutomaticRefresh;
+}

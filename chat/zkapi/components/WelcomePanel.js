@@ -1,7 +1,9 @@
 import { attachFundingDisclosures } from './FundingDisclosures.js';
 import { showSurface, hideSurface } from '../../ui/uiMotion.js';
+import { hasConversationParam } from '../../services/conversationLink.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { depositOperationId, isWalletCancellation, resetCanceledDeposit } from '../services/canceledDeposit.mjs';
+import { formatSuggestedDeposit } from '../services/depositAmount.mjs';
 import { readWelcomeModalIntent, writeWelcomeModalIntent } from '../services/welcomeModalIntent.mjs';
 import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from './WalletModalView.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
@@ -142,7 +144,7 @@ export default class WelcomePanel {
         if (stampMatches(readWelcomeModalIntent())) return true;
         return !zkapiClient.hasNote
             && localStorage.getItem(DISMISSED_KEY) !== 'true'
-            && !new URLSearchParams(window.location.search).has('s');
+            && !hasConversationParam(window.location.search);
     }
 
     open() {
@@ -160,6 +162,7 @@ export default class WelcomePanel {
         }
         if (saved) {
             this.fundingHelpOpen = ['quote', 'receipt'].includes(saved.help) ? saved.help : null;
+            this.fundingReturnOpen = saved.returnOpen === true;
             this.restoredModalView = { setup: saved.setup === true, method: getWalletMethod(),
                 scroll: Number.isFinite(saved.scroll) ? Math.max(0, saved.scroll) : 0 };
         }
@@ -210,7 +213,7 @@ export default class WelcomePanel {
         const scroll = this.restoredModalView?.scroll ?? this.overlay?.querySelector?.('[data-funding-scroll]')?.scrollTop ?? 0;
         writeWelcomeModalIntent({ open: true, method: getWalletMethod(),
             amount: typeof amount === 'string' && amount.length <= 50 && /^[\d.]*$/.test(amount) ? amount : null,
-            currency: this.fundingInputCurrency === 'eth' ? 'eth' : 'usd', help: this.fundingHelpOpen || null,
+            currency: this.fundingInputCurrency === 'eth' ? 'eth' : 'usd', help: this.fundingHelpOpen || null, returnOpen: this.fundingReturnOpen === true,
             setup: this.overlay?.querySelector?.('[data-funding-setup-details]')?.dataset.open === 'true',
             scroll: Number.isFinite(scroll) ? scroll : 0, ...versionStamp() });
     }
@@ -321,7 +324,7 @@ export default class WelcomePanel {
             }
             const pending = pendingDepositMessage(error, zkapiClient.config?.pending_deposit);
             this.notice = pending || (rejected ? 'Deposit canceled.' : isIndexerLag(error) ? zkapiErrorMessage(error) : '');
-            if (error?.code === 'address_wait_stopped') this.fundingNotice = error.message;
+            if (error?.code === 'address_wait_stopped') { this.fundingNoticeScope = 'address'; this.fundingNotice = error.message; }
             this.error = this.notice || error?.code === 'address_wait_stopped' ? '' : error.shortMessage || error.message || String(error);
             if (rejected) {
                 const notice = this.notice;
@@ -406,6 +409,7 @@ export default class WelcomePanel {
             && zkapiClient.oaVersioning?.ui?.refusalMessage?.(zkapiClient.lastError))
             || zkapiClient.lastError?.message;
         const pendingDeposit = zkapiClient.config?.pending_deposit;
+        const suggested = zkapiClient.suggestedDeposit;
         const versionClosed = this.renderVersionClosed();
         this.versionNoticeShown = Boolean(versionClosed);
         return `
@@ -429,7 +433,7 @@ export default class WelcomePanel {
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
                 ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(walletMethodText(this.error))}</p>` : ''}
                 ${this.notice ? `<p class="mt-3 text-xs text-muted-foreground" role="status">${this.escapeHtml(walletMethodText(this.notice))}</p>` : ''}
-                ${versionClosed ? '' : pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with MetaMask')}</button>`}
+                ${versionClosed ? '' : pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with Ethereum wallet')}</button>`}
                 <button id="welcome-skip-btn" class="btn-ghost-hover mt-2 w-full rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground" type="button">Not now</button>
                 <p class="mt-4 text-center text-[10px] leading-relaxed text-muted-foreground/70">The note secret and chat history stay on this device.</p>
             </div>`;

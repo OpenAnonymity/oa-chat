@@ -1017,7 +1017,7 @@ test('native deposit cannot exceed the displayed fee cap or substitute a prepare
             assert.equal(error.code, 4100);
             if (['fee', 'gas', 'expired'].includes(changed)) {
                 assert.equal(error.addressCode, 'address_fee_quote_changed');
-                assert.match(error.message, /Review the new estimate/);
+                assert.match(error.message, /Review the fee allowance/);
             }
             return true;
         });
@@ -1429,6 +1429,18 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
         if (result.error) throw new Error(`Local Anvil ${method} failed`);
         return result.result;
     };
+    // Anvil may answer eth_sendRawTransaction before it automines the block,
+    // as the real-EVM deposit test already allows. Read state only after the
+    // receipt exists rather than racing the miner.
+    const minedReceipt = async hash => {
+        let receipt = await rpc('eth_getTransactionReceipt', [hash]);
+        for (let attempt = 0; !receipt && attempt < 40; attempt += 1) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            receipt = await rpc('eth_getTransactionReceipt', [hash]);
+        }
+        assert(receipt, 'the accepted transaction is mined');
+        return receipt;
+    };
     let started = false;
     for (let attempt = 0; attempt < 50; attempt += 1) {
         try { await rpc('eth_chainId'); started = true; break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); }
@@ -1452,6 +1464,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
     } });
     await h.ready();
     const hash = await h.send();
+    assert.equal((await minedReceipt(hash)).status, '0x1');
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), 2_000_000_000_000_000n);
     const client = new ZkapiClient();
     client.config = { funding: { ...FUNDING, demo_rpc_url: url } };
@@ -1471,7 +1484,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
     assert.equal(broadcastBytes[0], broadcastBytes[1]);
     const returnHash = await restored.withAuthorizedAction({ kind: 'sweep', asset: 'eth', destination: DESTINATION, amount: 'max' },
         () => restored.transferEth(DESTINATION, 'max'));
-    const receipt = await rpc('eth_getTransactionReceipt', [returnHash]);
+    const receipt = await minedReceipt(returnHash);
     assert.equal(receipt.status, '0x1');
     const returnTransaction = Transaction.from(broadcastBytes.at(-1));
     const unusedFeeAllowance = returnTransaction.gasLimit * (returnTransaction.maxFeePerGas - BigInt(receipt.effectiveGasPrice));
@@ -1504,7 +1517,7 @@ test('local Anvil executes native deposit value, exact recovery replay and ETH r
         { kind: 'deposit', amount: amount.toString(), preparedOperationId: nativeQuote.operationId,
             depositCommitment: nativeQuote.depositCommitment, feeLimitWei: nativeQuote.feeReserveWei,
             feeQuoteExpiresAt: nativeQuote.expiresAt });
-    const nativeReceipt = await rpc('eth_getTransactionReceipt', [depositHash]);
+    const nativeReceipt = await minedReceipt(depositHash);
     assert.equal(nativeReceipt.status, '0x1');
     const nativeActualFee = BigInt(nativeReceipt.gasUsed) * BigInt(nativeReceipt.effectiveGasPrice);
     assert(nativeActualFee <= BigInt(nativeQuote.feeReserveWei));
@@ -1592,4 +1605,58 @@ test('SDK-aligned gas ceiling still rejects oversized requests', async () => {
     await h.send({ ...nativeDeposit(2000000), gas: `0x${MAX_TRANSACTION_GAS_LIMIT.toString(16)}` });
     assert.equal(Transaction.from(h.sent[0]).gasLimit, 16_777_216n, 'the exact SDK/network gas ceiling remains allowed');
     await h.provider.reload();
+});
+
+for (const mode of ['mutual', 'escape']) {
+    test(`read-only ${mode} preflight budgets fees before any withdrawal work`, async () => {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        h.rpc.balance = '0x1';
+        const saved = structuredClone([...h.store.data]);
+        const quote = await h.provider.getWithdrawalFeeBudget(mode);
+        assert.equal(quote.address, OWN);
+        assert.equal(quote.chainId, 1);
+        assert.equal(BigInt(quote.feeReserveWei), MAX_TRANSACTION_GAS_LIMIT * 725000000n * (mode === 'escape' ? 2n : 1n));
+        assert.equal(BigInt(quote.shortfallWei), BigInt(quote.feeReserveWei) - 1n);
+        assert.deepEqual([...h.store.data], saved, 'no wallet journal or private balance is changed');
+        assert.equal(h.sent.length, 0);
+        assert(!h.calls.some(call => ['eth_call', 'eth_estimateGas', 'eth_sendRawTransaction'].includes(call.method)));
+        h.rpc.balance = `0x${BigInt(quote.feeReserveWei).toString(16)}`;
+        assert.equal((await h.provider.getWithdrawalFeeBudget(mode)).shortfallWei, '0');
+        assert.equal(h.sent.length, 0, 'funding a reserve cannot submit');
+    });
+}
+
+test('withdrawal preflight fails closed for stale fees and the wrong network', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    await h.ready();
+    h.rpc.timestamp = '0x1';
+    await assert.rejects(h.provider.getWithdrawalFeeBudget());
+    h.rpc.chain = '0xaa36a7';
+    await assert.rejects(h.provider.getWithdrawalFeeBudget());
+    assert.equal(h.sent.length, 0);
+});
+
+
+test('a transient fee-history read retries the anchored pair before signing once', async () => {
+    const h = harness();
+    await h.ready();
+    let reads = 0;
+    h.provider.transport = async (url, options) => {
+        if (JSON.parse(options.body).method === 'eth_feeHistory' && ++reads === 1) throw new Error('temporary read failure');
+        return h.init.transport(url, options);
+    };
+    await h.send();
+    assert.equal(reads, 2);
+    assert.equal(h.sent.length, 1);
+    assert.equal(h.calls.filter(call => call.method === 'eth_getBlockByNumber' && call.params[0] === 'latest').length, 2);
+});
+
+test('persistently invalid fee history stops after two reads without sending', async () => {
+    const h = harness();
+    await h.ready();
+    h.rpc.feeHistory = { oldestBlock: '0x0' };
+    await assert.rejects(h.send(), { addressCode: 'address_fee_data' });
+    assert.equal(h.calls.filter(call => call.method === 'eth_feeHistory').length, 2);
+    assert.equal(h.sent.length, 0);
 });

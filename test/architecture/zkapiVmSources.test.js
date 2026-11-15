@@ -37,16 +37,19 @@ function importsOf(source) {
 
 const PINNED = {
     'chat/zkapi/components/AccountModal.js': [
+        { from: './WalletModalMotion.js', names: ['revealWithdrawalTopUp'] },
+        { from: './StatusIcon.js', names: ['statusIcon'] },
+        { from: './WithdrawalFees.js', names: ['attachWithdrawalFees', 'needsWithdrawalFees', 'refreshWithdrawalFees', 'renderWithdrawalFeeLine', 'renderWithdrawalFees', 'stopWithdrawalFees', 'withdrawalFeeReady', 'withdrawalFeeReceiptAmounts'] },
         { from: './FundingDisclosures.js', names: ['fundingDisclosure', 'attachFundingDisclosures', 'captureFundingDisclosureView', 'restoreFundingDisclosureView'] },
-        { from: '../../ui/uiMotion.js', names: ['showSurface', 'hideSurface', 'revealText'] },
+        { from: '../../ui/uiMotion.js', names: ['showSurface', 'hideSurface', 'revealText', 'motionDuration'] },
         { from: '@openanonymity/zkapi-browser-sdk/client', names: ['zkapiClient'] },
         { from: '../services/privateAccessSettlement.js', names: ['settlePrivateAccess'] },
-        { from: '../services/withdrawalRecovery.mjs', names: ['availableWithdrawalEscape', 'sameWithdrawalEscape', 'assertWithdrawalEscapeAvailable', 'canCancelPreparedWithdrawal'] },
-        { from: '../services/depositAmount.mjs', names: ['ethUnits'] },
+        { from: '../services/withdrawalRecovery.mjs', names: ['availableWithdrawalEscape', 'sameWithdrawalEscape', 'assertWithdrawalEscapeAvailable', 'canCancelPreparedWithdrawal', 'escapeNeedsSettlement', 'assertEscapeReady'] },
+        { from: '../services/depositAmount.mjs', names: ['ethUnits', 'formatSuggestedDeposit'] },
         { from: '../services/canceledDeposit.mjs', names: ['depositOperationId', 'isWalletCancellation', 'resetCanceledDeposit'] },
         { from: '../services/welcomeModalIntent.mjs', names: ['readWelcomeModalIntent', 'writeWelcomeModalIntent'] },
         { from: './WalletModalView.js', names: ['attachWalletModalRestoreCancellation', 'cancelWalletModalRestore', 'currentWalletModalRestore', 'finishWalletModalRestore'] },
-        // The host's copy of the legacy SDK's amount parser (same names).
+        // The host's copy of the legacy SDK's amount parser (same names).,
         { from: '../services/tokenAmount.mjs', names: ['parseTokenAmount'] },
         { from: '@openanonymity/zkapi-browser-sdk/wallet-error', names: ['walletErrorMessage'] },
         { from: '../services/zkapiErrorCopy.mjs', names: ['explainZkapiError', 'isIndexerLag', 'pendingDepositMessage'] },
@@ -54,16 +57,18 @@ const PINNED = {
         { from: './FundingSetupGuide.js', names: ['captureFundingSetupView', 'fundingSetupGuide', 'restoreFundingSetupView'] },
         { from: '../domain/walletJourney.js', names: ['walletJourney'] },
         { from: '../services/addressFundingProvider.mjs', names: ['addressFundingWallet'] },
-        { from: '../services/addressFunding.js', names: ['canQuotePendingAddressDeposit', 'runAddressAction', 'withdrawalDestination'] },
-        { from: '../services/walletMethod.mjs', names: ['getWalletMethod', 'initWalletClient', 'prepareWalletMethod', 'setWalletMethod', 'subscribeWalletMethod', 'walletMethodText'] },
-        { from: './WalletMethodControls.js', names: ['attachWalletMethodControls', 'captureWalletView', 'refreshWalletView', 'renderDepositAmount', 'prepareDepositAmount', 'renderFundingAccount', 'renderFundingWei', 'renderWalletMethod', 'restoreWalletView', 'stopFundingFlow', 'isFundingViewHydrating'] },
+        { from: '../services/addressFunding.js', names: ['canQuotePendingAddressDeposit', 'formatFundingAmount', 'runAddressAction', 'withdrawalDestination'] },
+        { from: '../services/walletMethod.mjs', names: ['getWalletMethod', 'initWalletClient', 'initWalletMethod', 'prepareWalletMethod', 'setWalletMethod', 'subscribeWalletMethod', 'walletMethodText'] },
+        { from: './WalletMethodControls.js', names: ['attachWalletMethodControls', 'captureWalletView', 'fundingInstructionsVisible', 'refreshWalletView', 'renderDepositAmount', 'prepareDepositAmount', 'renderFundingAccount', 'renderFundingWei', 'fundingUsdText', 'renderMetaMaskTransfer', 'renderWalletMethod', 'restoreWalletView', 'stopFundingFlow', 'isFundingViewHydrating', 'syncWalletFlows'] },
         { from: './PrivateBalanceHelp.js', names: ['attachPrivateBalanceHelp', 'capturePrivateBalanceHelpFocus', 'privateBalanceExpiryLabel', 'privateBalanceExpired', 'privateBalanceGuide', 'privateBalanceHelpButton', 'privateBalanceHelpContent', 'restorePrivateBalanceHelpFocus', 'updatePrivateBalanceExpiryState'] }
     ],
     'chat/zkapi/components/WelcomePanel.js': [
         { from: './FundingDisclosures.js', names: ['attachFundingDisclosures'] },
         { from: '../../ui/uiMotion.js', names: ['showSurface', 'hideSurface'] },
+        { from: '../../services/conversationLink.js', names: ['hasConversationParam'] },
         { from: '@openanonymity/zkapi-browser-sdk/client', names: ['zkapiClient'] },
         { from: '../services/canceledDeposit.mjs', names: ['depositOperationId', 'isWalletCancellation', 'resetCanceledDeposit'] },
+        { from: '../services/depositAmount.mjs', names: ['formatSuggestedDeposit'] },
         { from: '../services/welcomeModalIntent.mjs', names: ['readWelcomeModalIntent', 'writeWelcomeModalIntent'] },
         { from: './WalletModalView.js', names: ['attachWalletModalRestoreCancellation', 'cancelWalletModalRestore', 'currentWalletModalRestore', 'finishWalletModalRestore'] },
         { from: './FundingSetupGuide.js', names: ['captureFundingSetupView', 'fundingSetupGuide', 'restoreFundingSetupView'] },
@@ -78,9 +83,10 @@ const PINNED = {
         { from: '../../db.js', names: ['chatDB'] },
         { from: '../services/addressFundingProvider.mjs', names: ['addressFundingWallet'] },
         { from: '../services/addressDepositFlow.mjs', names: ['AddressDepositFlow'] },
-        { from: '../services/depositAmount.mjs', names: ['DepositAmount'] },
+        { from: '../services/depositAmount.mjs', names: ['DepositAmount', 'formatSuggestedDeposit'] },
         { from: './FundingPaymentQr.js', names: ['renderFundingPaymentQr'] },
         { from: './FundingProgress.js', names: ['renderFundingProgress'] },
+        { from: '../../ui/uiMotion.js', names: ['motionDuration'] },
         { from: '../services/walletMethod.mjs', names: ['getWalletMethod', 'setWalletMethod', 'prepareWalletMethod', 'walletMethodActionBusy'] },
         { from: '../services/addressFunding.js', names: ['canQuotePendingAddressDeposit', 'formatFundingAmount', 'fundingEthAmount', 'fundingDestination'] }
     ],
@@ -151,7 +157,7 @@ const ECMASCRIPT_BUILTINS = new Set([
 const BROWSER_GLOBALS = {
     'chat/zkapi/components/AccountModal.js': ['clearTimeout', 'document', 'queueMicrotask', 'setTimeout', 'window'],
     'chat/zkapi/components/WelcomePanel.js': ['URLSearchParams', 'clearTimeout', 'document', 'localStorage', 'queueMicrotask', 'setTimeout', 'window'],
-    'chat/zkapi/components/WalletMethodControls.js': ['clearTimeout', 'navigator', 'queueMicrotask', 'setTimeout'],
+    'chat/zkapi/components/WalletMethodControls.js': ['Event', 'Infinity', 'clearTimeout', 'navigator', 'queueMicrotask', 'setTimeout'],
     'chat/zkapi/services/walletMethod.mjs': ['setTimeout']
 };
 

@@ -64,6 +64,7 @@ test('single-chat deletion keeps a compact busy row until deletion resolves', as
     const isolatedSource = source
         .replace(/^import .*;\n/gm, '')
         .replace('export default class Sidebar', 'class Sidebar')
+        .replace(/^export function /gm, 'function ')
         .concat('\nSidebar;');
     const Sidebar = vm.runInNewContext(isolatedSource, { console });
 

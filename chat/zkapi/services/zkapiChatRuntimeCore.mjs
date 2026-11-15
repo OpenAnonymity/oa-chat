@@ -30,7 +30,7 @@ function waitFor(promise, signal) {
 // `versioning` is the protocol-version facade (versioning/index.js) or null.
 // Everything read from it fails open: a missing, throwing or malformed facade
 // never stops a chat, so single-version builds and tests behave as before.
-export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, versioning = null, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, versioning = null, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, protocolNow = async () => Date.now(), retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
     if (!client || !backend || typeof createInferenceService !== 'function' || !modelConfiguration) {
         throw new Error('Private chat runtime dependencies are required.');
     }
@@ -82,9 +82,9 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
     // the live key of its own session and cap opens none, so the cutoff has
     // nothing to protect there and the person is not told chats are paused
     // while theirs works.
-    function newKeyAllowed() {
+    function newKeyAllowed(nowMs) {
         try {
-            const gate = versioning?.sendGate?.(Date.now());
+            const gate = versioning?.sendGate?.(nowMs);
             return !(gate && gate.canSend === false);
         } catch (_) {
             return true;
@@ -290,9 +290,25 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             await startClient();
             await client.ensureTestnetAccess?.({ signal, interactive: true });
             if (signal?.aborted) throw abortError();
+            // Pre-send gates use the SDK's trusted zkAPI server clock. If it is
+            // unavailable, keep the legacy device check here; the SDK still
+            // refuses a new authorization without trusted time.
+            let nowMs;
+            try { nowMs = await protocolNow(signal); }
+            catch {
+                if (signal?.aborted) throw abortError();
+                nowMs = Date.now();
+            }
+            if (signal?.aborted) throw abortError();
             const expired = Number(client.note?.expiry_ts) > 0
-                && Number(client.note.expiry_ts) * 1000 <= Date.now();
-            if (client.withdrawalBlocksChat || !client.hasNote || expired || client.noteExpiryClaim) {
+                && Number(client.note.expiry_ts) * 1000 <= nowMs;
+            if (client.withdrawalBlocksChat) {
+                // Recovery is an explicit balance-panel action. Repeated send
+                // attempts must not trap the person in the withdrawal dialog.
+                if (shouldOpenFunding()) context?.showToast?.('This private balance is reserved for withdrawal. Open Balance details to review the fee and finish, or cancel if available.', 'info', 9000);
+                return false;
+            }
+            if (!client.hasNote || expired || client.noteExpiryClaim) {
                 if (shouldOpenFunding()) context?.openFunding();
                 return false;
             }
@@ -304,7 +320,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             const refuseNewKey = () => {
                 if (cutoffChecked) return false;
                 cutoffChecked = true;
-                if (newKeyAllowed()) return false;
+                if (newKeyAllowed(nowMs)) return false;
                 context?.showToast?.(versionCopyText('near_expiry'), 'error', 9000);
                 return true;
             };
@@ -314,8 +330,8 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             // up is not reused.
             const liveLease = () => {
                 const lease = client.activeLease;
-                return lease?.session_id === sessionId
-                    && Number(lease.expires_at) * 1000 > Date.now() + 90_000
+                return lease != null && lease.session_id === sessionId
+                    && Number(lease.expires_at) * 1000 > nowMs + 90_000
                     && !lease.retiring && !lease.retired ? lease : null;
             };
             // Nothing to reuse: this send opens a key whatever the model is,
@@ -395,7 +411,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
         getTransition: () => transition,
         stopSettlementWaiting() {
             retirementController?.abort(new Error(
-                'Stopped waiting for private access. Your recovery record is saved. Retry when the temporary-key service is available.'
+                'Balance update paused. Choose Retry to finish updating your balance before sending a message.'
             ));
         },
         retrySettlement() {

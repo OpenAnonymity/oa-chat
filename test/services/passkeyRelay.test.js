@@ -2,7 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 
-import {
+async function loadRelayHelpers() {
+    // Test the exported helpers without booting the relay page from a browser
+    // fixture left by another suite in the shared-process runner.
+    const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    delete globalThis.document;
+    try {
+        return await import('../../chat/passkey-relay.js');
+    } finally {
+        if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor);
+        else delete globalThis.document;
+    }
+}
+
+const {
     deserializeCredentialOptions,
     normalizeRelayError,
     parseRelayRequest,
@@ -11,7 +24,7 @@ import {
     performSingleBrowserPasskey,
     serializeCredential,
     validateSingleBrowserContext
-} from '../../chat/passkey-relay.js';
+} = await loadRelayHelpers();
 
 const encodedOptions = encodeURIComponent(JSON.stringify({
     publicKey: { challenge: 'YWJj' }

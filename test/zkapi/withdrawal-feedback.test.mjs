@@ -5,6 +5,7 @@ import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { availableWithdrawalEscape } from '../../chat/zkapi/services/withdrawalRecovery.mjs';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
+import { withdrawalFeeScope } from '../../chat/zkapi/components/WithdrawalFees.js';
 import { walletJourney } from '../../chat/zkapi/domain/walletJourney.js';
 
 const destination = `0x${'a'.repeat(40)}`;
@@ -25,15 +26,42 @@ function fixture(t, { prepared = null, balance = note.current_balance, native = 
         withdrawMode: 'mutual', journeyKind: null, journeyLast: null,
         overlay: { querySelector: () => null, querySelectorAll: () => [] },
         escapeHtml: value => String(value ?? '') });
+    Object.assign(modal, { isOpen: true, walletMethodReady: true, render() {} });
+    const quote = { address: destination, chainId: 1, mode: 'mutual', balanceWei: '100', feeReserveWei: '10', shortfallWei: '0', expiresAt: Date.now() + 30000 };
+    modal.withdrawalFees = { scope: withdrawalFeeScope(modal), quote };
+    t.mock.method(zkapiClient, 'getWithdrawalFeeBudget', async mode => ({ ...quote, mode }));
     return modal;
 }
 
 test('withdrawal amount does not claim funds were already returned before submission', t => {
     const modal = fixture(t);
     const html = modal.renderWithdrawal();
-    assert.match(html, /Amount to withdraw/);
-    assert.match(html, /Your MetaMask wallet pays the network fee separately/);
+    assert.match(html, /You withdraw/);
+    assert.match(html, /<span class="zkapi-balance-caption">To<\/span><p class="zkapi-withdraw-account">Your MetaMask account/);
+    assert.match(html, /Paid from your MetaMask account when you confirm\./, 'who pays the fee, said once under the fee');
+    assert.match(html, /id="zkapi-withdraw-mode-toggle"[^>]*>Server not responding\? Use the escape hatch</, 'the escape hatch is a quiet link, not a radio');
+    assert.doesNotMatch(html, /name="zkapi-withdraw-mode"|Withdrawal method/);
     assert.doesNotMatch(html, /Returned to MetaMask/);
+});
+
+test('reload checking explains the delay, hides X and cannot queue a withdrawal', async t => {
+    const modal = fixture(t, { prepared: { phase: 'reserving', mode: 'mutual', destination } });
+    modal.walletMethodReady = false;
+    modal.isOpen = true;
+    const run = t.mock.method(modal, 'run', () => assert.fail('startup must not queue withdrawal'));
+    const html = modal.dialogMarkup();
+    assert.match(html, /Checking saved withdrawal/);
+    assert.match(html, /Nothing new will be sent until you choose Continue/);
+    assert.doesNotMatch(html, /Getting ready|Paused before MetaMask/);
+    assert.match(html, /id="zkapi-payment-close"[^>]*hidden/);
+    assert.match(html, /id="zkapi-withdraw-btn"[^>]*disabled/);
+    assert.match(html, /id="zkapi-withdraw-dismiss-btn"/);
+    await modal.requestWithdrawal();
+    await modal.submitWithdrawal();
+    assert.equal(run.mock.callCount(), 0);
+    modal.walletMethodReady = true;
+    assert.match(modal.renderWithdrawal(), />Continue in MetaMask/);
+    assert.equal(run.mock.callCount(), 0, 'finishing startup still needs a fresh click');
 });
 
 test('an absent balance does not produce a dash under a withdrawal success caption', t => {
@@ -57,8 +85,9 @@ test('native withdrawal amount retains exact ETH when the USD quote is unavailab
 test('saved withdrawal names its unchanged destination without pretending it is running', t => {
     const modal = fixture(t, { prepared: { phase: 'prepared', mode: 'mutual', destination } });
     const html = modal.renderWithdrawal();
-    assert.match(html, /Withdrawal ready to continue/);
-    assert.match(html, /keeps the same destination when you switch payment methods/);
+    assert.match(html, /aria-label="Withdrawal, paused"/);
+    assert.match(html, /zkapi-meta">To 0xaaaaaaa…aaaaaaaaa · Mutual close/, 'the saved destination is named once, beside the method');
+    assert.match(html, /data-step="wallet" data-state="paused" aria-current="step"/);
     assert.match(html, /Nothing has been sent yet/);
     assert.doesNotMatch(html, /Returning your balance|Returned to MetaMask/);
 });
@@ -105,7 +134,8 @@ function interruptedMutual(t) {
 test('interrupted mutual-close UI offers an explicit escape choice and shows its safety window before submission', t => {
     const modal = interruptedMutual(t);
     let html = modal.renderWithdrawal();
-    assert.match(html, /Withdrawal preparation paused/);
+    assert.match(html, /Paused before MetaMask/);
+    assert.match(html, /data-step="proof" data-state="paused"/);
     assert.match(html, /id="zkapi-use-escape-btn"[^>]*>Use escape hatch/);
     assert.match(html, /safety window/);
     assert.doesNotMatch(html, /data-state="active"/);
@@ -155,6 +185,7 @@ function submissionFixture(t) {
 test('a refresh while waiting for the wallet cannot silently switch the chosen withdrawal mode', async t => {
     const modal = submissionFixture(t);
     modal.withdrawMode = 'escape';
+    modal.withdrawalFees.scope = withdrawalFeeScope(modal);
     modal.run = async (action, details) => {
         assert.equal(details.kind, 'escape');
         modal.withdrawMode = 'mutual';
@@ -162,8 +193,8 @@ test('a refresh while waiting for the wallet cannot silently switch the chosen w
     };
     let submittedMode;
     t.mock.method(zkapiClient, 'withdraw', async mode => { submittedMode = mode; return { status: 'submitted' }; });
-    await modal.submitWithdrawal();
-    assert.equal(submittedMode, 'escape');
+    await assert.rejects(modal.submitWithdrawal(), /Withdrawal details changed/);
+    assert.equal(submittedMode, undefined, 'a changed review requires a fresh confirmation');
 });
 
 test('a new private balance arriving during settlement cannot inherit the old withdrawal click', async t => {
@@ -177,7 +208,7 @@ test('a new private balance arriving during settlement cannot inherit the old wi
     assert.equal(withdraw.mock.callCount(), 0);
 });
 
-test('escape Continue carries the captured operation and destination through settlement into the SDK', async t => {
+test('escape Continue carries the captured operation and destination without server settlement into the SDK', async t => {
     const modal = interruptedMutual(t);
     const previousManifest = walletRuntime.manifest;
     walletRuntime.manifest = { deployment_id: 'host-escape-options' };
@@ -192,10 +223,13 @@ test('escape Continue carries the captured operation and destination through set
     });
     modal.withdrawalEscapeIntent = availableWithdrawalEscape();
     modal.withdrawMode = 'escape';
+    modal.withdrawalFees.scope = withdrawalFeeScope(modal);
     modal.run = async action => action(() => {});
     const withdraw = t.mock.method(zkapiClient, 'withdraw', async (mode, _report, options) => {
         assert.equal(mode, 'escape');
-        assert.deepEqual(options, { destination, expectedWithdrawalOperationId: 'withdraw-7' });
+        assert.equal(options.destination, destination);
+        assert.equal(options.expectedWithdrawalOperationId, 'withdraw-7');
+        assert.ok(options.reviewedFunding);
         return { status: 'submitted' };
     });
     await modal.submitWithdrawal();
@@ -221,4 +255,24 @@ test('payment history shows the brief outcome once, outside embedded history dis
     modal.outcome = { message: 'Withdrawal confirmed.', tone: 'success' };
     assert.match(modal.renderWithdrawalRecords(), /zkapi-outcome[^>]*>Withdrawal confirmed\./);
     assert.doesNotMatch(modal.renderWithdrawalRecords({ inline: true }), /zkapi-outcome/);
+});
+
+
+test('reserved mutual withdrawal never calls dismissal Cancel', t => {
+    const modal = interruptedMutual(t);
+    const html = modal.renderWithdrawal();
+    assert.match(html, /id="zkapi-withdraw-dismiss-btn"[^>]*>Close<\/button>/);
+    assert.doesNotMatch(html, /id="zkapi-cancel-withdrawal-btn"/);
+    assert.match(html, /can’t be cancelled/);
+});
+
+
+test('withdrawal recovery cannot set aside a balance even with a prepared journal', t => {
+    const modal = interruptedMutual(t);
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
+    zkapiClient.config.prepared_withdrawal.phase = 'prepared';
+    walletRuntime.runtime.preparedWithdrawal.phase = 'prepared';
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
+    walletRuntime.runtime.preparedWithdrawal.ambiguousSubmissions = [{ submissionId: 'unknown' }];
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
 });

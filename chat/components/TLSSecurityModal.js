@@ -22,18 +22,29 @@ class TLSSecurityModal {
     }
 
     async open() {
-        if (this.isOpen) return;
+        // "Open" is the dialog being on the page, not a flag that may have
+        // outlived it (a build that threw mid-open, an overlay removed by
+        // something other than close()): a press on Security Details must
+        // always get the dialog.
+        if (this.isOpen && this.overlay?.isConnected) return;
         this.isOpen = true;
 
         document.querySelector('.tls-security-modal')?.remove();
 
-        this.overlay = document.createElement('div');
-        this.overlay.className = 'tls-security-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
+        try {
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'tls-security-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
 
-        this.render();
-        document.body.appendChild(this.overlay);
-        showSurface(this.overlay);
-        this.setupEventListeners();
+            this.render();
+            document.body.appendChild(this.overlay);
+            showSurface(this.overlay);
+            this.setupEventListeners();
+        } catch (error) {
+            this.isOpen = false;
+            this.overlay?.remove?.();
+            this.overlay = null;
+            throw error;
+        }
 
         // Verify WASM integrity on first open
         if (!this.wasmIntegrity) {
@@ -105,7 +116,14 @@ class TLSSecurityModal {
         const status = this.services.networkProxy.getStatus();
         const tlsInfo = this.services.networkProxy.getTlsInfo();
         const isEncrypted = status.enabled && status.usingProxy;
-        const libcurl = window.libcurl;
+        let libcurlVersion = 'Unknown';
+        try {
+            // This getter calls into WASM and can throw after a runtime failure.
+            // Optional version metadata must not prevent opening the dialog.
+            libcurlVersion = window.libcurl?.version?.lib || 'Unknown';
+        } catch {
+            // Keep the connection details and close controls available.
+        }
 
         const tlsTargetName = this.services.inference.getTlsDisplayName();
         this.overlay.innerHTML = `
@@ -151,7 +169,7 @@ class TLSSecurityModal {
                             </div>
                             <div class="flex justify-between items-start">
                                 <span class="text-xs text-muted-foreground">Version</span>
-                                <span class="text-xs font-mono text-foreground">${libcurl?.version?.lib || 'Unknown'}</span>
+                                <span class="text-xs font-mono text-foreground">${libcurlVersion}</span>
                             </div>
                             ${this.renderWasmIntegrity()}
                         </div>
@@ -318,7 +336,7 @@ class TLSSecurityModal {
                 </h3>
                 <div class="p-4 rounded-lg border border-border bg-card text-xs">
                     <div class="space-y-1.5 font-mono text-muted-foreground">
-                        ${proxyUrl ? `<div class="flex justify-between"><span>Relay Server</span><span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span></div>` : ''}
+                        ${proxyUrl ? `<div class="flex justify-between"><span>Relay Server</span><span class="text-foreground truncate ml-2" title="${this.formatProxyHostname(proxyUrl)}">${this.formatProxyHostname(proxyUrl)}</span></div>` : ''}
                         ${tlsInfo.version ? `<div class="flex justify-between"><span>TLS Version</span><span class="text-foreground">${tlsInfo.version}</span></div>` : ''}
                         ${tlsInfo.cipher ? `<div class="flex justify-between"><span>Cipher</span><span class="text-foreground">${tlsInfo.cipher}</span></div>` : ''}
                         ${tlsInfo.certSubject ? `<div class="flex justify-between"><span>Certificate</span><span class="text-foreground">${this.formatCertName(tlsInfo.certSubject)}</span></div>` : ''}
@@ -352,7 +370,7 @@ class TLSSecurityModal {
                     ${proxyUrl ? `
                         <div class="flex justify-between font-mono text-muted-foreground mb-2">
                             <span>Relay Server</span>
-                            <span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span>
+                            <span class="text-foreground truncate ml-2" title="${this.formatProxyHostname(proxyUrl)}">${this.formatProxyHostname(proxyUrl)}</span>
                         </div>
                     ` : ''}
                     <p class="text-center text-muted-foreground truncate" title="No TLS captured yet. Make a proxied request to see details.">No TLS captured yet. Make a proxied request to see details.</p>
@@ -374,7 +392,7 @@ class TLSSecurityModal {
             const parsed = new URL(url);
             return parsed.host;
         } catch {
-            return url;
+            return 'Unknown relay';
         }
     }
 

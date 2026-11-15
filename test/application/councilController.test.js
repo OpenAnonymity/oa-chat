@@ -1,5 +1,7 @@
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { recordedTrustedAccess, recordedTrustedResult } from '../helpers/trustedStation.js';
 
 const { default: CouncilController } = await import('../../chat/application/councilController.js');
 
@@ -1679,6 +1681,31 @@ test('runMultiModelTurn skips post-turn memory extraction when every lane fails'
     assert.deepEqual(memoryExtractionCalls, []);
 });
 
+test('failed provider lane retains safe diagnostic code while its sibling completes without replay', async () => {
+    for (const [code, diagnostic] of [[429, 'PROVIDER_CODE_429'], [402, 'PROVIDER_CODE_402'],
+        ['PRIVATE_PROVIDER_BODY', 'PROVIDER_STREAM_ERROR']]) {
+        let requests = 0;
+        const error = Object.assign(new Error('PRIVATE_PROVIDER_BODY'), { code, providerReported: true, retryable: false });
+        const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+            councilConfig: { outputMode: 'parallel' },
+            sendLaneCompletion: async ({ entry }) => {
+                requests++;
+                if (entry.laneId === 'primary') throw error;
+                return { content: 'Sibling answer' };
+            }
+        });
+        await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false, abortController: new AbortController() });
+        const lanes = savedMessages.at(-1).council.stage1;
+        assert.equal(lanes[0].status, 'error');
+        assert.equal(lanes[0].error, `Request failed. (${diagnostic})`);
+        assert.equal(lanes[1].status, 'complete');
+        assert.equal(lanes[1].response, 'Sibling answer');
+        assert.equal(requests, 2, 'no extra inference request');
+        assert.doesNotMatch(JSON.stringify(lanes), /PRIVATE_PROVIDER_BODY/);
+        assert.equal(error.status, undefined);
+    }
+});
+
 test('runMultiModelTurn uses each lane previous Stage 1 response in parallel output mode', async () => {
     const sentMessagesByLane = new Map();
     const previousUserMessage = {
@@ -2058,15 +2085,16 @@ test('regenerating a routed lane clears old attribution and requests Auto Router
 
 test('Council uses outage access but still respects later cached bans', async () => {
     let banned = false;
+    const access = recordedTrustedAccess('outage-child');
     const saved = [];
     const controller = createController({
         ticketCount: 1,
         chatDB: { saveSession: async session => saved.push(JSON.parse(JSON.stringify(session))) },
         inferenceService: {
             getAccessLabel: () => 'OpenRouter key',
-            requestAccess: async () => ({ key: 'outage-child', stationId: 'station-a', expiresAt: new Date(Date.now() + 60000).toISOString() }),
-            getVerificationAdapter: () => ({ supports: true, getAccessId: () => 'station-a', isAccessBanned: () => banned }),
-            verifyAccess: async () => ({ status: 'verifier-unavailable' }),
+            requestAccess: async () => access,
+            getVerificationAdapter: () => ({ supports: true, getAccessId: () => access.stationId, isAccessBanned: () => banned }),
+            verifyAccess: async () => recordedTrustedResult(access),
             setCurrentAccess: () => {}
         }
     });
@@ -2084,12 +2112,13 @@ test('a newly issued outage lane registers recovery before any later use check',
     const order = [];
     let saved;
     let recover;
+    const access = recordedTrustedAccess('new-outage-lane');
     const controller = createController({
         ticketCount: 1,
         chatDB: { saveSession: async session => { saved = structuredClone(session); order.push('saved'); } },
         inferenceService: {
             getAccessLabel: () => 'OpenRouter key',
-            requestAccess: async () => ({ key: 'new-outage-lane', stationId: 'station-a', expiresAt: new Date(Date.now() + 60000).toISOString() }),
+            requestAccess: async () => access,
             getVerificationAdapter: () => ({
                 supports: true,
                 trackPendingAccess(info, session) {
@@ -2100,7 +2129,7 @@ test('a newly issued outage lane registers recovery before any later use check',
                     };
                 }
             }),
-            verifyAccess: async () => ({ status: 'verifier-unavailable' })
+            verifyAccess: async () => recordedTrustedResult(access)
         }
     });
     const session = { id: 'new-outage-lane-session' };
@@ -2119,4 +2148,409 @@ test('the existing local development bypass still ignores production station ban
     } });
     const lane = { apiKey: 'local-key', apiKeyInfo: { verifierSubmitKeyProof: { status: 'local-loopback-bypass' } } };
     assert.equal(controller.getBannedLaneAccessInfo({}, lane), null);
+});
+
+
+test('feature counts distinguish Parallel from Council and exclude failed, partial, cancelled, and blocked completions', async () => {
+    for (const scenario of ['success', 'parallel', 'partial', 'cancelled', 'blocked', 'synthesis_failed']) {
+        const events = [];
+        const abortController = new AbortController();
+        const h = createRunTurnHarness({
+            councilConfig: { outputMode: scenario === 'parallel' ? 'parallel' : 'synthesis' },
+            sendLaneCompletion: async ({ entry }) => {
+                if (scenario === 'cancelled') {
+                    abortController.abort();
+                    throw new DOMException('Stopped', 'AbortError');
+                }
+                if (scenario === 'partial' && entry.laneId === 'secondary') throw new Error('unavailable');
+                return { content: 'Private response' };
+            },
+            runSynthesisCompletion: async () => {
+                if (scenario === 'synthesis_failed') throw new Error('unavailable');
+                return { content: 'Private review' };
+            }
+        });
+        if (scenario === 'blocked') h.controller.ensureAccessForEntries = async () => { throw new Error('access blocked'); };
+        setFeatureUsageReporter((...args) => events.push(args));
+        try {
+            await h.controller.runMultiModelTurn({ session: h.session, userMessage: h.userMessage, abortController });
+        } finally { setFeatureUsageReporter(null); }
+        const expected = {
+            success: ['parallel_started', 'parallel_completed', 'council_started', 'council_completed'],
+            parallel: ['parallel_started', 'parallel_completed'],
+            partial: ['parallel_started', 'council_started', 'council_completed'],
+            cancelled: ['parallel_started'],
+            blocked: [],
+            synthesis_failed: ['parallel_started', 'parallel_completed', 'council_started']
+        }[scenario];
+        assert.deepEqual(events, expected.map(code => [code]), scenario);
+    }
+});
+
+test('streamed lane keeps generated images and reports them in the result', async () => {
+    const uiCalls = [];
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+    const controller = createController({
+        inferenceService: {
+            streamCompletion: async (_messages, modelId, _laneSession, onChunk, _onTokenUpdate, _files, _search, _abort, onStreamOpen, onReasoningChunk) => {
+                onStreamOpen();
+                onReasoningChunk('planning the picture');
+                onChunk(null, { images: [image] });
+                return { totalTokens: 1, promptTokens: 1, completionTokens: 1, model: modelId };
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneReasoning: () => {},
+            settleCouncilLaneReasoning: (...args) => uiCalls.push(['settle', ...args]),
+            finalizeCouncilLaneReasoning: () => {},
+            updateCouncilLaneImages: (...args) => uiCalls.push(['images', ...args]),
+            setCouncilLaneWorking: (...args) => uiCalls.push(['working', ...args])
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            secondary: { apiKey: 'k', apiKeyInfo: {}, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+        }
+    };
+    const laneState = { status: 'pending', response: '' };
+    const result = await controller.sendLaneCompletion({
+        session,
+        entry: { laneId: 'secondary', id: 'google/image', name: 'Image' },
+        sanitizedMessages: [{ role: 'user', content: 'draw' }],
+        searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: { assistantMessage: { id: 'assistant-1' }, laneState, persistProgress: () => {} }
+    });
+
+    assert.deepEqual(result.images, [image]);
+    assert.deepEqual(laneState.images, [image]);
+    assert.notEqual(laneState.stillWorking, true);
+    assert.equal(uiCalls.some((call) => call[0] === 'images' && call[2] === 'secondary'), true);
+    // The image ends the thinking the same way text does.
+    assert.equal(uiCalls.some((call) => call[0] === 'settle'), true);
+});
+
+test('a lane that goes quiet after output says it is still working until the stream ends', async () => {
+    const workingCalls = [];
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const controller = createController({
+        inferenceService: {
+            streamCompletion: async (_messages, modelId, _laneSession, onChunk, _onTokenUpdate, _files, _search, _abort, onStreamOpen) => {
+                onStreamOpen();
+                onChunk('Here is a preamble. ');
+                await gate;
+                return { totalTokens: 1, promptTokens: 1, completionTokens: 1, model: modelId };
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneContent: () => {},
+            finalizeCouncilLaneReasoning: () => {},
+            setCouncilLaneWorking: (_messageId, _laneId, working) => workingCalls.push(working)
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            secondary: { apiKey: 'k', apiKeyInfo: {}, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+        }
+    };
+    const laneState = { status: 'pending', response: '' };
+    const pending = controller.sendLaneCompletion({
+        session,
+        entry: { laneId: 'secondary', id: 'openai/image', name: 'Image' },
+        sanitizedMessages: [{ role: 'user', content: 'draw' }],
+        searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: { assistantMessage: { id: 'assistant-1' }, laneState, persistProgress: () => {} }
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    assert.equal(laneState.status, 'running');
+    assert.equal(laneState.stillWorking, true);
+    release();
+    await pending;
+    assert.equal(laneState.stillWorking, false);
+    assert.deepEqual(workingCalls, [true, false]);
+});
+
+test('a lane clears its stall line for hidden reasoning and includes later reasoning in its final duration', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let now = 1000;
+    t.mock.method(Date, 'now', () => now);
+    const working = [], headers = [];
+    const laneState = { status: 'pending', response: '' };
+    const controller = createController({ inferenceService: {
+        streamCompletion: async (...args) => {
+            const [chunk, opened, reasoning] = [args[3], args[8], args[9]];
+            opened();
+            chunk('A preamble.');
+            t.mock.timers.tick(1000);
+            assert.equal(laneState.stillWorking, true);
+            now = 1100;
+            reasoning('', { withheld: true });
+            assert.equal(laneState.stillWorking, false);
+            assert.equal(laneState.streamingReasoning, true);
+            t.mock.timers.tick(1000);
+            assert.deepEqual(working, [true, false]);
+            now = 2100;
+            chunk(' The answer.');
+            assert.equal(laneState.streamingReasoning, false);
+            now = 2300;
+            reasoning('One more check.');
+            now = 2400;
+            return { totalTokens: 1, promptTokens: 1, completionTokens: 1 };
+        }
+    } });
+    Object.assign(controller.app, { isViewingSession: () => true, chatArea: {
+        updateCouncilLaneContent() {}, updateCouncilLaneReasoning() {}, finalizeCouncilLaneReasoning() {},
+        setCouncilLaneWorking: (_id, _lane, value) => working.push(value),
+        updateWithheldReasoning: (...args) => headers.push(args)
+    } });
+    await controller.sendLaneCompletion({
+        session: { id: 'session-1', councilAccess: { secondary: { apiKey: 'k', apiKeyInfo: {},
+            expiresAt: new Date(60000).toISOString() } } },
+        entry: { laneId: 'secondary', id: 'test/model', name: 'Model' },
+        sanitizedMessages: [{ role: 'user', content: 'test' }], searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: { assistantMessage: { id: 'assistant-1' }, laneState, persistProgress() {} }
+    });
+    assert.deepEqual(headers.map(call => call[1]), [true, false]);
+    assert.equal(laneState.reasoningDuration, 1400);
+    assert.equal(laneState.streamingReasoning, false);
+});
+
+test('an image-only lane counts as an answer and reaches Council as a described response', async () => {
+    const synthesisCalls = [];
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+    const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+        sendLaneCompletion: async ({ entry }) => (entry.laneId === 'secondary'
+            ? { content: '', images: [image] }
+            : { content: 'Primary text answer', images: [image] }),
+        runSynthesisCompletion: async (request) => {
+            synthesisCalls.push(controller.buildSynthesisResponses(request.stageEntries));
+            return { content: 'Council answer' };
+        }
+    });
+
+    await controller.runMultiModelTurn({
+        session,
+        userMessage,
+        searchEnabled: false,
+        abortController: new AbortController(),
+        initialPendingPhase: 'requesting-key'
+    });
+
+    const finalMessage = savedMessages.at(-1);
+    const imageLane = finalMessage.council.stage1[1];
+    assert.equal(imageLane.status, 'complete');
+    assert.deepEqual(imageLane.images, [image]);
+    assert.equal(finalMessage.council.synthesis.status, 'complete');
+    assert.equal(finalMessage.images, null, 'text synthesis does not inherit lane images');
+
+    // Council sees both answers; before, the image lane was dropped and the
+    // reviewer reported "Response B was not provided".
+    assert.equal(synthesisCalls.length, 1);
+    assert.equal(synthesisCalls[0].length, 2);
+    assert.match(synthesisCalls[0][1].response, /generated 1 image/);
+});
+
+test('image-only and mixed lanes keep their own follow-up history and canonical output', () => {
+    const controller = createController();
+    const imageA = { image_url: { url: 'data:image/png;base64,AAAA' } };
+    const imageB = { image_url: { url: 'data:image/png;base64,BBBB' } };
+    const entries = [{ laneId: 'primary', id: 'image-a', name: 'Image A' }, { laneId: 'secondary', id: 'image-b', name: 'Image B' }];
+    const message = { role: 'assistant', content: '', images: [imageA], council: { stage1: [
+        { ...entries[0], label: 'Response A', status: 'complete', model: 'Image A', response: '', images: [imageA] },
+        { ...entries[1], label: 'Response B', status: 'complete', model: 'Image B', response: 'Here is B', images: [imageB] }
+    ] } };
+    for (const [index, entry] of entries.entries()) {
+        const history = controller.buildLaneConversationMessages([message], entry, entries);
+        assert.equal(history.length, 1);
+        assert.deepEqual(history[0].images, [index === 0 ? imageA : imageB]);
+        assert.equal(history[0].content, index === 0 ? '' : 'Here is B');
+    }
+    const canonical = controller.refreshStage1CanonicalResponse(message, 'Response A');
+    assert.equal(canonical.label, 'Response A');
+    assert.deepEqual(message.images, [imageA]);
+    message.council.synthesis = { status: 'complete', response: 'Review without images' };
+    assert.equal(controller.buildLaneConversationMessages([message], entries[1], entries)[0].images, null);
+    message.council.stage1.forEach(entry => entry.status = 'pending');
+    controller.refreshStage1CanonicalResponse(message);
+    assert.equal(message.images, null);
+});
+
+test('Council reprices each lane model and keeps recovered access with its lane', async () => {
+    const requests = [];
+    const lookups = [];
+    const controller = createController({
+        ticketCount: 20,
+        costs: { 'primary-model': 5, 'secondary-model': 5 },
+        chatDB: { saveSession: async () => {} },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            getAccessTicketCost: async (_session, { modelId }) => {
+                lookups.push(modelId);
+                return modelId === 'primary-model' ? (lookups.length === 1 ? 5 : 9) : 3;
+            },
+            requestAccess: async (_session, { ticketsRequired }) => {
+                requests.push(ticketsRequired);
+                if (requests.length === 1) {
+                    throw Object.assign(new Error('Model pricing changed'), { code: 'TICKET_PRICE_CHANGED' });
+                }
+                return { key: `key-${ticketsRequired}`, ticketsConsumed: ticketsRequired,
+                    expiresAt: new Date(Date.now() + 60000).toISOString() };
+            },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    const session = { id: 'pricing-council', model: 'Primary', councilAccess: {} };
+    for (const laneId of ['primary', 'secondary']) {
+        await controller.requestLaneAccess(session,
+            { laneId, id: `${laneId}-model`, name: laneId }, null);
+    }
+    assert.deepEqual(lookups, ['primary-model', 'primary-model', 'secondary-model']);
+    assert.deepEqual(requests, [5, 9, 3]);
+    assert.equal(session.councilAccess.primary.apiKey, 'key-9');
+    assert.equal(session.councilAccess.primary.ticketsConsumed, 9);
+    assert.equal(session.councilAccess.secondary.apiKey, 'key-3');
+    assert.equal(session.councilAccess.secondary.ticketsConsumed, 3);
+});
+
+test('Council shares acquisition shortage recovery without replacing a successful lane', async () => {
+    let balance = 2, reloads = 0;
+    const requested = [];
+    const controller = createController({ ticketCount: 2, models: [{ id: 'model-a', name: 'Model A' }],
+        chatDB: { saveSession: async () => {} },
+        inferenceService: {
+            getAccessLabel: () => 'key', getDefaultModelName: () => 'Model A',
+            getAccessTicketCost: async (_s, options) => { assert.equal(options.forceRefresh, true); return 5; },
+            requestAccess: async (_s, options) => { requested.push(options.ticketsRequired); return { key: 'fresh-lane' }; },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    controller.ticketClient.getTicketCount = () => balance;
+    controller.app.handleAcquisitionTicketShortage = async (_s, shortage) => {
+        assert.equal(shortage.requiredTickets, 5);
+        reloads++; balance = 10; return { retry: true };
+    };
+    const session = { id: 's', councilAccess: { primary: { apiKey: 'existing-lane', modelId: 'other-model' } } };
+    await controller.requestLaneAccess(session, { laneId: 'secondary', id: 'model-a', name: 'Model A' });
+    assert.equal(session.councilAccess.primary.apiKey, 'existing-lane');
+    assert.equal(session.councilAccess.secondary.apiKey, 'fresh-lane');
+    assert.equal(reloads, 1);
+    assert.deepEqual(requested, [5]);
+});
+
+test('Council checks the synthesis budget before issuing any opinion keys', async () => {
+    const { controller, session, userMessage } = createRunTurnHarness();
+    controller.ticketClient.getTicketCount = () => 6;
+    controller.app.getTicketCost = () => 3;
+    controller.assertSufficientTicketsForEntries = CouncilController.prototype.assertSufficientTicketsForEntries;
+    controller.getFreshEntriesForAccess = (_session, entries) => entries;
+    let issued = 0, shortage;
+    controller.ensureAccessForEntries = async () => { issued++; };
+    controller.app.handleAcquisitionTicketShortage = async (_session, value) => { shortage = value; return { retry: false }; };
+    await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false,
+        abortController: new AbortController(), initialPendingPhase: 'requesting-key' });
+    assert.equal(shortage.requiredTickets, 9);
+    assert.equal(shortage.availableTickets, 6);
+    assert.equal(issued, 0);
+});
+
+test('simultaneously quiet lanes restore their own clocks without a new saved snapshot', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let now = 1000, viewed = 'session-1';
+    t.mock.method(Date, 'now', () => now);
+    const callbacks = new Map(), finishes = new Map(), saved = new Map(), paints = [];
+    const controller = createController({ inferenceService: {
+        streamCompletion: (...args) => {
+            callbacks.set(args[1], args[3]);
+            return new Promise(resolve => finishes.set(args[1], resolve));
+        }
+    } });
+    Object.assign(controller.app, { isViewingSession: id => viewed === id, chatArea: {
+        updateCouncilLaneContent() {},
+        setCouncilLaneWorking: (...args) => paints.push(args)
+    } });
+    const requests = ['primary', 'secondary'].map(laneId => {
+        const laneState = { status: 'pending', response: '' };
+        const assistantMessage = { id: 'assistant-1' };
+        return controller.streamLaneMessagesCompletion({
+            session: { id: 'session-1' }, entry: { laneId, id: laneId, name: laneId },
+            laneSession: {}, messages: [], searchEnabled: false, abortController: new AbortController(),
+            streamTarget: { assistantMessage, laneState,
+                persistProgress: () => saved.set(laneId, structuredClone(laneState)) }
+        });
+    });
+    callbacks.get('primary')('First answer.');
+    now = 1600;
+    callbacks.get('secondary')('Second answer.');
+    viewed = 'other';
+    now = 6600;
+    t.mock.timers.tick(5000);
+    assert.equal(paints.length, 0);
+    assert.equal(saved.get('primary').stillWorking, undefined, 'saved clone predates the stall');
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.equal(paints.length, 0, 'does not paint another session');
+    viewed = 'session-1';
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.deepEqual(paints, [
+        ['assistant-1', 'primary', true, 1000], ['assistant-1', 'secondary', true, 1600]
+    ]);
+    now = 8000;
+    callbacks.get('primary')(' More.');
+    paints.length = 0;
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.deepEqual(paints, [['assistant-1', 'secondary', true, 1600]]);
+    for (const finish of finishes.values()) finish({ completionTokens: 1 });
+    await Promise.all(requests);
+    assert.equal(controller.stalledLaneDisplays.size, 0);
+    paints.length = 0;
+    controller.restoreStillWorkingDisplays('session-1');
+    assert.equal(paints.length, 0);
+});
+test('stale tab with zero tickets reuses a stored paid lane before shortage checks', async () => {
+    const previous = globalThis.location;
+    globalThis.location = { hostname: 'staging.openanonymity.ai' };
+    try {
+        const expiresAt = new Date(Date.now() + 60000).toISOString();
+        const stored = { councilAccess: { primary: { apiKey: 'paid', expiresAt, updatedAt: Date.now(),
+            apiKeyInfo: { key: 'paid', ticketsConsumed: 5, expiresAt, verifierSubmitKeyProof: { status: 'verified' } } } } };
+        const controller = createController({ ticketCount: 0, costs: { 'p/high': 5 }, chatDB: { getSession: async () => stored },
+            inferenceService: { isAccessExpired: () => true } });
+        controller.app.usesTicketAccess = () => true;
+        const session = { id: 's' };
+        assert.equal(await controller.ensureSufficientTicketsForEntries(session, [{ id: 'p/high', laneId: 'primary' }]), 0);
+        assert.equal(controller.findEligibleLaneAccess(session, { id: 'p/high', laneId: 'primary' }).apiKey, 'paid');
+    } finally { globalThis.location = previous; }
+});
+
+test('a freshly issued, explicitly verified council lane key gets the shared readiness window', async () => {
+    const readiness = await import('../../chat/services/inference/keyReadiness.js');
+    const key = 'sk-or-v1-readiness-council-lane-0001';
+    const controller = createController({
+        ticketCount: 1,
+        costs: { 'openai/gpt': 1 },
+        models: [{ id: 'openai/gpt', name: 'GPT' }],
+        chatDB: { saveSession: async () => {} },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            requestAccess: async () => ({ key, stationId: 'station-a', expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+            getVerificationAdapter: () => ({ supports: true }),
+            verifyAccess: async () => ({ status: 'verified', data: { key_hash: 'hash-a' } })
+        }
+    });
+    const session = { id: 'session-lane-readiness', councilAccess: {} };
+    assert.equal(readiness.getFreshKeyReadiness(key), null);
+    await controller.requestLaneAccess(session, { laneId: 'primary', id: 'openai/gpt', name: 'GPT' }, null);
+    assert.equal(session.councilAccess.primary.apiKey, key);
+    assert.ok(readiness.getFreshKeyReadiness(key), 'enrolled by the shared verified-acquisition boundary');
 });

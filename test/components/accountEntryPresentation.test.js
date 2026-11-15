@@ -71,7 +71,10 @@ test('wallet entry closes sign-in before switching in place, without an account 
         assert.deepEqual(options, { afterAuthentication: true });
         events.push('close'); modal.isOpen = false;
     };
-    modal.app.changePaymentMode = async mode => { events.push(mode); };
+    modal.app.changePaymentMode = async (mode, options) => {
+        assert.deepEqual(options, { userAction: true });
+        events.push(mode);
+    };
     await modal.handleWalletEntry();
     assert.deepEqual(events, ['close', 'zkapi']);
     assert.equal(modal.walletEntryPending, false);

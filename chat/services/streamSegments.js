@@ -15,3 +15,11 @@
 export function paragraphBreakBefore(chunk, accumulated) {
     return accumulated && !/\n\s*$/.test(accumulated) ? `\n\n${chunk}` : chunk;
 }
+
+/**
+ * Text has arrived but the reply is not finished, and the stream has gone
+ * quiet: after this long with no new text (and no thinking), a quiet
+ * "Still working…" line appears under the answer until text resumes or the
+ * reply ends. Shared by single chats and Parallel lanes.
+ */
+export const STILL_WORKING_DELAY_MS = 1000;

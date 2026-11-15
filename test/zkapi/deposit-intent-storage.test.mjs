@@ -14,11 +14,12 @@ function fixture(value) {
             };
         }
     };
-    const receiver = { db: { transaction(stores, mode) {
+    // A ChatDatabase whose connection is this stub (its own helpers included).
+    const receiver = Object.assign(Object.create(Object.getPrototypeOf(chatDB)), { db: { transaction(stores, mode) {
         assert.deepEqual(stores, ['settings']);
         assert.equal(mode, 'readwrite');
         return transaction;
-    } } };
+    } } });
     return { puts, request, transaction, update: (expected, next) =>
         chatDB.compareAndSetSetting.call(receiver, 'intent', expected, next) };
 }

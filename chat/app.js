@@ -1,10 +1,22 @@
+import { ticketTierPolicyEnabled, findTierAccess, mergeTicketAccessHistory } from './services/inference/ticketTierAccess.js';
+import { STILL_WORKING_DELAY_MS } from './services/streamSegments.js';
+import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
+import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
+import { reportDiagnostic, addBreadcrumb } from './services/diagnostics.js';
+import { getFreshKeyReadiness } from './services/inference/keyReadiness.js';
+import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
-import { validateInferenceInput } from './services/inference/inputLimits.js';
+import { validateConversationInput } from './services/inference/inputLimits.js';
+import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
+import { createComposerImageUrls } from './services/composerImageUrls.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
+import { isPhoneComposer, dismissSubmittedPhoneKeyboard, promptReadingOffset } from './ui/composerFocus.js';
 import { enterKeyAction } from './domain/composerKeys.js';
 
 import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
+import { setScrollButtonVisible, waitForScrollBottom } from './ui/scrollToBottom.js';
+import { revealSources, cancelSourceReveal, isSourceRevealActive, isLastSourceResponse } from './ui/sourceReveal.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -14,6 +26,7 @@ import { snapshotAccessTrace, upsertAccessStage } from './domain/accessTrace.js'
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
+import { holdTurn } from './services/turnOwnership.js';
 import { getFileIconSvg } from './services/fileUtils.js';
 import { exportChats } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
@@ -22,10 +35,13 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
 import {
     createMathPlaceholderNamespace,
+    replaceDisplayDollarMath,
+    transformMarkdownOutsideCode,
     protectDollarMathForMarkdown,
     restoreLiteralDollarPlaceholders
 } from './services/mathRendering.js';
 import networkProxy from './services/networkProxy.js';
+import zeroDataRetention from './services/zeroDataRetention.js';
 import inferenceService from './services/inference/inferenceService.js';
 import { noteLoadedSession } from './services/inference/accessDiscardLog.js';
 import ticketClient from './services/ticketClient.js';
@@ -45,9 +61,12 @@ import {
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
 import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
-import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
+import { hasConversationParam, readConversationParam, setConversationParam, deleteConversationParam, normalizeConversationAddress } from './services/conversationLink.js';
+import { ensureModelTiersReady, ensureModelTiersPreviewReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
+import { createPhonePairingSession, phonePairingBuildEnabled } from './services/phonePairingSession.js';
+import { pairingQrSvg } from './services/phonePairingQr.js';
 import sessionService from './services/sessionService.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { generateUlid21 } from './services/ulid.js';
@@ -63,6 +82,7 @@ import {
     buildLocalSessionTitle as buildLocalSessionTitleText,
     buildForkSessionTitleFields as buildForkSessionTitleFieldsValue,
     buildSessionTitleSearchText as buildSessionTitleSearchTextValue,
+    recordPreviousSessionTitle,
     normalizeSessionSearchText as normalizeSessionSearchTextValue,
     getSearchableMessageText as getSearchableMessageTextValue,
     buildSessionConversationSearchText as buildSessionConversationSearchTextValue,
@@ -149,6 +169,11 @@ const SESSION_TITLE_FALLBACK_LENGTH = 50;
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const SIDEBAR_CLOSE_DURATION_MS = 220;
+// A send during start-up waits (spinner showing, Stop cancels) for this tab's
+// own account work instead of being dropped with a notice: the wallet scope
+// activation is local; the first encrypted sync is one or two org round trips.
+const ACCOUNT_SCOPE_WAIT_MS = 10000;
+const TICKET_SYNC_WAIT_MS = 15000;
 
 // Used to upgrade users who were implicitly on the prior default.
 const PREVIOUS_DEFAULT_MODEL_NAMES = [
@@ -186,6 +211,7 @@ const DELETE_HISTORY_COPY = {
  */
 class ChatApp {
     constructor(options = {}) {
+        zeroDataRetention.configure({ settingsStore: chatDB });
         watchDisclosures(document.body);
         installToggleMotion(document.body);
         // Product integrations supply behavior; the shared controller owns the
@@ -372,6 +398,12 @@ class ChatApp {
             // Trusted host presentation only; account operations stay in AccountModal.
             renderEntry: typeof options.signIn?.renderEntry === 'function' ? options.signIn.renderEntry : null
         });
+        // A host that replaced an earlier production client may forget the
+        // accounts that client saved: they were not carried over (see
+        // accountService.releasePreviousVersionAccount).
+        if (options.signIn?.releasePreviousVersionAccounts === true) {
+            accountService.configure({ releasePreviousVersionAccounts: true });
+        }
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
@@ -520,10 +552,10 @@ class ChatApp {
      * when it reloaded the wallet (automatic reloads on) and the send should
      * be tried again; anything else means the request stays unsent.
      */
-    async notifyTicketShortage(budget) {
+    async notifyTicketShortage(budget, hooks = {}) {
         if (typeof this.ticketShortageHandler !== 'function') return { retry: false };
         try {
-            const result = await this.ticketShortageHandler(toExtensionTicketShortage(budget));
+            const result = await this.ticketShortageHandler(toExtensionTicketShortage(budget), hooks);
             return { retry: result?.retry === true };
         } catch (error) {
             console.warn('Ticket shortage handler failed:', error);
@@ -565,9 +597,9 @@ class ChatApp {
         return typeof this.runtime?.changeMode === 'function';
     }
 
-    async changePaymentMode(mode) {
+    async changePaymentMode(mode, { userAction = false } = {}) {
         if (!this.hasPaymentModes()) throw new Error('This build has one payment mode.');
-        await this.runtime.changeMode(mode);
+        await this.runtime.changeMode(mode, { userAction });
         this.announcePaymentMode();
     }
 
@@ -608,7 +640,7 @@ class ChatApp {
         if (!this.signInRequiredNow() || !this.accountModal) return false;
         // Conversation links are readable without signing in. This only skips
         // the automatic startup dialog; sending still uses the normal preflight.
-        if (new URLSearchParams(window.location.search).get('s')?.trim()) return false;
+        if (readConversationParam(window.location.search)?.trim()) return false;
         const state = await accountService.waitForAuthBootstrap();
         if (state?.accountId && state.status === 'unlocked') return false;
         this.accountModal.open?.();
@@ -665,18 +697,18 @@ class ChatApp {
                     if (signal?.aborted || after.accountId !== before.accountId) {
                         throw new DOMException('Account changed', 'AbortError');
                     }
-                    return toExtensionTicketSnapshot(
-                        this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
-                            { ticketCount: 0, maxShareCount: 0, busy: false }, after
-                    );
+                    return toExtensionTicketSnapshot(this.getExtensionTicketToolsSnapshot(), after);
                 },
                 getPendingEntitlementClaim,
                 prepareEntitlementBatch,
                 publishPreparedTicketUpdate,
                 releasePreparedTicketPublication,
                 getIssuerPublicKey: signal => this.getExtensionTicketIssuer(signal),
-                getToolsSnapshot: () => this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
-                    Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                getToolsSnapshot: () => this.getExtensionTicketToolsSnapshot(),
+                // Daily counts of tickets spent on inference on this device,
+                // oldest first: [{ day: 'YYYY-MM-DD', count }]. Dates and
+                // counts only; see services/ticketUsageLog.js.
+                getUsageHistory: () => ticketStore.getUsageHistory(),
                 subscribe: (listener) => {
                     if (typeof listener !== 'function') return () => {};
                     let active = true;
@@ -685,8 +717,7 @@ class ChatApp {
                         if (!active || !ready) return;
                         try {
                             listener(toExtensionTicketSnapshot(
-                                this.rightPanel?.getMembershipTicketToolsSnapshot?.()
-                                || Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                                this.getExtensionTicketToolsSnapshot(),
                                 getAccountSnapshot()
                             ));
                         } catch (error) {
@@ -722,7 +753,56 @@ class ChatApp {
                     const result = await this.services.tickets.resumeCodeRedemption((message, percent) => onProgress?.({ message, percent }));
                     return result ? Object.freeze({ ticketCount: this.services.tickets.getTicketCount(), pendingCount: result.pendingCount || 0 }) : null;
                 },
-                registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
+                registerShortageHandler: handler => this.registerTicketShortageHandler(handler),
+                // Redemptions and the move from the previous version as they
+                // run, for the host's ticket status: { phase: 'moving',
+                // tickets } | { phase: 'redeeming', source, message, percent }
+                // | { phase: 'done', source, ok, issued } | { phase:
+                // 'move-settled' }. Returns an unsubscribe.
+                subscribeRedemption: listener => {
+                    if (typeof listener !== 'function' || typeof window === 'undefined') return () => {};
+                    const call = event => {
+                        try { listener(event); } catch (error) { console.warn('Ticket redemption listener failed:', error); }
+                    };
+                    const handlers = {
+                        'legacy-tickets-moving': event => call({ phase: 'moving', tickets: Number(event?.detail?.tickets) || 0 }),
+                        'tickets-redemption-progress': event => call({ phase: 'redeeming', source: event?.detail?.source || null, message: String(event?.detail?.message || ''), percent: Number(event?.detail?.percent) }),
+                        'tickets-redemption-settled': event => call({ phase: 'done', source: event?.detail?.source || null, ok: event?.detail?.ok === true, issued: Number(event?.detail?.issued) || 0 }),
+                        'legacy-tickets-move-settled': () => call({ phase: 'move-settled' })
+                    };
+                    for (const [type, handler] of Object.entries(handlers)) window.addEventListener(type, handler);
+                    return () => {
+                        for (const [type, handler] of Object.entries(handlers)) window.removeEventListener(type, handler);
+                    };
+                }
+            }),
+            // Phone pairing, "Sync from your computer" (docs/PHONE_PAIRING.md).
+            // The host renders the QR and the approve step; the cryptography,
+            // the passkey prompt and the org requests stay in oa-chat.
+            pairing: Object.freeze({
+                available: () => phonePairingBuildEnabled()
+                    && window.electronAPI?.isElectron !== true
+                    && accountService.pairingAccountKind() !== null,
+                create: ({ onChange } = {}) => createPhonePairingSession({
+                    request: (path, init) => accountService.pairingRequest(path, init),
+                    accountKind: () => accountService.pairingAccountKind(),
+                    accountId: () => accountService.getState().accountId || null,
+                    revealMasterKey: options => accountService.revealMasterKeyForPairing(options),
+                    accountGeneration: () => accountService.loginGeneration,
+                    approveUsername: options => accountService.approveUsernamePairing(options),
+                    env: /staging|localhost|127\.0\.0\.1/.test(ORG_API_BASE) ? 'staging' : 'prod',
+                    // Each step is a breadcrumb for the error reporter (state
+                    // name only) and three of them count as feature usage;
+                    // the QR, the device and the messages never leave here.
+                    onChange: state => {
+                        addBreadcrumb({ category: 'pairing', code: state.status });
+                        if (state.status === 'showing') trackFeatureUsage('pairing_started');
+                        if (state.status === 'scanned') trackFeatureUsage('pairing_scanned');
+                        if (state.status === 'done') trackFeatureUsage('pairing_completed');
+                        onChange?.(state);
+                    }
+                }),
+                qrSvg: text => pairingQrSvg(String(text || ''))
             }),
             payments: Object.freeze({
                 // 'tickets' or 'zkapi'. Hosts use it to keep ticket
@@ -747,7 +827,9 @@ class ChatApp {
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
                 registerLoggedOut: handler => this.registerLoggedOutHandler(handler),
-                showToast: (...args) => this.showToast(...args)
+                showToast: (...args) => this.showToast(...args),
+                // Returns a stop function; the next toast also replaces it.
+                showLoadingToast: message => this.showLoadingToast(String(message || ''))
             })
         });
     }
@@ -1174,6 +1256,7 @@ class ChatApp {
             await chatDB.saveMessage(message);
         } catch (error) {
             console.warn('Could not persist the pending turn:', error?.message || error);
+            reportDiagnostic('storage.failed', { store: 'pending-turn', op: 'write' });
         }
     }
 
@@ -1181,6 +1264,81 @@ class ChatApp {
         if (!message?.pendingTurn) return;
         delete message.pendingTurn;
         message.isLocalOnly = false;
+    }
+
+    /** The pending reply's label while an automatic reload buys this turn's tickets. */
+    showTicketReloadPending(sessionId) {
+        this.updateSessionStreamingPhase(sessionId, 'reloading-tickets');
+        const indicator = document.querySelector(`.typing-indicator[data-pending-session-id="${String(sessionId).replace(/["\\]/g, '\\$&')}"]`);
+        if (indicator) this.ui?.updatePendingIndicator?.(indicator, 'reloading-tickets', null);
+    }
+
+    /**
+     * Tickets the org had already seen (spent from another device, or left
+     * by a lost sync) are being set aside one by one. One quiet toast says
+     * so for the whole sweep; the reply row keeps its usual label.
+     */
+    showTicketSweepPending(sessionId, skippedTickets) {
+        const sweeps = (this.ticketSweeps ||= new Map());
+        if (sweeps.has(sessionId)) return;
+        sweeps.set(sessionId, { stop: this.showLoadingToast('Removing already-used tickets…') });
+    }
+
+    /**
+     * The sweep is over, whichever way. The loading toast becomes one line
+     * that says how many left the wallet; when none are left for this
+     * message it says that too, instead of a second, red toast.
+     */
+    settleTicketSweep(sessionId, { skipped = 0, removed = skipped, recovered = false, reason = null, tier = null } = {}) {
+        const sweep = this.ticketSweeps?.get(sessionId);
+        this.ticketSweeps?.delete(sessionId);
+        sweep?.stop?.();
+        // `removed` is what the wallet lost (an org that names no ticket
+        // index sets a whole selection aside per refusal); `skipped` counts
+        // the refusals themselves.
+        const count = Number(removed > 0 ? removed : skipped);
+        if (!(count > 0)) return;
+        reportDiagnostic('access.sweep', { skipped: Number(skipped), recovered: recovered === true, tier });
+        const line = `Removed ${count} already-used ticket${count === 1 ? '' : 's'}`;
+        this.showToast(reason === 'TICKET_SHORTAGE' ? `${line}. No tickets left for this message.` : line, 'success', 5000);
+    }
+
+    async handleAcquisitionTicketShortage(session, { requiredTickets, availableTickets, label }, signal = null) {
+        this.throwIfAborted(signal);
+        const budget = buildTurnTicketBudget({
+            availableTickets, inferenceTickets: requiredTickets, memoryTickets: 0, modelLabel: label
+        });
+        const { retry } = await this.notifyTicketShortage(budget, {
+            signal,
+            onReloadStarted: () => {
+                if (!signal?.aborted) this.showTicketReloadPending(session.id);
+            }
+        });
+        this.throwIfAborted(signal);
+        // A ticket sweep that emptied the wallet says so in its own toast.
+        if (!retry && this.isViewingSession(session.id) && !this.ticketSweeps?.has(session.id)) {
+            this.showToast(budget.message, 'success', 7000);
+        }
+        return { retry };
+    }
+
+    // A send whose price rose before its key request: the prompt is already
+    // in the chat, so its reply becomes an interrupted turn with Retry (the
+    // same row a reload shows) rather than an error bubble under it.
+    async keepPendingTurnForTicketShortage(message, error, session) {
+        if (!message) return;
+        delete message.pendingTurn;
+        Object.assign(message, {
+            streamingPending: false, streamingPhase: null, streamingTokens: null, streamingReasoning: false,
+            isLocalOnly: true,
+            inferenceError: `${getErrorMessage(error, 'Not enough tickets for this request.')} Get tickets, then retry.`
+        });
+        try {
+            await chatDB.saveMessage(message);
+        } catch (storageError) {
+            console.warn('Could not keep the interrupted turn:', storageError?.message || storageError);
+        }
+        if (this.chatArea && this.isViewingSession(session.id)) await this.chatArea.appendMessage(message);
     }
 
     async discardPendingTurn(message) {
@@ -1198,8 +1356,9 @@ class ChatApp {
     }
 
     getPendingSend(sessionId = this.state.currentSessionId) {
-        return [...this.sendSubmissionsInFlight.values()].find(entry => entry.sessionId === sessionId
-            || (!entry.sessionId && entry.generation === this.sessionNavigationGeneration)) || null;
+        return [...this.sendSubmissionsInFlight.values()].find(entry => entry.sessionId
+            ? entry.sessionId === sessionId
+            : !sessionId && entry.generation === this.sessionNavigationGeneration) || null;
     }
 
     updateResponseModel(message, reportedModel, requestedModelId, requestedModelName, session) {
@@ -1275,9 +1434,9 @@ class ChatApp {
                     await onTokenUpdate?.(usage);
                     await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
                         usage: latestUsage, kind, final: false });
-                }, files, searchEnabled, controller, onStreamOpen, async chunk => {
+                }, files, searchEnabled, controller, onStreamOpen, async (chunk, meta) => {
                     if (chunk) receivedOutput = true;
-                    await onReasoningChunk?.(chunk);
+                    await onReasoningChunk?.(chunk, meta);
                 },
                 reasoningEnabled, reasoningEffort,
                 progress => this.setSessionPendingProgress(session.id, progress),
@@ -1311,6 +1470,18 @@ class ChatApp {
         return this.extensionSlots.subscribe(name, listener);
     }
 
+    getExtensionTicketToolsSnapshot() {
+        const tools = this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
+            Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false });
+        // Previous-version tickets waiting to move, or moving: a count only.
+        const movingTickets = ticketClient.getMovingTicketCount?.() || 0;
+        // While previous-version tickets are being moved the wallet is not
+        // settled: extensions must not read it as empty.
+        return ticketClient.isLegacyTransferRunning?.()
+            ? Object.freeze({ ...tools, busy: true, movingTickets })
+            : Object.freeze({ ...tools, movingTickets });
+    }
+
     detectInitialLinkContext() {
         try {
             const url = new URL(window.location.href);
@@ -1319,7 +1490,7 @@ class ChatApp {
             }
 
             const params = url.searchParams;
-            return params.has('tickets') || params.has('sharing') || params.has('s');
+            return params.has('tickets') || params.has('sharing') || hasConversationParam(params);
         } catch (error) {
             return false;
         }
@@ -1664,11 +1835,11 @@ class ChatApp {
         });
 
         // Extract block LaTeX $$...$$ and replace with placeholders
-        processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+        processedContent = transformMarkdownOutsideCode(processedContent, segment => replaceDisplayDollarMath(segment, (match, latex) => {
             const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
-        });
+        }));
 
         // Extract inline LaTeX \(...\) and replace with placeholders
         processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
@@ -1764,7 +1935,11 @@ class ChatApp {
     }
 
     shouldAutoScrollChat(force = false) {
-        if (force) return true;
+        if (force) {
+            cancelSourceReveal(this.elements?.chatArea);
+            return true;
+        }
+        if (isSourceRevealActive(this.elements?.chatArea)) return false;
         if (this.isPromptSlideUpEffectActive()) return false;
         return !this.isAutoScrollPaused;
     }
@@ -2049,7 +2224,13 @@ class ChatApp {
         const areaRect = chatArea.getBoundingClientRect();
         const messageRect = messageEl.getBoundingClientRect();
         const promptTop = chatArea.scrollTop + messageRect.top - areaRect.top;
-        const targetOffset = Math.round(chatArea.clientHeight * 0.25);
+        const phone = isPhoneComposer(this.elements.messageInput);
+        const composerTop = phone ? this.elements.inputCard?.getBoundingClientRect().top : null;
+        const visibleHeight = Number.isFinite(composerTop)
+            ? Math.max(0, Math.min(areaRect.bottom, composerTop) - areaRect.top - 24)
+            : chatArea.clientHeight;
+        const targetOffset = promptReadingOffset({ phone, areaHeight: chatArea.clientHeight,
+            visibleHeight, promptHeight: messageRect.height });
         const desiredScrollTop = Math.max(0, promptTop - targetOffset);
         const contentEndWithoutSpacer = chatArea.scrollHeight - spacerHeight;
         const requiredScrollHeight = desiredScrollTop + chatArea.clientHeight;
@@ -2214,26 +2395,16 @@ class ChatApp {
             e.stopPropagation();
             this.clearPromptSlideUpEffect();
             this.isAutoScrollPaused = false;
+            this.cancelScrollButtonWait?.();
             this._scrollButtonClickPending = true;
             this.hideScrollToBottomButton();
             this.scrollToBottom(true);
-
-            // Clear flag only after scroll animation completes and we're at bottom
-            // Use longer timeout to account for smooth scroll animation
-            const clearPendingFlag = () => {
-                const chatArea = this.elements.chatArea;
-                if (chatArea) {
-                    const isAtBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 10;
-                    if (isAtBottom) {
-                        this._scrollButtonClickPending = false;
-                        return;
-                    }
-                }
-                // If not at bottom yet, check again
-                setTimeout(clearPendingFlag, 100);
-            };
-            // Start checking after initial scroll animation time
-            setTimeout(clearPendingFlag, 400);
+            const sessionId = this.state.currentSessionId;
+            this.cancelScrollButtonWait = waitForScrollBottom(this.elements.chatArea, () => {
+                this._scrollButtonClickPending = false;
+                this.cancelScrollButtonWait = null;
+                this.updateScrollButtonVisibility();
+            }, { isCurrent: () => this.state.currentSessionId === sessionId });
         });
 
         // Insert into input container (not input-card which has isolation: isolate that breaks backdrop-filter)
@@ -2257,27 +2428,14 @@ class ChatApp {
             this.createScrollToBottomButton();
         }
 
-        if (this.scrollToBottomButton && this.scrollToBottomButton.classList.contains('hidden')) {
-            this.scrollToBottomButton.classList.remove('hidden');
-            // Trigger reflow to ensure animation plays
-            void this.scrollToBottomButton.offsetWidth;
-            this.scrollToBottomButton.classList.add('visible');
-        }
+        setScrollButtonVisible(this.scrollToBottomButton, true);
     }
 
     /**
      * Hides the scroll-to-bottom button with fade-out animation
      */
     hideScrollToBottomButton() {
-        if (this.scrollToBottomButton && !this.scrollToBottomButton.classList.contains('hidden')) {
-            this.scrollToBottomButton.classList.remove('visible');
-            // Wait for fade-out animation before hiding
-            setTimeout(() => {
-                if (this.scrollToBottomButton) {
-                    this.scrollToBottomButton.classList.add('hidden');
-                }
-            }, 200);
-        }
+        setScrollButtonVisible(this.scrollToBottomButton, false);
     }
 
     // Keep the toolbar opaque whenever its controls would cover the transcript.
@@ -2296,6 +2454,12 @@ class ChatApp {
         const chatArea = this.elements.chatArea;
         if (!chatArea) return;
 
+        // Avoid covering Sources while its disclosure is moving. Recheck when
+        // the motion finishes or a manual gesture cancels it.
+        if (isSourceRevealActive(chatArea)) {
+            this.hideScrollToBottomButton();
+            return;
+        }
         // Don't re-show button while scroll-to-bottom click is still processing
         if (this._scrollButtonClickPending) return;
 
@@ -2357,6 +2521,9 @@ class ChatApp {
      */
     showLinkPreview(linkElement, metadata) {
         if (!this.linkPreviewCard) return;
+        if (this.currentPreviewLink !== linkElement || !this.elements.messagesContainer?.contains(linkElement)) {
+            return;
+        }
 
         const loader = this.linkPreviewCard.querySelector('.link-preview-loader');
         const content = this.linkPreviewCard.querySelector('.link-preview-content');
@@ -2448,10 +2615,10 @@ class ChatApp {
      * Hides the link preview card.
      */
     hideLinkPreview() {
-        if (!this.linkPreviewCard) return;
-
-        this.linkPreviewCard.classList.remove('visible');
-        this.linkPreviewCard.classList.add('hidden');
+        clearTimeout(this.linkPreviewTimeout);
+        this.linkPreviewTimeout = null;
+        this.linkPreviewCard?.classList.remove('visible');
+        this.linkPreviewCard?.classList.add('hidden');
         this.currentPreviewLink = null;
         this.isHoveringPreviewCard = false;
         this.cancelLinkPreviewHide();
@@ -2469,6 +2636,7 @@ class ChatApp {
         if (!url) return;
 
         this.currentPreviewLink = linkButton;
+        this.cancelLinkPreviewHide();
 
         // Clear any existing timeout
         if (this.linkPreviewTimeout) {
@@ -2477,7 +2645,7 @@ class ChatApp {
 
         // Show preview after a short delay
         this.linkPreviewTimeout = setTimeout(async () => {
-            if (this.currentPreviewLink !== linkButton) return;
+            if (this.currentPreviewLink !== linkButton || !this.elements.messagesContainer?.contains(linkButton)) return;
 
             // Show loading state
             this.showLinkPreview(linkButton, { loading: true });
@@ -2555,6 +2723,19 @@ class ChatApp {
         const messagesContainer = this.elements.messagesContainer;
         if (!messagesContainer) return;
 
+        // Removed/replaced anchors do not reliably receive mouseleave. This
+        // also covers streaming rerenders, edits and opening an empty chat.
+        this.linkPreviewObserver?.disconnect();
+        this.linkPreviewObserver = new MutationObserver(() => {
+            if (this.currentPreviewLink && !messagesContainer.contains(this.currentPreviewLink)) {
+                this.hideLinkPreview();
+            }
+        });
+        this.linkPreviewObserver.observe(messagesContainer, { childList: true, subtree: true });
+        window.addEventListener('blur', () => this.hideLinkPreview());
+        messagesContainer.addEventListener('scroll', () => this.hideLinkPreview(), true);
+        this.elements.chatArea?.addEventListener('scroll', () => this.hideLinkPreview());
+
         messagesContainer.addEventListener('mouseenter', (e) => {
             this.handleLinkMouseEnter(e);
         }, true);
@@ -2612,7 +2793,13 @@ class ChatApp {
             // Create modal overlay
             const modal = document.createElement('div');
             modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 animate-fade-in cursor-pointer p-4';
-            modal.onclick = () => modal.remove();
+            const releaseImage = this.composerImageUrls?.retainViewer(img.dataset?.fullSrc);
+            const closeModal = () => {
+                modal.remove();
+                releaseImage?.();
+                document.removeEventListener('keydown', escHandler);
+            };
+            modal.onclick = closeModal;
 
             // Create image container
             const container = document.createElement('div');
@@ -2621,7 +2808,8 @@ class ChatApp {
 
             // Create full-size image
             const fullImg = document.createElement('img');
-            fullImg.src = img.src;
+            // Composer previews are thumbnails; they carry the full picture.
+            fullImg.src = img.dataset?.fullSrc || img.src;
             fullImg.alt = img.alt;
             fullImg.className = 'max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl';
 
@@ -2633,7 +2821,7 @@ class ChatApp {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             `;
-            closeBtn.onclick = () => modal.remove();
+            closeBtn.onclick = closeModal;
 
             // Assemble modal
             container.appendChild(fullImg);
@@ -2644,8 +2832,7 @@ class ChatApp {
             // Add escape key handler
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
-                    modal.remove();
-                    document.removeEventListener('keydown', escHandler);
+                    closeModal();
                 }
             };
             document.addEventListener('keydown', escHandler);
@@ -2752,8 +2939,69 @@ class ChatApp {
         void this.initWideMode();
         void this.initSidebarVisibility();
 
+        // Tickets from the previous production org move into this wallet
+        // automatically once it is open (see application/legacyTicketTransfer.js).
+        if (this.features.accounts) {
+            // The move shows in the loading toast while it runs, then in the
+            // success toast (which replaces it). A move that could not finish
+            // just clears the loading toast; it is retried later.
+            let stopMoveToast = null;
+            window.addEventListener('legacy-tickets-moving', event => {
+                const tickets = Number(event?.detail?.tickets) || 0;
+                if (tickets <= 0) return;
+                stopMoveToast?.();
+                stopMoveToast = this.showLoadingToast(
+                    `Moving your ${tickets} ${tickets === 1 ? 'ticket' : 'tickets'} from the previous version…`
+                );
+            });
+            window.addEventListener('legacy-tickets-move-settled', () => {
+                stopMoveToast?.();
+                stopMoveToast = null;
+            });
+            // Tickets that cannot move (over the allowance, or not valid) are
+            // said once in one line, not on every page load.
+            const STRANDED_SAID_KEY = 'oa-legacy-stranded-said';
+            const strandedLine = count => `${count} ${count === 1 ? 'ticket' : 'tickets'} from the previous version couldn't be moved.`;
+            const strandedIsNew = count => {
+                try {
+                    if (localStorage.getItem(STRANDED_SAID_KEY) === String(count)) return false;
+                    localStorage.setItem(STRANDED_SAID_KEY, String(count));
+                } catch { /* storage blocked: say it */ }
+                return true;
+            };
+            window.addEventListener('legacy-tickets-moved', event => {
+                const moved = Number(event?.detail?.moved) || 0;
+                const stranded = Number(event?.detail?.stranded) || 0;
+                if (moved > 0) {
+                    const line = `Moved ${moved} ${moved === 1 ? 'ticket' : 'tickets'} from your previous wallet`;
+                    if (stranded > 0) strandedIsNew(stranded);
+                    this.showToast(stranded > 0 ? `${line}. ${strandedLine(stranded)}` : line, 'success', stranded > 0 ? 7000 : undefined);
+                }
+            });
+            window.addEventListener('legacy-tickets-attention', event => {
+                if (event?.detail?.message) this.showToast(event.detail.message, 'info', 7000);
+            });
+            window.addEventListener('legacy-tickets-stranded', event => {
+                const stranded = Number(event?.detail?.stranded) || 0;
+                if (stranded > 0 && strandedIsNew(stranded)) this.showToast(strandedLine(stranded), 'info', 7000);
+            });
+            ticketClient.startLegacyTransferWatcher?.();
+        }
+
         window.addEventListener('oa-db-versionchange', () => {
             this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
+        });
+
+        // Reopening after an unexpected close is silent; only a failed reopen
+        // needs the person. It says nothing about stored chats being gone.
+        window.addEventListener('oa-db-reconnect-failed', () => {
+            this.showToast('Chat storage is unavailable right now. Reload to continue.', 'error');
+        });
+
+        // Only after the browser recreated chat storage and this tab tried to
+        // save into a chat from before: say why, once, and how to keep it.
+        window.addEventListener('oa-db-reset-write-refused', () => {
+            this.showToast('This browser cleared chat storage while this tab was open. Chats shown here from before are no longer saved; copy anything you need before reloading.', 'error', 9000);
         });
 
         window.addEventListener('oa-db-compat-mode', () => {
@@ -2762,14 +3010,10 @@ class ChatApp {
 
         window.addEventListener('ticket-key-invalidated', (event) => {
             const removedCount = Number(event.detail?.removedCount || 0);
-            const removedLabel = removedCount > 0
-                ? `${removedCount} old ticket${removedCount === 1 ? '' : 's'} removed.`
-                : 'Old tickets were removed.';
-            this.showToast(
-                `The org rotated its ticket signing key. ${removedLabel}`,
-                'error',
-                7000
-            );
+            // This signal also covers non-monthly rotations. Describe only
+            // confirmed removals; zero-removal/replayed checks stay quiet.
+            if (!Number.isInteger(removedCount) || removedCount <= 0) return;
+            this.showToast('Your unused tickets have expired. Tickets expire at the end of each month. Open Account to get more tickets.', 'info', 5000);
         });
 
         // Load cached verifier trust before any persisted access is restored or
@@ -2817,7 +3061,7 @@ class ChatApp {
         this.messageNavigation = this.ui.mountMessageNavigation();
 
         // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
-        if (this.features.tickets) initModelTiers();
+        if (this.features.tickets) startModelTierRefresh();
         this.modelConfiguration.initPinnedModels();
         this.modelConfiguration.onPinnedModelsUpdate(() => {
             void this.refreshModelsForAvailabilityUpdate();
@@ -2841,14 +3085,6 @@ class ChatApp {
                 console.warn('Scrubber init failed:', error);
             });
 
-            if (!this.features.accounts) {
-                // Accountless compositions never bootstrap authentication/sync.
-            } else if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(() => accountService.maybeAutoUnlock());
-            } else {
-                setTimeout(() => accountService.maybeAutoUnlock(), 800);
-            }
-
             await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
             networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 
@@ -2867,6 +3103,8 @@ class ChatApp {
                 document.documentElement.setAttribute('data-welcome-hidden', 'true');
             }
         })();
+
+        this.initializeZeroDataRetention();
 
         // Load settings from IndexedDB in parallel; this is independent of sidebar history load.
         const settingsPromise = Promise.all([
@@ -2892,7 +3130,7 @@ class ChatApp {
             }
         });
         if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
-        if (!new URLSearchParams(window.location.search).has('s')) this.restoringInitialConversation = false;
+        if (!hasConversationParam(window.location.search)) this.restoringInitialConversation = false;
 
         const [
             storedModelPreference,
@@ -3102,10 +3340,14 @@ class ChatApp {
             }, 0);
         }
 
+        // A pre-rename `?s=` conversation link becomes `?c=` before anything
+        // reads or reports the address (see services/conversationLink.js).
+        normalizeConversationAddress();
+
         // Capture ticket codes from URL before session handling (cleans URL if needed)
         this.captureTicketCodeFromUrl();
 
-        // Check for session in URL (?s=sessionId)
+        // Check for session in URL (?c=sessionId)
         const finishInitialNavigation = () => {
             this.restoringInitialConversation = false;
             this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
@@ -3216,15 +3458,14 @@ class ChatApp {
     }
 
     /**
-     * Check URL for session parameter (?s=sessionId)
+     * Check URL for session parameter (?c=sessionId; legacy ?s= still read)
      * - First checks if it's a local session by ID
      * - Then checks if it's a local session by shareId (owned shares)
      * - Then checks if it's a local session by importedFrom (imported shares)
      * - If not found locally, tries to fetch as shared session from org
      */
     async checkForUrlSession() {
-        const params = new URLSearchParams(window.location.search);
-        const sessionId = params.get('s');
+        const sessionId = readConversationParam(window.location.search);
 
         if (!sessionId) {
             // No URL params - update URL to reflect current session (if any)
@@ -3258,8 +3499,7 @@ class ChatApp {
         // Do not turn that stale local address into a remote share lookup.
         const localNavigationId = window.history.state?.oaLocalSessionId;
         if (typeof localNavigationId === 'string' && this.normalizeId(localNavigationId) === normalizedInput) {
-            const url = new URL(window.location);
-            url.searchParams.delete('s');
+            const url = deleteConversationParam(new URL(window.location));
             const navigationState = { ...window.history.state };
             delete navigationState.oaLocalSessionId;
             window.history.replaceState(navigationState, '', url);
@@ -3683,8 +3923,7 @@ class ChatApp {
         if (this.state.sessions.some(session => session.id === sessionId)) {
             navigationState.oaLocalSessionId = sessionId;
         }
-        const url = new URL(window.location);
-        url.searchParams.set('s', sessionId);
+        const url = setConversationParam(new URL(window.location), sessionId);
         window.history.replaceState(navigationState, '', url);
     }
 
@@ -3699,8 +3938,7 @@ class ChatApp {
         }
 
         // Session ID is used for both local and shared URLs
-        const url = new URL(window.location.origin + window.location.pathname);
-        url.searchParams.set('s', session.id);
+        const url = setConversationParam(new URL(window.location.origin + window.location.pathname), session.id);
 
         await navigator.clipboard.writeText(url.toString());
         this.showToast('Link copied to clipboard', 'success');
@@ -4040,6 +4278,9 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
+        // Announced like any other status: the spinner alone says nothing.
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
         // Use same styling as showToast for consistency
         toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground  flex items-center gap-2';
 
@@ -4352,7 +4593,18 @@ class ChatApp {
         resizeObserver.observe(this.elements.inputCard || inputContainer);
     }
 
-    async loadModels() {
+    loadModels() {
+        // One catalog download at a time. A send that needs the catalog while
+        // the page-load download is still in flight shares that download
+        // (getFreshInferenceTicketRequirement) instead of starting a second one.
+        const load = this.runModelCatalogLoad().finally(() => {
+            if (this.modelsLoadPromise === load) this.modelsLoadPromise = null;
+        });
+        this.modelsLoadPromise = load;
+        return load;
+    }
+
+    async runModelCatalogLoad() {
         const session = this.getCurrentSession();
         const sessionId = this.state.currentSessionId;
         const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
@@ -4834,7 +5086,7 @@ class ChatApp {
     }
 
     async setSessionCouncilTranscriptHint(session, hasCouncilTranscript, options = {}) {
-        if (!session) return false;
+        if (!session || chatDB.messageReplacements.has(session.id)) return false;
 
         const nextHasCouncilTranscript = hasCouncilTranscript === true;
         const currentHasCouncilTranscript = session.hasCouncilTranscript === true;
@@ -5000,6 +5252,91 @@ class ChatApp {
     }
 
     /**
+     * A model that answers in segments (answer a line, call a tool, think,
+     * answer on) is not done when its first words arrive. When it thinks
+     * again, its settled trace goes back to "Thinking..." so the reply does
+     * not look finished while the model is still working.
+     * @returns {boolean} true when the thinking has no words (the caller
+     *   settles it at the next content); words settle through the usual path
+     */
+    resumeThinkingDisplay(streamingMessage, streamedReasoning, sessionId) {
+        const wordless = !streamedReasoning;
+        streamingMessage.streamingReasoning = true;
+        if (this.chatArea && this.isViewingSession(sessionId)) {
+            if (wordless) this.chatArea.updateWithheldReasoning?.(streamingMessage.id, true);
+            this.chatArea.resumeReasoningDisplay(streamingMessage.id);
+        }
+        return wordless;
+    }
+
+    /** The answer continued after wordless thinking: the header takes the new time. */
+    settleResumedWithheldThinking(streamingMessage, reasoningStartTime, sessionId) {
+        streamingMessage.streamingReasoning = false;
+        streamingMessage.reasoningDuration = Date.now() - reasoningStartTime;
+        if (this.chatArea && this.isViewingSession(sessionId)) {
+            this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
+        }
+    }
+
+    /**
+     * "Still working…" under a reply whose text has stalled: armed by each
+     * answer chunk, shown after STILL_WORKING_DELAY_MS without new text,
+     * cleared by text, by thinking (the header says so) and by the end.
+     */
+    createStillWorkingSignal(message, sessionId, turnStopped) {
+        const messageId = message.id;
+        let timer = null;
+        let shown = false;
+        let lastTextAt = Date.now();
+        const show = (working) => {
+            if (shown === working) return;
+            shown = working;
+            if (this.chatArea && this.isViewingSession(sessionId)) {
+                this.chatArea.setStreamingStillWorking?.(messageId, working, lastTextAt);
+            }
+        };
+        const clear = () => {
+            if (timer) clearTimeout(timer);
+            timer = null;
+            show(false);
+        };
+        const arm = () => {
+            clear();
+            lastTextAt = Date.now();
+            timer = setTimeout(() => {
+                timer = null;
+                if (!turnStopped()) show(true);
+            }, STILL_WORKING_DELAY_MS);
+        };
+        this.streamingReplyDisplays ??= new Map();
+        const display = { message, sessionId, isWorking: () => shown, since: () => lastTextAt, turnStopped };
+        this.streamingReplyDisplays.set(messageId, display);
+        const dispose = () => {
+            clear();
+            if (this.streamingReplyDisplays.get(messageId) === display) this.streamingReplyDisplays.delete(messageId);
+        };
+        return { arm, clear, dispose };
+    }
+
+    getStreamingReplyDisplay(messageId, sessionId) {
+        const display = this.streamingReplyDisplays?.get(messageId);
+        if (!display || display.sessionId !== sessionId || display.turnStopped()) return null;
+        const message = display.message;
+        return { reasoning: message.reasoning, streamingReasoning: message.streamingReasoning,
+            reasoningDuration: message.reasoningDuration, reasoningWithheld: message.reasoningWithheld };
+    }
+
+    restoreStreamingReplyDisplays(sessionId) {
+        if (!this.isViewingSession(sessionId)) return;
+        this.councilController?.restoreStillWorkingDisplays(sessionId);
+        for (const [messageId, display] of this.streamingReplyDisplays || []) {
+            if (display.sessionId === sessionId && !display.turnStopped() && display.isWorking()) {
+                this.chatArea?.setStreamingStillWorking?.(messageId, true, display.since());
+            }
+        }
+    }
+
+    /**
      * Checks if the user is currently viewing the specified session.
      * Used to gate UI updates for streaming to prevent cross-session pollution.
      * @param {string} sessionId - Session ID to check
@@ -5053,12 +5390,45 @@ class ChatApp {
         return getTicketCost(modelId, reasoningEnabled);
     }
 
-    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
-        modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled } = {}) {
-        if (!session) return { tickets: 0, label: 'the selected model' };
-        let models = this.getModelsForSession(session);
-        await ensureModelTiersReady({ signal });
+    hasEligibleModelAccess(session, modelName = null, modelId = null, restore = false) {
+        if (!ticketTierPolicyEnabled() || !this.usesTicketAccess(session)) return true;
+        const models = this.getModelsForSession(session);
+        const selected = modelId || modelName || session.model;
+        const entry = models.find(m => m.id === selected || m.name === selected);
+        const id = modelId || entry?.id;
+        const info = findTierAccess(session, id, id ? this.getTicketCost(id) : NaN, this.inferenceService);
+        if (info && restore && info.key !== session.apiKey) this.inferenceService.setAccessInfo(session, info);
+        return !!info;
+    }
 
+    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
+        modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled, refreshPricing = false } = {}) {
+        if (!session) return { tickets: 0, label: 'the selected model' };
+        const councilActive = this.isCouncilModeActive(session) && this.councilController;
+        if (!councilActive && (ticketTierPolicyEnabled() && this.usesTicketAccess(session)
+            ? this.hasEligibleModelAccess(session, requestedModelName)
+            : this.inferenceService.getAccessToken(session) && !this.inferenceService.isAccessExpired(session))) {
+            return { tickets: 0, label: session.model || 'the selected model' };
+        }
+        let models = this.getModelsForSession(session);
+        // The budget check uses the live price map this page holds (fetched at
+        // load, on each return to the tab and every ten minutes). It does not
+        // ask the org again before the message is accepted. Key acquisition
+        // refreshes immediately before spending; rejected counts retry once.
+        const councilTicketRequirement = async entries => {
+            await this.councilController.refreshStoredTicketAccess?.(session);
+            const fresh = this.councilController.getFreshEntriesForAccess(session, entries);
+            if (fresh.length === 0) return 0;
+            await ensureModelTiersReady({ signal, forceRefresh: true });
+            return this.councilController.calculateCouncilTicketRequirement(fresh);
+        };
+
+        if (models.length === 0 && this.modelsLoadPromise) {
+            // The page-load catalog download is still in flight: wait for it
+            // rather than download the same catalog a second time.
+            await this.modelsLoadPromise;
+            models = this.getModelsForSession(session);
+        }
         if (models.length === 0) {
             try {
                 const fetchedModels = await this.inferenceService.fetchModels(session);
@@ -5082,7 +5452,7 @@ class ChatApp {
                 );
                 return {
                     tickets: laneEntry?.id
-                        ? this.councilController.calculateFreshTicketRequirement(session, [laneEntry])
+                        ? await councilTicketRequirement([laneEntry])
                         : 0,
                     label: laneEntry?.name || councilStageEntry?.model || 'the selected model'
                 };
@@ -5096,16 +5466,13 @@ class ChatApp {
                 : null;
             const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
             return {
-                tickets: this.councilController.calculateFreshTicketRequirement(session, accessEntries),
+                tickets: await councilTicketRequirement(accessEntries),
                 label: accessEntries.length > 1 ? 'the selected models' : (accessEntries[0]?.name || 'the selected model')
             };
         }
 
-        const hasAccessToken = !!this.inferenceService.getAccessToken(session);
-        if (hasAccessToken && !this.inferenceService.isAccessExpired(session)) {
-            return { tickets: 0, label: session.model || 'the selected model' };
-        }
-
+        if (refreshPricing) await ensureModelTiersReady({ signal, forceRefresh: true });
+        else await ensureModelTiersPreviewReady({ signal });
         const modelName = this.normalizeModelName(requestedModelName || session.model, session)
             || requestedModelName || session.model
             || this.inferenceService.getDefaultModelName(session);
@@ -5113,10 +5480,42 @@ class ChatApp {
             || models.find(model => model.id === modelName)
             || this.getFallbackModelEntry(session);
 
+        if (ticketTierPolicyEnabled() && this.usesTicketAccess(session) && modelEntry) {
+            const stored = await chatDB.getSession(session.id);
+            if (stored) Object.assign(session, mergeTicketAccessHistory(session, stored));
+            if (this.hasEligibleModelAccess(session, modelName, modelEntry.id)) {
+                return { tickets: 0, label: modelEntry.name || modelName };
+            }
+        }
         return {
             tickets: modelEntry ? this.getTicketCost(modelEntry.id, reasoningEnabled) : 0,
             label: modelEntry?.name || modelName || 'the selected model'
         };
+    }
+
+    /**
+     * Resolves with the account state once `ready(state)` holds, or with the
+     * current state when the wait is cancelled or `timeoutMs` passes.
+     */
+    waitForAccountState(ready, { signal = null, timeoutMs = ACCOUNT_SCOPE_WAIT_MS } = {}) {
+        const current = accountService.getState();
+        if (ready(current) || signal?.aborted) return Promise.resolve(current);
+        return new Promise(resolve => {
+            let settled = false;
+            let unsubscribe = () => {};
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                unsubscribe();
+                clearTimeout(timer);
+                signal?.removeEventListener?.('abort', finish);
+                resolve(accountService.getState());
+            };
+            const timer = setTimeout(finish, timeoutMs);
+            signal?.addEventListener?.('abort', finish, { once: true });
+            unsubscribe = accountService.subscribe(state => { if (ready(state)) finish(); });
+            if (ready(accountService.getState())) finish();
+        });
     }
 
     async preflightTurnTicketBudget(session, content, options = {}) {
@@ -5124,15 +5523,37 @@ class ChatApp {
         // in dialog, not a ticket shortage (which would open the Welcome
         // offers over a page that cannot buy anything).
         if (this.signInRequiredNow()) {
+            // Start-up may still be checking the saved session: wait for its
+            // answer rather than judging (or restarting) an unverified account.
+            await this.accountReadyPromise?.catch?.(() => {});
+            await accountService.waitForAuthBootstrap?.();
+            this.throwIfAborted(options.signal);
+            // Lock-free while the shared binding still names this account; a
+            // sign-in or switch made in another window takes the handoff path.
             await accountService.reconcileSharedAccount();
-            const account = accountService.getState();
+            this.throwIfAborted(options.signal);
+            let account = accountService.getState();
             if (!account?.accountId || account.sessionVerified !== true || account.status !== 'unlocked') {
                 this.accountModal?.open?.();
                 return false;
             }
-            if (account.accountHandoffPending || account.accountScopeReady !== true || account.ticketSyncReady !== true) {
-                this.showToast('Your inference tickets are still loading. Try again shortly.', 'info', 5000);
-                return false;
+            if (account.accountHandoffPending || account.accountScopeReady !== true) {
+                // The wallet scope is activated by this tab's own start-up
+                // (local work). A send in that window waits with the spinner
+                // showing instead of being dropped with a notice.
+                account = await this.waitForAccountState(
+                    state => !state.accountHandoffPending && state.accountScopeReady === true,
+                    { signal: options.signal, timeoutMs: ACCOUNT_SCOPE_WAIT_MS }
+                );
+                this.throwIfAborted(options.signal);
+                if (!account?.accountId || account.sessionVerified !== true || account.status !== 'unlocked') {
+                    this.accountModal?.open?.();
+                    return false;
+                }
+                if (account.accountHandoffPending || account.accountScopeReady !== true) {
+                    this.showToast('Your inference tickets are still loading. Try again shortly.', 'info', 5000);
+                    return false;
+                }
             }
         }
         if (!this.usesTicketAccess(session)) {
@@ -5153,25 +5574,70 @@ class ChatApp {
             && !hasValidMemoryKey(session)
             ? CONFIDENTIAL_KEY_TICKETS
             : 0;
-        let inference;
-        try {
-            inference = await this.getFreshInferenceTicketRequirement(session, options);
-        } catch (error) {
-            if (error?.code !== 'MODEL_TIER_CONFIG_UNAVAILABLE') throw error;
-
-            const message = 'Ticket pricing is temporarily unavailable. Please try again.';
-            this.showToast(message, 'error', 7000);
-            this.floatingPanel?.showMessage?.(message, 'error', 7000);
-            return false;
-        }
-        const budget = buildTurnTicketBudget({
-            availableTickets: ticketClient.getTicketCount(),
+        const readRequirement = async (refreshPricing = false) => {
+            try {
+                return await this.getFreshInferenceTicketRequirement(session, { ...options, refreshPricing });
+            } catch (error) {
+                if (error?.code !== 'MODEL_TIER_CONFIG_UNAVAILABLE') throw error;
+                const message = 'Ticket pricing is temporarily unavailable. Please try again.';
+                this.showToast(message, 'error', 7000);
+                this.floatingPanel?.showMessage?.(message, 'error', 7000);
+                return null;
+            }
+        };
+        let inference = await readRequirement();
+        if (!inference) return false;
+        const buildBudget = () => buildTurnTicketBudget({
+            availableTickets: ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0),
             inferenceTickets: inference.tickets,
             memoryTickets,
             modelLabel: inference.label
         });
+        let budget = buildBudget();
+        const syncStillStarting = state => Boolean(state?.accountId) && state.status === 'unlocked'
+            && state.sessionVerified === true && state.accountScopeReady === true
+            && state.ticketSyncReady !== true && state.ticketSyncFailed !== true;
+        if (!budget.sufficient && syncStillStarting(accountService.getState())) {
+            // The first encrypted sync of this page may still be pulling this
+            // account's tickets, which can cover the turn without a purchase.
+            // A wallet that already covers it never waits for the sync.
+            await this.waitForAccountState(state => !syncStillStarting(state),
+                { signal: options.signal, timeoutMs: TICKET_SYNC_WAIT_MS });
+            this.throwIfAborted(options.signal);
+            budget = buildBudget();
+        }
+        if (!budget.sufficient && ticketClient.isLegacyTransferRunning?.()) {
+            // A move of previous-version tickets may be finishing right now
+            // and is the only thing that can turn this shortage into a
+            // sufficient balance without a purchase. A wallet that already
+            // covers the turn never waits for it: the move starts on every
+            // page load, and the first send would otherwise queue behind it.
+            await ticketClient.awaitLegacyTransfer?.();
+            budget = buildBudget();
+        }
+        const heldTickets = ticketClient.getHeldTicketCount?.() || 0;
 
         if (budget.sufficient) return true;
+
+        if (heldTickets > 0) {
+            // Old tickets are still waiting to move: never treat that as a
+            // shortage (which could start an automatic reload purchase).
+            void ticketClient.runLegacyTransfer?.().catch(() => {});
+            const message = 'Your tickets from the previous version are still being moved. Try again in a moment.';
+            this.showToast(message, 'info', 6000);
+            this.floatingPanel?.showMessage?.(message, 'info', 6000);
+            return false;
+        }
+
+        // A stale preview may overestimate the cost after a price reduction.
+        // Refresh before opening offers or attempting a paid reload, rather
+        // than making that financial decision from the preview alone.
+        if (inference.tickets > 0 && !this.isCouncilModeActive(session)) {
+            inference = await readRequirement(true);
+            if (!inference) return false;
+            budget = buildBudget();
+            if (budget.sufficient) return true;
+        }
 
         const accountState = accountService.getState();
         if (accountState?.accountId && (
@@ -5291,11 +5757,12 @@ class ChatApp {
      * @returns {boolean}
      */
     isCurrentSessionStreaming() {
-        const session = this.getCurrentSession();
-        if (this.getPendingSend(session?.id || null)) return true;
-        if (!session) return false;
-        const state = this.getSessionStreamingState(session.id);
-        return state.isStreaming;
+        // By id, not through the cached session object: the chat list is
+        // rebuilt from storage on cross-tab changes (reloadSessions), and a
+        // reply must keep reading as this tab's while that happens.
+        const sessionId = this.state.currentSessionId || null;
+        if (this.getPendingSend(sessionId)) return true;
+        return sessionId ? this.getSessionStreamingState(sessionId).isStreaming === true : false;
     }
 
     getCurrentSessionStreamingPhase() {
@@ -5355,6 +5822,7 @@ class ChatApp {
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
     async handleNewChatRequest(options = {}) {
+        const departingSend = this.getPendingSend();
         this.sessionNavigationGeneration += 1;
         const previousSession = this.getCurrentSession();
         const shouldCancel = typeof this.runtime.shouldCancelOnNewChat === 'function'
@@ -5364,7 +5832,7 @@ class ChatApp {
         // barrier before the next Send. Background work never delays typing.
         this.runtime.onNewChat?.({ sessionId: previousSession?.id || null });
         if (shouldCancel) {
-            this.sendSubmissionsInFlight.get('__new_chat__')?.controller.abort();
+            departingSend?.controller.abort();
             if (previousSession?.id) void this.cancelSessionWork(previousSession.id).catch(error => {
                 this.showToast(error.message, 'error');
             });
@@ -5419,6 +5887,7 @@ class ChatApp {
      * No session is selected until the user sends their first message.
      */
     async clearCurrentSession(options = {}) {
+        this.hideLinkPreview();
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         const navigationGeneration = this.sessionNavigationGeneration;
         this.sessionSwitchInFlight = null;
@@ -5506,6 +5975,8 @@ class ChatApp {
             const reservation = this.beginSessionMutation(sessionId);
             if (!reservation) { await this.acknowledgeSessionMutationBusy(sessionId); return false; }
             try {
+                const previousTitles = recordPreviousSessionTitle(session, title);
+                if (previousTitles) session.previousTitles = previousTitles;
                 session.title = title;
                 session.titleSource = titleSource;
                 session.titleGenerationPending = Boolean(titleGenerationPending);
@@ -5558,7 +6029,7 @@ class ChatApp {
     }
 
     applySessionConversationSearchText(session, messages) {
-        if (!session) return null;
+        if (!session || chatDB.messageReplacements.has(session.id)) return null;
         const fields = this.buildSessionSearchIndexFields(messages);
         Object.assign(session, fields);
         const loadedSession = this.state.sessionsById.get(session.id);
@@ -5568,11 +6039,18 @@ class ChatApp {
         return fields;
     }
 
+    refreshSessionSearchTextInBackground(session) {
+        Promise.resolve()
+            .then(() => this.refreshSessionConversationSearchText(session, null, { persist: true }))
+            .catch(error => console.warn('[App] Conversation search index refresh failed:', error?.message || error));
+    }
+
     async refreshSessionConversationSearchText(session, messages = null, options = {}) {
-        if (!session?.id) return null;
+        if (!session?.id || chatDB.messageReplacements.has(session.id)) return null;
         const sourceMessages = Array.isArray(messages)
             ? messages
             : await chatDB.getSessionMessages(session.id);
+        if (chatDB.messageReplacements.has(session.id)) return null;
         const fields = this.applySessionConversationSearchText(session, sourceMessages);
         if (options.persist && typeof chatDB.updateSessionSearchIndex === 'function') {
             await chatDB.updateSessionSearchIndex(session.id, fields);
@@ -5593,6 +6071,34 @@ class ChatApp {
         session.updatedAt = Date.now();
         await chatDB.saveSession(session);
         this.renderSessions();
+    }
+
+    /**
+     * Start the automatic title now, or, when the chat's key was just issued and
+     * may still be refused for its first seconds (keyReadiness.js), only once
+     * this turn's own request is accepted. A deferred title is not a job: Stop
+     * or a failed turn leaves nothing to wait, hold the composer or bill later,
+     * and the still-pending title is attempted again only when a Retry of this
+     * turn is accepted (a new follow-up message keeps the local title).
+     * Returns the starter to call when the stream opens (a no-op otherwise).
+     */
+    startOrDeferSessionTitle(session, userMessageId) {
+        if (!session?.id || !userMessageId) return () => {};
+        const start = () => {
+            this.generateSessionTitleIfNeeded(session.id, userMessageId).catch(error => {
+                console.debug('Session title generation failed:', error);
+            });
+        };
+        if (!getFreshKeyReadiness(this.inferenceService.getAccessToken?.(session))) {
+            start();
+            return () => {};
+        }
+        let pending = true;
+        return () => {
+            if (!pending) return;
+            pending = false;
+            start();
+        };
     }
 
     async generateSessionTitleIfNeeded(sessionId, userMessageId, options = {}) {
@@ -5784,7 +6290,7 @@ class ChatApp {
 
     triggerPostTurnMemoryExtraction(session) {
         if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session)) return;
-        if (!session?.id) return;
+        if (!session?.id || chatDB.messageReplacements.has(session.id)) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
         });
@@ -5911,12 +6417,15 @@ class ChatApp {
     }
 
     async setMemoryAutoInclude(enabled, options = {}) {
-        this.memoryAutoInclude = enabled === true;
+        const previous = this.memoryAutoInclude === true;
+        const next = enabled === true;
+        this.memoryAutoInclude = next;
         if (this.chatInput?.refreshMemorySettingsUI) {
             this.chatInput.refreshMemorySettingsUI();
         }
         if (options.persist === false) return;
-        await chatDB.saveSetting('memoryAutoInclude', this.memoryAutoInclude);
+        await chatDB.saveSetting('memoryAutoInclude', next);
+        trackSettingChange('memory_auto_include', previous, next);
     }
 
     isMemoryFeatureActive(generation = this.memoryWorkGeneration, session = this.getCurrentSession()) {
@@ -5964,6 +6473,7 @@ class ChatApp {
     }
 
     async setMemoryFeatureEnabled(enabled, options = {}) {
+        const wasEnabled = this.memoryFeatureEnabled === true;
         const resolvedState = resolveMemoryFeatureToggleValue({
             currentMemoryMode: this.memoryMode,
             nextMemoryFeatureEnabled: enabled === true
@@ -6002,6 +6512,10 @@ class ChatApp {
             writes.push(chatDB.saveSetting('memoryMode', false));
         }
         await Promise.all(writes);
+        if (wasEnabled !== resolvedState.memoryFeatureEnabled) {
+            trackFeatureUsage(resolvedState.memoryFeatureEnabled ? 'memory_enabled' : 'memory_disabled');
+            trackSettingChange('memory_saving', wasEnabled, resolvedState.memoryFeatureEnabled);
+        }
     }
 
     resolvePendingMemoryApprovalsAsSkipped() {
@@ -6506,6 +7020,7 @@ class ChatApp {
 
             const previouslyRetrievedContext = this.buildPreviouslyRetrievedMemoryContext(session);
             const hasPriorMemoryContext = !!previouslyRetrievedContext;
+            trackFeatureUsage('memory_started');
             const result = hasPriorMemoryContext
                 ? await runMemoryAugmentQueryAdaptive({
                     query,
@@ -6526,6 +7041,9 @@ class ChatApp {
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 });
+            if (!memorySignal.aborted && this.isMemoryFeatureActive(memoryRunGeneration, session)) {
+                trackFeatureUsage('memory_completed');
+            }
             const memoryRetrievalAssessment = normalizeMemoryRetrievalAssessment(result || {}, {
                 treatConfidenceFieldAsExplicit: true
             });
@@ -6932,24 +7450,54 @@ class ChatApp {
         if (mutationOwner && mutationOwner !== options.mutationToken) return;
         const job = { controller: new AbortController() };
         this.regenerationJobs.set(sessionId, job);
+        let draft = null;
         try {
-            return await this.regenerateCapturedResponse({ ...options, sessionId, abortController: job.controller });
+            if (options.replaceFromMessageId) {
+                draft = await chatDB.beginMessageReplacement(sessionId, options.replaceFromMessageId);
+                if (this.isViewingSession(sessionId)) await this.chatArea?.render();
+            }
+            const result = await this.regenerateCapturedResponse({ ...options, sessionId, abortController: job.controller });
+            const completed = result?.completed === true && !job.controller.signal.aborted && !this.isSessionDeleted(sessionId);
+            if (draft && completed) {
+                await chatDB.finishMessageReplacement(draft, { commit: true });
+                draft = null;
+                this.triggerPostTurnMemoryExtraction(this.state.sessionsById.get(sessionId));
+            }
+            return result;
+        } catch (error) {
+            if (!draft) throw error;
+            if (!this.isCancelledError(error, job.controller.signal)) this.showToast?.('The replacement could not be completed. Your previous answer was kept.', 'info');
         } finally {
-            if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
+            try {
+                if (draft) {
+                    try {
+                        await chatDB.finishMessageReplacement(draft, {
+                            notice: job.controller.signal.aborted ? 'stopped' : 'failed'
+                        });
+                    } catch {
+                        this.showToast?.('Your previous answer was kept, but the retry status could not be saved.', 'info');
+                    }
+                }
+                if (options.replaceFromMessageId && !this.isSessionDeleted(sessionId)) {
+                    const session = this.state.sessionsById.get(sessionId);
+                    try {
+                        await this.recomputeSessionCouncilTranscriptHint?.(session);
+                        await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                    } catch {
+                        this.showToast?.('The conversation was kept, but its search index could not be updated.', 'info');
+                    } finally {
+                        if (this.isViewingSession(sessionId)) await this.chatArea?.render();
+                    }
+                }
+            } finally {
+                if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
+            }
         }
     }
 
     async regenerateCapturedResponse(options = {}) {
         const session = this.state.sessionsById.get(options.sessionId);
         if (!session) return;
-        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
-
-        // Any local regeneration on an imported session forks it from upstream updates.
-        if (session.importedFrom) {
-            await this.markImportedSessionAsForked(session);
-            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
-        }
-
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
@@ -6961,9 +7509,30 @@ class ChatApp {
             ? messages.find(message => message.id === options.userMessageId && message.role === 'user')
             : [...messages].reverse().find(m => m.role === 'user');
         if (!lastUserMessage) return;
+        // Explicit message actions capture the picker selection at click time.
+        // Internal retries without an override preserve the original turn model.
+        const requestedRetryModel = options.modelNameOverride || lastUserMessage.model || session.model;
+        const retryModelName = this.normalizeModelName(requestedRetryModel) || requestedRetryModel;
+        const privacyError = await this.checkZeroDataRetentionForSend({
+            sessionId: session.id,
+            model: this.isCouncilModeActive(session) ? session.model : retryModelName,
+            inferenceBackend: session.inferenceBackend
+        }).catch(error => error);
+        this.throwIfAborted(options.abortController.signal);
+        if (privacyError) {
+            this.showToast(privacyError.message, 'error', 6000);
+            return;
+        }
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
+
+        // Any local regeneration on an imported session forks it from upstream updates.
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
+        }
+
         if (lastUserMessage.pendingFileObjects?.length) await this.ensureMessageFileMetadata(lastUserMessage);
         this.throwIfAborted(options.abortController.signal);
-        const retryModelName = this.normalizeModelName(lastUserMessage.model || session.model) || lastUserMessage.model || session.model;
         const retrySearchEnabled = Boolean(lastUserMessage.searchEnabled);
         const retryMemoryMode = typeof lastUserMessage.memoryMode === 'boolean' ? lastUserMessage.memoryMode : this.memoryMode;
         const retryReasoningEnabled = typeof lastUserMessage.reasoningEnabled === 'boolean' ? lastUserMessage.reasoningEnabled : this.reasoningEnabled;
@@ -6980,6 +7549,7 @@ class ChatApp {
         const abortController = options.abortController;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
+        const releaseTurn = holdTurn(session.id);
 
         // Pause auto-scroll for streaming (set immediately)
         this.isAutoScrollPaused = true;
@@ -7013,7 +7583,7 @@ class ChatApp {
             }
 
             if (this.isCouncilModeActive(session)) {
-                await this.councilController.runRegenerateTurn({
+                return await this.councilController.runRegenerateTurn({
                     session,
                     userMessage: lastUserMessage,
                     searchEnabled: retrySearchEnabled,
@@ -7021,7 +7591,6 @@ class ChatApp {
                     initialPendingPhase,
                     preserveLocalOnlyMessages: shouldAttemptMemoryAugment || options.skipMemoryAugment === true
                 });
-                return;
             }
 
             const typingModelName = retryModelName || this.inferenceService.getDefaultModelName(session);
@@ -7032,10 +7601,11 @@ class ChatApp {
             await this.prepareRuntimeTurn(session, abortController.signal);
 
             // Automatically acquire API key if needed
+            const hasTierAccess = this.hasEligibleModelAccess(session, retryModelName, null, true);
             const hasAccessToken = !!this.inferenceService.getAccessToken(session);
             const isAccessExpired = this.inferenceService.isAccessExpired(session);
             const accessLabel = this.inferenceService.getAccessLabel(session);
-            if (!hasAccessToken || isAccessExpired) {
+            if (!hasAccessToken || isAccessExpired || !hasTierAccess) {
                 try {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
@@ -7054,21 +7624,17 @@ class ChatApp {
                 } catch (error) {
                     if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(error.message, 'error', 5000);
+                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
                     }
                     if (lastUserMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true }, session);
+                    await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
                     return;
                 }
             }
 
-            if (lastUserMessage?.id) {
-                this.generateSessionTitleIfNeeded(session.id, lastUserMessage.id).catch(error => {
-                    console.debug('Session title generation failed:', error);
-                });
-            }
+            const startTitleOnAcceptance = this.startOrDeferSessionTitle(session, lastUserMessage?.id);
 
             // Set current session for network logging
             if (window.networkLogger) {
@@ -7103,6 +7669,10 @@ class ChatApp {
             const modelIdForRequest = selectedModelEntry.id;
 
             let streamingMessage = null;
+            // How long the model has been thinking, readable from the catch
+            // below (the timing variables live inside the attempt).
+            let thinkingDuration = () => null;
+            let stillWorking = { arm() {}, clear() {}, dispose() {} };
             let streamedContent = '';
             let streamedReasoning = '';
             let firstChunkReceived = false;
@@ -7136,6 +7706,12 @@ class ChatApp {
                 const streamingMessageId = this.generateId();
                 let streamingTokenCount = 0;
 
+                // The placeholder is a pending turn like a send's (local-only,
+                // so it never enters model context, shares or memory): saved
+                // at once so switching chats finds it, and so a reload before
+                // the first chunk shows an interrupted reply with Retry rather
+                // than a prompt that looks unanswered. The first chunk clears
+                // the marker.
                 streamingMessage = {
                     id: streamingMessageId,
                     sessionId: session.id,
@@ -7150,11 +7726,11 @@ class ChatApp {
                     streamingPending: true, // Indicates waiting for first chunk
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata,
-                    accessTrace: this.takeAccessTrace(session.id)
+                    accessTrace: this.takeAccessTrace(session.id),
+                    isLocalOnly: true,
+                    pendingTurn: true
                 };
-
-                // Save placeholder immediately so switching sessions back can find it
-                await chatDB.saveMessage(streamingMessage);
+                await this.persistPendingTurn(streamingMessage);
                 ({
                     processedMessages,
                     memoryGenerationAtProcess
@@ -7170,6 +7746,21 @@ class ChatApp {
                 const SAVE_INTERVAL_CHARS = 100;
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
+                // Thinking is timed from when the stream opens: some providers
+                // (Grok) send their reasoning in one burst just before the
+                // answer, so timing from the first reasoning event read ~0s.
+                let streamOpenedAt = null;
+                thinkingDuration = () => (reasoningStartTime ? (reasoningEndTime || Date.now()) - reasoningStartTime : null);
+                // Wordless thinking that resumed after part of the answer; the
+                // next content settles it again.
+                let resumedWithheldThinking = false;
+
+                // Stop settles this reply from the catch block below while a
+                // delivery callback can still be inside one of its awaited
+                // IndexedDB writes. A callback that starts or resumes after Stop
+                // must neither change the reply nor repaint it.
+                const turnStopped = () => abortController.signal.aborted;
+                stillWorking = this.createStillWorkingSignal(streamingMessage, session.id, turnStopped);
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -7177,13 +7768,21 @@ class ChatApp {
                     modelIdForRequest,
                     session,
                     async (chunk, imageData) => {
+                        if (turnStopped()) return;
+                        if (chunk) stillWorking.arm();
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
+                            this.markPendingTurnStarted(streamingMessage);
 
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
+                            // Thinking the provider kept to itself ends with the first word of the answer.
+                            if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
+                                reasoningEndTime = Date.now();
+                                streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                            }
 
                             // Handle text content
                             if (chunk) {
@@ -7214,6 +7813,8 @@ class ChatApp {
                             // First content after reasoning: the thinking is over, settle its trace.
                             if (!reasoningEndTime && reasoningStartTime && streamedReasoning.length > 0) {
                                 reasoningEndTime = Date.now();
+                                streamingMessage.streamingReasoning = false;
+                                streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
                                 if (this.chatArea && this.isViewingSession(session.id)) {
                                     this.chatArea.settleReasoningDisplay(
                                         streamingMessageId,
@@ -7221,6 +7822,10 @@ class ChatApp {
                                         reasoningEndTime - reasoningStartTime
                                     );
                                 }
+                            } else if (resumedWithheldThinking) {
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id);
+                                resumedWithheldThinking = false;
+                                reasoningEndTime = Date.now();
                             }
                         }
 
@@ -7229,6 +7834,7 @@ class ChatApp {
                             if (!streamingMessage.images) streamingMessage.images = [];
                             this.addImagesWithDedup(streamingMessage.images, imageData.images);
                             await chatDB.saveMessage(streamingMessage);
+                            if (turnStopped()) return;
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
                                 this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
@@ -7243,6 +7849,7 @@ class ChatApp {
                         }
 
                         // Only update UI if still viewing the same session
+                        if (turnStopped()) return;
                         if (chunk && this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
@@ -7256,17 +7863,39 @@ class ChatApp {
                     retrySearchEnabled, // Reuse the accepted prompt settings
                     abortController,
                     async () => {
+                        streamOpenedAt ??= Date.now();
+                        startTitleOnAcceptance();
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
                         streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
                             this.updateTypingIndicator(typingId, 'stream-open');
                         }
                     },
-                    async (reasoningChunk) => {
+                    async (reasoningChunk, meta) => {
+                        if (turnStopped()) return;
+                        stillWorking.clear();
+                        // Reasoning the provider withholds: no words to show, so the
+                        // pending line says "Thinking..." and the trace is timed from here.
+                        if (meta?.withheld) {
+                            if (!reasoningStartTime) {
+                                reasoningStartTime = streamOpenedAt ?? Date.now();
+                                streamingMessage.reasoningWithheld = true;
+                                this.updateSessionStreamingPhase(session.id, 'thinking');
+                                streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                                if (typingId) this.updateTypingIndicator(typingId, 'thinking');
+                            }
+                            if (firstChunkReceived) {
+                                // Thinking again after part of the answer: the trace says so until the answer continues.
+                                reasoningEndTime = null;
+                                resumedWithheldThinking = this.resumeThinkingDisplay(streamingMessage, streamedReasoning, session.id);
+                            }
+                            return;
+                        }
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
-                            reasoningStartTime = Date.now();
+                            this.markPendingTurnStarted(streamingMessage);
+                            reasoningStartTime = streamOpenedAt ?? Date.now();
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
@@ -7283,11 +7912,14 @@ class ChatApp {
                             // Thinking after an answer segment (tools): the trace settles again at the next content.
                             reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
+                            streamingMessage.streamingReasoning = true;
+                            reasoningStartTime ??= streamOpenedAt ?? Date.now();
                             // Save reasoning frequently so session switch can restore state
                             await chatDB.saveMessage(streamingMessage);
                         }
 
                         // Only update UI if still viewing the same session
+                        if (turnStopped()) return;
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
@@ -7298,6 +7930,8 @@ class ChatApp {
                 );
 
                 // Save the final message content with token data, reasoning, and citations
+                stillWorking.dispose();
+                this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
                 if (streamingMessage.scrubber) {
                     streamingMessage.scrubber.redactedResponse = streamedContent;
@@ -7316,13 +7950,16 @@ class ChatApp {
                 streamingMessage.citations = tokenData.citations || null;
 
                 // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
+                if ((streamingMessage.reasoning || streamingMessage.reasoningWithheld) && reasoningStartTime) {
                     streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
                 }
 
                 await chatDB.saveMessage(streamingMessage);
                 if (this.isViewingSession(session.id)) this.announceChatOperation('Response complete.');
-                await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                // The reply is on disk. Search indexing is bookkeeping, not part
+                // of the reply: it runs in the background so it can neither keep
+                // the composer waiting nor turn a finished reply into an error.
+                this.refreshSessionSearchTextInBackground(session);
 
                 // Derive citation metadata locally and update UI.
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -7333,6 +7970,9 @@ class ChatApp {
                 if (this.chatArea && this.isViewingSession(session.id)) {
                     // Re-render the completed message so partial streaming markdown/citation DOM
                     // is replaced by the final render pipeline.
+                    if (reasoningStartTime) {
+                        this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
+                    }
                     await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
@@ -7346,12 +7986,14 @@ class ChatApp {
                 }
 
                 this.triggerPostTurnMemoryExtraction(session);
+                return { completed: Boolean(streamingMessage.content?.trim() || streamingMessage.images?.length) };
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
+                stillWorking.dispose();
                 if (typingId) this.removeTypingIndicator(typingId);
 
-                if (error.isCancelled) {
+                if (error?.isCancelled) {
                     // If cancelled before first chunk, delete the placeholder message
                     if (streamingMessage && !firstChunkReceived) {
                         await chatDB.deleteMessage(streamingMessage.id);
@@ -7365,6 +8007,10 @@ class ChatApp {
                     }
                     if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
+                            const interruptedThinkingDuration = thinkingDuration();
+                            if (interruptedThinkingDuration !== null) {
+                                streamingMessage.reasoningDuration = interruptedThinkingDuration;
+                            }
                             this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning);
                             streamingMessage.streamingPending = false;
                             await chatDB.saveMessage(streamingMessage);
@@ -7373,7 +8019,7 @@ class ChatApp {
                                 await this.chatArea.finalizeStreamingMessage(streamingMessage);
                                 // Finalize reasoning display with markdown processing
                                 if (streamingMessage.reasoning) {
-                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
+                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
                                 }
                             }
                         } else {
@@ -7390,7 +8036,7 @@ class ChatApp {
                 } else {
                     if (firstChunkReceived && streamingMessage) {
                         this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning,
-                            `**Response interrupted:** ${error.message || 'Please retry.'}`);
+                            `**Response interrupted:** ${getErrorMessage(error, 'Please retry.')}`);
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -7408,18 +8054,19 @@ class ChatApp {
                                 }
                             }
                         }
-                        await this.addMessage('assistant', `**Error:** ${error.message || 'The response failed. Please retry.'}`, { isLocalOnly: true }, session);
+                        await this.addMessage('assistant', `**Error:** ${getErrorMessage(error, 'The response failed. Please retry.')}`, { isLocalOnly: true }, session);
                     }
                 }
             }
         } finally {
             this.clearMemoryApiOverrideContent(session.id);
+            releaseTurn();
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.focusMessageInput();
             });
         }
     }
@@ -7436,18 +8083,8 @@ class ChatApp {
         const mutation = this.beginSessionMutation(session.id, { exclusive: true });
         if (!mutation) { this.finishFeatureOperation(operation); return; }
         try {
-        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
-
-        if (session.importedFrom) {
-            await this.markImportedSessionAsForked(session);
-            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
-        }
-
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
-        this.reserveAccessAcquisitionHandoff(session);
-        this.chatArea?.closeQuickAskWindow?.();
-
         const messages = await chatDB.getSessionMessages(session.id);
         if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
         const messageIndex = messages.findIndex(m => m.id === messageId);
@@ -7464,6 +8101,26 @@ class ChatApp {
 
         const userMessage = [...messages.slice(0, messageIndex)].reverse().find(m => m.role === 'user');
         if (!userMessage) return;
+        const entry = this.councilController.resolveEntryForStage1Entry(
+            session, stageEntry, this.councilController.resolveModelEntries(session));
+        if (!entry?.id) return;
+        const privacyError = await this.checkZeroDataRetentionForSend({
+            sessionId: session.id, model: entry.id, inferenceBackend: session.inferenceBackend, singleModel: true
+        }).catch(error => error);
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
+        if (privacyError) {
+            this.showToast(privacyError.message, 'error', 6000);
+            return;
+        }
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
+
+        if (session.importedFrom) {
+            await this.markImportedSessionAsForked(session);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
+        }
+
+        this.reserveAccessAcquisitionHandoff(session);
+        this.chatArea?.closeQuickAskWindow?.();
 
         const regenerationContent = options.skipMemoryAugment
             ? ''
@@ -7549,7 +8206,7 @@ class ChatApp {
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.focusMessageInput();
             });
         }
         } finally {
@@ -7562,6 +8219,81 @@ class ChatApp {
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
      */
+    initializeZeroDataRetention() {
+        zeroDataRetention.configure({
+            settingsStore: chatDB,
+            // Public list, fetched like the model catalog.
+            fetchJson: async url => {
+                const { response, data } = await networkProxy.fetchWithRetryJson(
+                    url,
+                    { method: 'GET', headers: {} },
+                    {
+                        context: 'Zero data retention providers',
+                        maxAttempts: 3,
+                        timeoutMs: 15000,
+                        proxyConfig: { bypassProxy: true }
+                    }
+                );
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                return data;
+            }
+        });
+        zeroDataRetention.onChange(() => {
+            this.modelPicker?.handleZeroDataRetentionChange?.();
+        });
+        zeroDataRetention.ensureReady().then(() => zeroDataRetention.ensureCatalog())
+            .catch(error => console.warn('Zero data retention initialization failed:', error));
+    }
+
+    resolveModelIdForZeroDataRetention(modelName, session = null) {
+        if (!modelName) return '';
+        const models = session ? this.getModelsForSession(session) : this.state.models;
+        const match = (models || []).find(model => model.name === modelName || model.id === modelName);
+        return match?.id || modelName;
+    }
+
+    /**
+     * Refuses a send before any ticket or key is used when Zero data retention
+     * is on and a model in this turn has no eligible provider. The request
+     * layer enforces the same rule again for every OpenRouter call.
+     */
+    async checkZeroDataRetentionForSend(submission) {
+        if (!zeroDataRetention.isReady()) await zeroDataRetention.ensureReady();
+        if (!zeroDataRetention.isEnabled()) return null;
+        const session = submission.sessionId ? this.state.sessionsById.get(submission.sessionId) : null;
+        const backendId = submission.inferenceBackend || 'openrouter';
+        const modelNames = new Set([submission.model || this.getPrimaryModelName?.()].filter(Boolean));
+        const fallbackModelName = submission.model || session?.model || this.state.pendingModelName;
+        const council = submission.singleModel ? null : session
+            ? (this.isCouncilModeActive(session) ? normalizeCouncilConfig(session.councilConfig, fallbackModelName) : null)
+            : (this.supportsFeature('council', null)
+                ? normalizeCouncilConfig(this.pendingCouncilConfig || this.buildPersistedParallelCouncilConfig(fallbackModelName), fallbackModelName)
+                : null);
+        if (council?.enabled) {
+            council.members.forEach(name => modelNames.add(name));
+            // Council can fill a missing secondary or resolve a catalog fallback.
+            // Validate the same actual lanes that its execution path will use.
+            const candidate = { ...session, model: fallbackModelName,
+                responseMode: RESPONSE_MODE_COUNCIL, councilConfig: council, inferenceBackend: backendId };
+            const entries = this.councilController?.resolveModelEntries(candidate) || [];
+            entries.forEach(entry => modelNames.add(entry.name || entry.id));
+            if (council.outputMode === COUNCIL_OUTPUT_SYNTHESIS && council.synthesisModel) {
+                modelNames.add(council.synthesisModel);
+                const synthesis = this.councilController?.resolveSynthesisEntry(candidate, entries);
+                if (synthesis) modelNames.add(synthesis.name || synthesis.id);
+            }
+        }
+        for (const modelName of modelNames) {
+            const error = await zeroDataRetention.checkModel(
+                this.resolveModelIdForZeroDataRetention(modelName, session), backendId);
+            if (error) {
+                if (error.reason === 'model') error.message = error.message.replace('This model', modelName);
+                return error;
+            }
+        }
+        return null;
+    }
+
     async sendMessage(options = {}) {
         // A dialog owns the page; never send from the composer behind it.
         if (hasOpenModalDialog()) return;
@@ -7571,7 +8303,10 @@ class ChatApp {
         if (this.getPendingSend(sessionId)) return;
         const owner = this.exclusiveSessionMutationOwners.get(sessionId);
         if (owner && owner !== options.mutationToken) return;
-        const submissionKey = sessionId || '__new_chat__';
+        // getPendingSend deduplicates the current empty composer by navigation
+        // generation, then by session once created. Each submission needs its
+        // own key so it cannot reserve a later New Chat until streaming ends.
+        const submissionKey = sessionId || Symbol('new-chat');
         if (this.sendSubmissionsInFlight.has(submissionKey)) return;
         const rawContent = options.rawContent ?? this.elements.messageInput.value ?? '';
         const files = [...(options.files || this.uploadedFiles)];
@@ -7596,12 +8331,23 @@ class ChatApp {
             accepted: false
         };
         this.sendSubmissionsInFlight.set(submissionKey, submission);
-        this.updateInputState();
         try {
+            // A restored off preference needs no asynchronous preflight. Keep
+            // send/Stop ownership synchronous until captured work starts.
+            if (!zeroDataRetention.isReady() || zeroDataRetention.isEnabled()) {
+                this.updateInputState();
+                const zeroDataRetentionError = await this.checkZeroDataRetentionForSend(submission);
+                this.throwIfAborted(submission.controller.signal);
+                if (zeroDataRetentionError) {
+                    this.showToast(zeroDataRetentionError.message, 'error', 6000);
+                    return;
+                }
+            }
+            this.updateInputState();
             return await this.sendCapturedMessage(submission);
         } catch (error) {
             if (!error?.isCancelled && error?.name !== 'AbortError') {
-                this.showToast(error?.message || 'Could not send the message. Please try again.', 'error');
+                this.showToast(error?.message || 'Could not send the message. Please try again.', 'error', 3000);
             }
         } finally {
             if (this.sendSubmissionsInFlight.get(submissionKey) === submission) {
@@ -7614,7 +8360,7 @@ class ChatApp {
     async validateCapturedInput(session, submission, content) {
         const history = await chatDB.getSessionMessages(session.id);
         const model = this.getModelsForSession(session).find(entry => entry.name === submission.model || entry.id === submission.model) || {};
-        validateInferenceInput([...history.filter(message => !message.isLocalOnly), { role: 'user', content }], model, submission.files);
+        validateConversationInput([...history.filter(message => !message.isLocalOnly), { role: 'user', content }], model, submission.files, model.id || submission.model);
     }
 
     async sendCapturedMessage(submission) {
@@ -7639,12 +8385,25 @@ class ChatApp {
                 signal: submission.controller.signal,
                 onCreated: session => { submission.sessionId = session.id; }
             });
-            submission.sessionId = created?.id || this.state.currentSessionId;
+            // Navigation can abandon creation before a session exists. Never
+            // redirect that old prompt to whichever chat is now selected.
+            if (!created) return;
+            submission.sessionId = created.id;
         }
 
         this.throwIfAborted(submission.controller.signal);
         const session = this.state.sessionsById.get(submission.sessionId);
         if (!session) return; // Safety check
+
+        // Session creation or a model edit may have changed the group while
+        // the initial preflight waited. Recheck the actual lanes before any
+        // memory or inference access can spend tickets.
+        if (!zeroDataRetention.isReady() || zeroDataRetention.isEnabled()) {
+            const privacyError = await this.checkZeroDataRetentionForSend({ ...submission,
+                inferenceBackend: session.inferenceBackend || submission.inferenceBackend });
+            this.throwIfAborted(submission.controller.signal);
+            if (privacyError) throw privacyError;
+        }
 
         // Any local user message on an imported session forks it from upstream updates.
         if (session.importedFrom) {
@@ -7706,6 +8465,9 @@ class ChatApp {
         const abortController = submission.controller;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
+        // Other tabs painting this chat from storage ask this lock whether the
+        // reply is still being written here (turnOwnership.js).
+        const releaseTurn = holdTurn(session.id);
 
         // Store current files and search state before clearing
         const currentFiles = submission.files;
@@ -7728,10 +8490,11 @@ class ChatApp {
                 reasoningEnabled: submission.reasoningEnabled, reasoningEffort: submission.reasoningEffort,
                 memoryMode: Boolean(submission.memoryFeatureEnabled && submission.memoryMode) } };
             if (hasFiles) {
-                // IndexedDB can durably clone File objects before asynchronous
-                // decoding. A reload or failed conversion keeps them retryable.
+                // The files' bytes are saved with the message before decoding, so
+                // a reload or failed conversion keeps them retryable. Bytes, not
+                // File objects: iPhone Safari can refuse to store a picked File.
                 metadata.files = currentFiles.map(file => ({ name: file.name, type: file.type, size: file.size }));
-                metadata.extra.pendingFileObjects = currentFiles;
+                metadata.extra.pendingFileObjects = await toStorableFiles(currentFiles);
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
@@ -7751,7 +8514,10 @@ class ChatApp {
                 submission.messageId = message.id;
                 if (this.isViewingSession(session.id)) this.announceChatOperation('Message accepted.');
                 if (submission.consumeComposer && this.isViewingSession(session.id)) {
-                    if (this.elements.messageInput.value === rawContent) this.elements.messageInput.value = '';
+                    if (this.elements.messageInput.value === rawContent) {
+                        this.elements.messageInput.value = '';
+                        dismissSubmittedPhoneKeyboard(this.elements.messageInput);
+                    }
                     this.uploadedFiles = this.uploadedFiles.filter(file => !currentFiles.includes(file));
                     this.fileUndoStack = [];
                     this.renderFilePreviews();
@@ -7842,10 +8608,11 @@ class ChatApp {
             await this.prepareRuntimeTurn(session, abortController.signal);
 
             // Automatically acquire API key if needed
+            const hasTierAccess = this.hasEligibleModelAccess(session, submission.model, null, true);
             const hasAccessToken = !!this.inferenceService.getAccessToken(session);
             const isAccessExpired = this.inferenceService.isAccessExpired(session);
             const accessLabel = this.inferenceService.getAccessLabel(session);
-            if (!hasAccessToken || isAccessExpired) {
+            if (!hasAccessToken || isAccessExpired || !hasTierAccess) {
                 try {
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(`Acquiring ${accessLabel}...`, 'info');
@@ -7863,24 +8630,26 @@ class ChatApp {
                     }
                 } catch (error) {
                     if (typingId) this.removeTypingIndicator(typingId);
-                    await this.discardPendingTurn(pendingTurn);
                     if (this.pageUnloading === true) return;
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(error.message, 'error', 5000);
-                    }
                     if (userMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true }, session);
+                    if (error?.code === 'TICKET_SHORTAGE') {
+                        // The offers are open (or a reload did not land). The
+                        // prompt stays; its reply is interrupted with Retry.
+                        await this.keepPendingTurnForTicketShortage(pendingTurn, error, session);
+                        return;
+                    }
+                    await this.discardPendingTurn(pendingTurn);
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
+                    }
+                    await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
                     return; // Return early if key acquisition fails
                 }
             }
 
-            if (userMessage?.id) {
-                this.generateSessionTitleIfNeeded(session.id, userMessage.id).catch(error => {
-                    console.debug('Session title generation failed:', error);
-                });
-            }
+            const startTitleOnAcceptance = this.startOrDeferSessionTitle(session, userMessage?.id);
 
             // Set current session for network logging
             if (window.networkLogger) {
@@ -7921,6 +8690,10 @@ class ChatApp {
 
             // Declare variables outside try block so they're accessible in catch
             let streamingMessage = null;
+            // How long the model has been thinking, readable from the catch
+            // below (the timing variables live inside the attempt).
+            let thinkingDuration = () => null;
+            let stillWorking = { arm() {}, clear() {}, dispose() {} };
             let firstChunkReceived = false;
             let streamedContent = '';
             let streamedReasoning = '';
@@ -7988,6 +8761,14 @@ class ChatApp {
                 let firstContentChunk = true; // Track when content starts (after reasoning)
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
+                // Thinking is timed from when the stream opens: some providers
+                // (Grok) send their reasoning in one burst just before the
+                // answer, so timing from the first reasoning event read ~0s.
+                let streamOpenedAt = null;
+                thinkingDuration = () => (reasoningStartTime ? (reasoningEndTime || Date.now()) - reasoningStartTime : null);
+                // Wordless thinking that resumed after part of the answer; the
+                // next content settles it again.
+                let resumedWithheldThinking = false;
                 ({
                     processedMessages,
                     memoryGenerationAtProcess
@@ -7999,18 +8780,32 @@ class ChatApp {
                     session.id
                 ));
 
+                // Stop settles this reply from the catch block below while a
+                // delivery callback can still be inside one of its awaited
+                // IndexedDB writes. A callback that starts or resumes after Stop
+                // must neither change the reply nor repaint it.
+                const turnStopped = () => abortController.signal.aborted;
+                stillWorking = this.createStillWorkingSignal(streamingMessage, session.id, turnStopped);
+
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
                     processedMessages,
                     modelIdForRequest,
                     session,
                     async (chunk, imageData) => {
+                        if (turnStopped()) return;
+                        if (chunk) stillWorking.arm();
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             this.markPendingTurnStarted(streamingMessage);
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
+                            // Thinking the provider kept to itself ends with the first word of the answer.
+                            if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
+                                reasoningEndTime = Date.now();
+                                streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                            }
 
                             // Handle text content
                             if (chunk) {
@@ -8022,6 +8817,8 @@ class ChatApp {
                                 if (reasoningStartTime && streamedReasoning.length > 0) {
                                     reasoningEndTime = Date.now();
                                     const reasoningDuration = reasoningEndTime - reasoningStartTime;
+                                    streamingMessage.streamingReasoning = false;
+                                    streamingMessage.reasoningDuration = reasoningDuration;
 
                                     // Settle the trace now: the answer has begun, so the thinking is over.
                                     if (this.chatArea && this.isViewingSession(session.id)) {
@@ -8032,6 +8829,8 @@ class ChatApp {
                                         );
                                     }
                                     firstContentChunk = false; // Mark that we've handled the transition
+                                } else if (streamingMessage.reasoningWithheld && reasoningStartTime) {
+                                    firstContentChunk = false;
                                 }
                             }
 
@@ -8060,6 +8859,8 @@ class ChatApp {
                                 firstContentChunk = false;
                                 reasoningEndTime = Date.now();
                                 const reasoningDuration = reasoningEndTime - reasoningStartTime;
+                                streamingMessage.streamingReasoning = false;
+                                streamingMessage.reasoningDuration = reasoningDuration;
 
                                 // Settle the trace now: the answer has begun, so the thinking is over.
                                 if (this.chatArea && this.isViewingSession(session.id)) {
@@ -8069,6 +8870,11 @@ class ChatApp {
                                         reasoningDuration
                                     );
                                 }
+                            } else if (resumedWithheldThinking) {
+                                this.settleResumedWithheldThinking(streamingMessage, reasoningStartTime, session.id);
+                                resumedWithheldThinking = false;
+                                firstContentChunk = false;
+                                reasoningEndTime = Date.now();
                             }
                         }
 
@@ -8076,6 +8882,7 @@ class ChatApp {
                             if (!streamingMessage.images) streamingMessage.images = [];
                             this.addImagesWithDedup(streamingMessage.images, imageData.images);
                             await chatDB.saveMessage(streamingMessage);
+                            if (turnStopped()) return;
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
                                 this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
@@ -8091,6 +8898,7 @@ class ChatApp {
                         }
 
                         // Update UI with new content (only if viewing this session)
+                        if (turnStopped()) return;
                         if (chunk && this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
@@ -8104,18 +8912,40 @@ class ChatApp {
                     searchEnabled,
                     abortController,
                     async () => {
+                        streamOpenedAt ??= Date.now();
+                        startTitleOnAcceptance();
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
                         streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
                         if (typingId) {
                             this.updateTypingIndicator(typingId, 'stream-open');
                         }
                     },
-                    async (reasoningChunk) => {
+                    async (reasoningChunk, meta) => {
+                        if (turnStopped()) return;
+                        stillWorking.clear();
+                        // Reasoning the provider withholds: no words to show, so the
+                        // pending line says "Thinking..." and the trace is timed from here.
+                        if (meta?.withheld) {
+                            if (!reasoningStartTime) {
+                                reasoningStartTime = streamOpenedAt ?? Date.now();
+                                streamingMessage.reasoningWithheld = true;
+                                this.updateSessionStreamingPhase(session.id, 'thinking');
+                                streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                                if (typingId) this.updateTypingIndicator(typingId, 'thinking');
+                            }
+                            if (firstChunkReceived) {
+                                // Thinking again after part of the answer: the trace says so until the answer continues.
+                                reasoningEndTime = null;
+                                firstContentChunk = true;
+                                resumedWithheldThinking = this.resumeThinkingDisplay(streamingMessage, streamedReasoning, session.id);
+                            }
+                            return;
+                        }
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
                             this.markPendingTurnStarted(streamingMessage);
-                            reasoningStartTime = Date.now();
+                            reasoningStartTime = streamOpenedAt ?? Date.now();
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
                             streamingMessage.reasoning = reasoningChunk;
@@ -8130,10 +8960,14 @@ class ChatApp {
                             streamedReasoning += reasoningChunk;
                             // Thinking after an answer segment (tools): the trace settles again at the next content.
                             firstContentChunk = true;
+                            reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
+                            streamingMessage.streamingReasoning = true;
+                            reasoningStartTime ??= streamOpenedAt ?? Date.now();
                         }
 
                         // Update UI with new reasoning content (only if viewing this session)
+                        if (turnStopped()) return;
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
@@ -8144,6 +8978,7 @@ class ChatApp {
                 );
 
                 // Save the final message content with token data, reasoning, and citations
+                stillWorking.dispose();
                 this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
                 if (streamingMessage.scrubber) {
@@ -8164,7 +8999,7 @@ class ChatApp {
                 streamingMessage.citations = tokenData.citations || null;
 
                 // Calculate reasoning duration if reasoning was used
-                if (streamingMessage.reasoning && reasoningStartTime) {
+                if ((streamingMessage.reasoning || streamingMessage.reasoningWithheld) && reasoningStartTime) {
                     // Use already-calculated end time if available, otherwise calculate now
                     const finalReasoningEndTime = reasoningEndTime || Date.now();
                     streamingMessage.reasoningDuration = finalReasoningEndTime - reasoningStartTime;
@@ -8172,7 +9007,10 @@ class ChatApp {
 
                 await chatDB.saveMessage(streamingMessage);
                 if (this.isViewingSession(session.id)) this.announceChatOperation('Response complete.');
-                await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                // The reply is on disk. Search indexing is bookkeeping, not part
+                // of the reply: it runs in the background so it can neither keep
+                // the composer waiting nor turn a finished reply into an error.
+                this.refreshSessionSearchTextInBackground(session);
 
                 // Derive citation metadata locally and update UI.
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -8181,6 +9019,9 @@ class ChatApp {
 
                 // Re-render the message to finalize its state (only if viewing this session)
                 if (this.chatArea && this.isViewingSession(session.id)) {
+                    if (reasoningStartTime) {
+                        this.chatArea.settleThinkingHeader(streamingMessage.id, streamingMessage.reasoningDuration);
+                    }
                     await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     // Finalize reasoning display with markdown processing and timing
                     if (streamingMessage.reasoning) {
@@ -8199,6 +9040,7 @@ class ChatApp {
 
             } catch (error) {
                 console.error('Error getting AI response:', error);
+                stillWorking.dispose();
                 if (typingId) this.removeTypingIndicator(typingId);
                 // A turn that never produced a chunk leaves no pending row
                 // behind; the branches below persist the outcome themselves.
@@ -8208,11 +9050,15 @@ class ChatApp {
                 if (this.pageUnloading === true) break retryLoop;
 
                 // Check if error was due to cancellation
-                if (error.isCancelled) {
+                if (error?.isCancelled) {
                     // Keep the partial message if there's content, otherwise remove it
                     if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
                             // Save the partial content with a note
+                            const interruptedThinkingDuration = thinkingDuration();
+                            if (interruptedThinkingDuration !== null) {
+                                streamingMessage.reasoningDuration = interruptedThinkingDuration;
+                            }
                             this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning);
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
@@ -8220,7 +9066,7 @@ class ChatApp {
                                 await this.chatArea.finalizeStreamingMessage(streamingMessage);
                                 // Finalize reasoning display with markdown processing
                                 if (streamingMessage.reasoning) {
-                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning);
+                                    this.chatArea.finalizeReasoningDisplay(streamingMessage.id, streamingMessage.reasoning, streamingMessage.reasoningDuration);
                                 }
                             }
                         } else {
@@ -8261,7 +9107,7 @@ class ChatApp {
                 // Check if we should retry (only if no content received yet)
                 if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
                     retryCount++;
-                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
+                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, getErrorMessage(error));
                     // Small delay before retry (500ms * attempt number)
                     await new Promise(r => setTimeout(r, 500 * retryCount));
                     // Re-show typing indicator for retry
@@ -8273,30 +9119,37 @@ class ChatApp {
                 }
 
                 // Non-retryable or exhausted retries - show error to user
-                const errorMessage = terminalError.message;
+                const errorMessage = getErrorMessage(terminalError);
 
                 // Customize messages for specific error types
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
                 // The following are inference backend HTTP status codes, not OA infra
-                if (terminalError.status === 402) {
-                    // Credit/token limit errors
+                if (terminalError?.status === 402 ||
+                    (terminalError?.status === 403 && this.isAccessCreditExhaustedError(terminalError))) {
+                    // Credit/token limit errors (a spent key limit arrives as 403 since 2026-10)
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                } else if (terminalError.status === 401) {
-                    // Authentication errors
+                } else if (terminalError?.status === 401 && terminalError?.inferenceAuthRejected === true) {
+                    // The provider rejected the inference request itself, after
+                    // the same request was already resent with the same key.
+                    const attempts = (Number(terminalError.authRetryCount) || 0) + 1;
+                    const attemptNote = attempts > 1 ? ` ${attempts} times` : '';
+                    userFriendlyMessage = `The provider rejected this chat's access key${attemptNote} (HTTP 401). Try again in a moment. If it keeps failing, start a new chat, which uses a new key, and submit an [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                } else if (terminalError?.status === 401) {
+                    // Other authentication errors (e.g. private-access issuance)
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (terminalError.status === 503 || terminalError.status === 502 || terminalError.status === 504) {
+                } else if (terminalError?.status === 503 || terminalError?.status === 502 || terminalError?.status === 504) {
                     // Service unavailable / gateway errors (after retries exhausted)
                     userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else if (terminalError?.providerReported && !terminalError?.status) {
                     // The provider ended the stream with its own error event.
                     // Say what happened in plain words; keep its text as detail.
-                    const detail = String(errorMessage || '').replace(/\s+/g, ' ').trim().slice(0, 160);
-                    userFriendlyMessage = `The provider stopped the reply with an error${detail ? ` (${detail})` : ''}. Any partial answer has been kept. Retry sends a new request.`;
+                    // Its own text stays in the Activity Timeline, not in the reply.
+                    userFriendlyMessage = 'The provider stopped the reply with an error.';
                 } else if (terminalError?.name === 'AbortError' || /\boperation was aborted\b/i.test(errorMessage)) {
                     // Aborted without the person asking: the transport (relay
                     // session or browser connection) closed under the request.
-                    userFriendlyMessage = `The request was interrupted before the model replied: the connection to the relay or the provider closed. Retry sends a new request.`;
+                    userFriendlyMessage = 'The connection closed before the model replied.';
                 } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
                     // Proxy/connection errors
                     userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
@@ -8331,6 +9184,8 @@ class ChatApp {
             // A turn that ended without a chunk, an error row or a page unload
             // must not leave a pending row behind.
             if (pendingTurn?.pendingTurn) await this.discardPendingTurn(pendingTurn);
+            // The row is settled on disk: let other tabs repaint it.
+            releaseTurn();
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
@@ -8338,7 +9193,7 @@ class ChatApp {
             this.updateScrollButtonVisibility();
             // Use requestAnimationFrame to ensure focus happens after UI updates
             requestAnimationFrame(() => {
-                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.focusMessageInput();
             });
         }
     }
@@ -8517,6 +9372,9 @@ class ChatApp {
                 }
                 quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
             } else {
+                // A retained paid lane may be eligible while the active lane is not.
+                await this.councilController.ensureAccessForEntries(session, [entry], null, abortController.signal);
+                quickAskAccessSession = this.getQuickAskAccessSession(session, quickAskModel);
                 options.onStatus?.('waiting-response');
             }
 
@@ -8539,9 +9397,10 @@ class ChatApp {
             throw new Error('The current station is banned.');
         }
 
+        const hasTierAccess = this.hasEligibleModelAccess(accessSession, quickAskModel.modelName, quickAskModel.modelId, true);
         const hasAccessToken = !!this.inferenceService.getAccessToken(accessSession);
         const isAccessExpired = this.inferenceService.isAccessExpired(accessSession);
-        if (!hasAccessToken || isAccessExpired) {
+        if (!hasAccessToken || isAccessExpired || !hasTierAccess) {
             options.onStatus?.('requesting-key');
             try {
                 if (this.floatingPanel) {
@@ -8632,6 +9491,12 @@ class ChatApp {
 
         const quickAskModel = await this.resolveModelForQuickAsk(session);
         const { modelId, modelName } = quickAskModel;
+        if (!zeroDataRetention.isReady() || zeroDataRetention.isEnabled()) {
+            const privacyError = await zeroDataRetention.checkModel(modelId,
+                session.inferenceBackend || this.inferenceService?.getDefaultBackendId?.() || 'openrouter');
+            this.throwIfAborted(abortController.signal);
+            if (privacyError) throw privacyError;
+        }
         await this.runtime.prepareTurn?.({ sessionId: session.id, signal: abortController.signal,
             onProgress: () => options.onStatus?.('requesting-key') });
         this.throwIfAborted(abortController.signal);
@@ -8791,8 +9656,14 @@ class ChatApp {
         if (!this.state.sessionsById.has(sessionId)) return;
         const generation = this.sessionNavigationGeneration;
         await chatDB.deleteSessionWithMessages(sessionId);
+        // Search has its own cache and may still be scanning an older snapshot.
+        // Retire the ID before rendering or letting that scan publish results.
+        this.deletedSessionIds.add(sessionId);
         this.state.sessions = this.state.sessions.filter(session => session.id !== sessionId);
         this.state.sessionsById.delete(sessionId);
+        if (Array.isArray(this.state.sessionSearchResults)) {
+            this.state.sessionSearchResults = this.state.sessionSearchResults.filter(session => session.id !== sessionId);
+        }
         this.sessionScrollPositions.delete(sessionId);
         this.sessionPromptScrollAnchors.delete(sessionId);
         if (this.activePromptScroll?.sessionId === sessionId) this.detachPromptSlideUpEffect();
@@ -8847,9 +9718,7 @@ class ChatApp {
         if (this.isSessionDeleted(message.sessionId)) throw this.createCancelledError();
         const pendingFiles = Array.isArray(rawFiles) && rawFiles.length
             ? rawFiles
-            : Array.isArray(message.pendingFileObjects)
-                ? message.pendingFileObjects
-                : [];
+            : revivePendingFiles(message.pendingFileObjects);
         if (!pendingFiles.length) return message.files || [];
         const existing = this.messageFilePreparationInFlight.get(message.id);
         if (existing) {
@@ -9131,6 +10000,11 @@ class ChatApp {
         message.content = newContent;
         message.files = draftFiles.length > 0 ? draftFiles : null;
         delete message.pendingFileObjects;
+        // The edited prompt is resubmitted to the model shown on the edit card's
+        // chip, which is the session's current model; record that on the prompt
+        // so its stored model matches the reply it gets.
+        const resubmitModelName = this.normalizeModelName(session.model, session) || session.model;
+        if (resubmitModelName) message.model = resubmitModelName;
         message.timestamp = Date.now();
         await chatDB.saveMessage(message);
 
@@ -9597,13 +10471,13 @@ class ChatApp {
         this.state.sessionsById.set(session.id, session);
     }
 
-    async loadInitialSessions() {
+    async loadInitialSessions({ preserveSessions = false } = {}) {
         this.state.isLoadingSessions = true;
         try {
             if (typeof chatDB.getSessionsPage === 'function') {
                 const { sessions, nextCursor } = await chatDB.getSessionsPage(SESSION_PAGE_SIZE);
                 this.state.sessions = sessions;
-                this.state.sessionsById = new Map();
+                if (!preserveSessions) this.state.sessionsById = new Map();
                 this.cacheSessions(sessions);
                 this.state.sessionsPageCursor = nextCursor;
                 this.state.hasMoreSessions = Boolean(nextCursor);
@@ -9614,7 +10488,7 @@ class ChatApp {
             fallbackSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
             const page = fallbackSessions.slice(0, SESSION_PAGE_SIZE);
             this.state.sessions = page;
-            this.state.sessionsById = new Map();
+            if (!preserveSessions) this.state.sessionsById = new Map();
             this.cacheSessions(page);
             this.state.sessionsPageCursor = null;
             this.state.hasMoreSessions = fallbackSessions.length > page.length;
@@ -9651,15 +10525,30 @@ class ChatApp {
     async ensureSessionLoaded(sessionId) {
         if (!sessionId) return;
         const cachedSession = this.state.sessionsById.get(sessionId);
-        if (cachedSession) {
+        // A chat carried across a reload (reloadSessions) is still re-read.
+        if (cachedSession && cachedSession !== this.sessionsBeforeReload?.get(sessionId)) {
             this.insertSessionIntoList(cachedSession);
             return;
         }
         const session = await chatDB.getSession(sessionId);
         if (session) {
             this.migrateSessionsInBackground([session]);
+            if (cachedSession) {
+                this.noteLoadedSession(session);
+                this.state.sessionsById.set(session.id, session);
+            }
             this.insertSessionIntoList(session);
         }
+    }
+
+    /** Chats this tab is showing or writing in: a send, a reply or a retry in flight. */
+    liveSessionIds() {
+        const ids = new Set();
+        if (this.state.currentSessionId) ids.add(this.state.currentSessionId);
+        for (const [id, state] of this.sessionStreamingStates || []) if (state?.isStreaming) ids.add(id);
+        for (const entry of (this.sendSubmissionsInFlight || new Map()).values()) if (entry?.sessionId) ids.add(entry.sessionId);
+        for (const id of (this.regenerationJobs || new Map()).keys()) ids.add(id);
+        return ids;
     }
 
     async reloadSessions() {
@@ -9667,7 +10556,17 @@ class ChatApp {
         // back without the key this tab held is noticed (noteLoadedSession).
         this.sessionsBeforeReload = this.state.sessionsById;
         this.state.sessions = [];
-        this.state.sessionsById = new Map();
+        // The chats this tab is showing or writing in stay resolvable while
+        // the list is rebuilt from storage: a send that lands during the
+        // reload must find its session, and a reply being written must keep
+        // reading as this tab's (otherwise it is painted as interrupted).
+        // Fresh copies replace them as the pages load.
+        const carried = new Map();
+        for (const id of this.liveSessionIds()) {
+            const session = this.sessionsBeforeReload.get(id);
+            if (session) carried.set(id, session);
+        }
+        this.state.sessionsById = new Map(carried);
         this.state.sessionsPageCursor = null;
         this.state.hasMoreSessions = true;
         this.state.sessionSearchResults = null;
@@ -9675,10 +10574,18 @@ class ChatApp {
         this.state.sessionSearchResultsKey = '';
         this.state.sessionSearchPending = false;
         try {
-            await this.loadInitialSessions();
+            await this.loadInitialSessions({ preserveSessions: true });
             await this.ensureSessionLoaded(this.state.currentSessionId);
         } finally {
             this.sessionsBeforeReload = null;
+            // A carried chat that storage no longer has (deleted in another
+            // tab) is dropped as before, unless this tab is still writing in it.
+            for (const [id, session] of carried) {
+                if (this.state.sessionsById.get(id) !== session) continue;
+                const busy = this.sessionStreamingStates?.get(id)?.isStreaming === true
+                    || Boolean(this.getPendingSend(id)) || this.regenerationJobs?.has(id) === true;
+                if (!busy) this.state.sessionsById.delete(id);
+            }
         }
         if (this.hasActiveSessionListCriteria()) {
             await this.updateSessionSearchResults();
@@ -9982,12 +10889,21 @@ class ChatApp {
         const results = [];
         try {
             const allSessions = await chatDB.getAllSessions();
+            if (requestId !== this.sessionSearchRequestId) return;
             allSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
+            let processed = 0;
             for (const session of allSessions) {
+                // Large indexed histories otherwise monopolize the main thread
+                // without an await. Let taps and newer searches run between batches.
+                if (processed > 0 && processed % 50 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
                 if (requestId !== this.sessionSearchRequestId) {
                     return;
                 }
+                processed += 1;
+                if (this.deletedSessionIds.has(session.id)) continue;
 
                 let sessionToMatch = session;
                 const filterMatches = this.sessionMatchesSidebarFilters(sessionToMatch);
@@ -10021,11 +10937,13 @@ class ChatApp {
             return;
         }
 
-        this.state.sessionSearchResults = results;
+        // A deletion can finish while another row's index or a batch yield is awaited.
+        const liveResults = results.filter(session => !this.deletedSessionIds.has(session.id));
+        this.state.sessionSearchResults = liveResults;
         this.state.sessionSearchResultsQuery = query;
         this.state.sessionSearchResultsKey = resultsKey;
         this.state.sessionSearchPending = false;
-        this.cacheSessions(results);
+        this.cacheSessions(liveResults);
         this.renderSessions();
     }
 
@@ -10054,6 +10972,7 @@ class ChatApp {
     sessionMatchesSearchQuery(session, query) {
         if (!session || !query) return false;
         return this.searchFieldMatches(query, session.title) ||
+            (Array.isArray(session.previousTitles) && session.previousTitles.some(title => this.searchFieldMatches(query, title))) ||
             this.searchFieldMatches(query, session.titleSource !== 'manual' ? session.titleSearchText : '') ||
             this.searchFieldMatches(query, session.conversationSearchText);
     }
@@ -10155,6 +11074,7 @@ class ChatApp {
      * Renders all messages for the current session (delegated to ChatArea component).
      */
     async renderMessages() {
+        this.hideLinkPreview();
         const session = this.getCurrentSession();
         if (this.chatArea) {
             await this.chatArea.render();
@@ -10386,6 +11306,7 @@ class ChatApp {
     }
 
     hideSidebar(options = {}) {
+        this.sidebar?.closeAllMenus?.();
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
@@ -10438,6 +11359,12 @@ class ChatApp {
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(false);
+
+        // Only the phone app and phone browser use mutually exclusive rails.
+        // This automatic dismissal must not change synced panel preferences.
+        if (isPhoneAppLayout() && this.rightPanel) {
+            this.rightPanel.closeRightPanel({ persist: false });
+        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles
@@ -10702,7 +11629,7 @@ class ChatApp {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 if (this.modelPicker) {
-                    this.modelPicker.toggle();
+                    this.modelPicker.toggle({ focusSearch: true });
                 }
             }
 
@@ -10712,7 +11639,7 @@ class ChatApp {
                 const pendingCouncilEnabled = this.supportsFeature('council', session) && this.pendingCouncilConfig?.enabled === true;
                 if (this.modelPicker && (this.isCouncilModeActive(session) || pendingCouncilEnabled)) {
                     e.preventDefault();
-                    this.modelPicker.toggle({ selectionMode: 'council-secondary' });
+                    this.modelPicker.toggle({ selectionMode: 'council-secondary', focusSearch: true });
                 }
             }
 
@@ -10730,7 +11657,7 @@ class ChatApp {
                         hideSurface(this.elements.settingsMenu);
                         this.elements.settingsBtn?.classList.remove('tooltip-disabled');
                     }
-                    this.modelPicker.toggle({ selectionMode: 'council-synthesis' });
+                    this.modelPicker.toggle({ selectionMode: 'council-synthesis', focusSearch: true });
                 }
             }
 
@@ -11174,7 +12101,7 @@ class ChatApp {
 
     focusMessageInput({ force = false } = {}) {
         const input = this.elements.messageInput;
-        if (!input || input.disabled) return;
+        if (!input || input.disabled || isPhoneComposer(input)) return;
         // Startup autofocus must not steal focus from an authentication intent.
         if (this.accountModal?.isOpen) return;
 
@@ -11395,7 +12322,9 @@ Your API key has been cleared. A new key from a different station will be obtain
         const container = this.elements.filePreviewsContainer;
         const renderVersion = ++this.filePreviewRenderVersion;
         const files = [...this.uploadedFiles];
+        (this.composerImageUrls ||= createComposerImageUrls()).setFiles(files);
         if (files.length === 0) {
+            container.innerHTML = '';
             container.classList.add('hidden');
             return;
         }
@@ -11411,7 +12340,7 @@ Your API key has been cleared. A new key from a different station will be obtain
             let iconOrPreview = '';
 
             if (isImage) {
-                const imageUrl = await this.createImagePreview(file);
+                const imageUrl = await this.createComposerThumbnail(file);
                 const imageId = `preview-image-${Date.now()}-${index}`;
                 iconOrPreview = `
                     <img
@@ -11419,6 +12348,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                         class="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
                         alt="${file.name}"
                         data-image-id="${imageId}"
+                        data-full-src="${this.getComposerFullImageUrl(file)}"
                         onclick="window.expandImage('${imageId}')"
                     >
                 `;
@@ -11491,6 +12421,20 @@ Your API key has been cleared. A new key from a different station will be obtain
             reader.onload = (e) => resolve(e.target.result);
             reader.readAsDataURL(file);
         });
+    }
+
+    /** The composer's small preview, drawn once per file (see createImageThumbnail). */
+    createComposerThumbnail(file) {
+        const thumbnails = (this.composerThumbnails ||= new WeakMap());
+        if (!thumbnails.has(file)) {
+            thumbnails.set(file, createImageThumbnail(file).catch(() => this.createImagePreview(file)));
+        }
+        return thumbnails.get(file);
+    }
+
+    /** Tapping a composer preview opens the picture itself, read only then. */
+    getComposerFullImageUrl(file) {
+        try { return this.composerImageUrls?.getUrl(file) || ''; } catch { return ''; }
     }
 
     formatFileSize(bytes) {
@@ -11634,7 +12578,11 @@ Your API key has been cleared. A new key from a different station will be obtain
             entry.promise = (async () => {
                 if (this.usesTicketAccess(session)) await ensureModelTiersReady({ signal: controller.signal });
                 this.throwIfAborted(controller.signal);
+                const requestedName = options.modelNameOverride || session.model;
+                const requestedId = options.modelIdOverride || models.find(m => m.name === requestedName || m.id === requestedName)?.id;
                 return acquireSessionAccess({
+                    tierPurchase: ticketTierPolicyEnabled() && this.usesTicketAccess(session)
+                        ? { modelId: requestedId, cost: requestedId ? getTicketCost(requestedId) : NaN } : null,
                     acquireAccess: this.runtime.acquireAccess,
                     session,
                     models,
@@ -11648,10 +12596,11 @@ Your API key has been cleared. A new key from a different station will be obtain
                     modelNameOverride: options.modelNameOverride,
                     signal: controller.signal,
                     ticketsRequiredOverride: options.ticketsRequiredOverride,
-                    ticketRequirementLabel: options.ticketRequirementLabel,
-                    onTicketUsed: () => {
-                        this.showToast('Ticket already used, trying next available');
-                    },
+                    ticketRequirementLabel: options.ticketRequirementLabel
+                        || this.normalizeModelName(options.modelNameOverride || session.model, session)
+                        || options.modelNameOverride || session.model || 'this model',
+                    onTicketUsed: skipped => this.showTicketSweepPending(session.id, skipped),
+                    onTicketSweepEnd: outcome => this.settleTicketSweep(session.id, outcome),
                     onNetworkSession: (sessionId) => {
                         if (window.networkLogger) {
                             window.networkLogger.setCurrentSession(sessionId);
@@ -11663,6 +12612,11 @@ Your API key has been cleared. A new key from a different station will be obtain
                     onVerificationWarning: (...args) => {
                         console.warn(...args);
                     },
+                    // The price rose between the send's budget check and the
+                    // key request. Same answer as a shortage found before the
+                    // send: reload the wallet automatically (the pending reply
+                    // says so) or open the offers.
+                    onTicketShortage: shortage => this.handleAcquisitionTicketShortage(session, shortage, controller.signal),
                     onSessionChanged: (changedSession) => {
                         if (this.rightPanel && this.isViewingSession(changedSession.id)) {
                             this.rightPanel.onSessionChange(changedSession);
@@ -11691,73 +12645,61 @@ Your API key has been cleared. A new key from a different station will be obtain
      * @param {string} messageId - The message ID
      */
     toggleCitations(messageId) {
-        const contentEl = document.getElementById(`citations-content-${messageId}`);
-        const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
+        const toggle = document.getElementById(`citations-toggle-${messageId}`);
+        this.setCitationsOpen(messageId, toggle?.getAttribute('aria-expanded') !== 'true');
+    }
 
-        if (!contentEl) {
-            console.debug('[toggleCitations] Content element not found for message:', messageId);
-            return;
-        }
+    setCitationsOpen(messageId, opening) {
+        const carousel = document.getElementById(`citations-content-${messageId}`);
+        const toggle = document.getElementById(`citations-toggle-${messageId}`);
+        const section = carousel?.closest('.citations-section');
+        const panel = section?.querySelector('.t-acc-panel');
+        const inner = section?.querySelector('.t-acc-panel-inner');
+        if (!panel || !toggle || !inner) return;
 
-        const isHidden = contentEl.classList.contains('hidden');
-        if (isHidden) {
-            contentEl.classList.remove('hidden');
-            if (chevronEl) {
-                chevronEl.style.transform = 'rotate(180deg)';
-            }
-        } else {
-            contentEl.classList.add('hidden');
-            if (chevronEl) {
-                chevronEl.style.transform = 'rotate(0deg)';
-            }
-        }
-
-        // Update scroll button visibility after content change
+        const scroller = this.elements.chatArea;
+        cancelSourceReveal(scroller);
+        const bottomTarget = () => {
+            const spacer = this.activePromptScroll?.spacerEl;
+            const spacerHeight = spacer?.isConnected && !spacer.hidden ? spacer.getBoundingClientRect().height : 0;
+            return Math.max(0, scroller.scrollHeight - scroller.clientHeight - spacerHeight);
+        };
+        // A lower Parallel lane/synthesis or a later user turn also counts as
+        // later content. Never jump past it when opening an older response.
+        const followBottom = isLastSourceResponse(section, this.elements.messagesContainer)
+            && (opening || Math.abs(bottomTarget() - scroller.scrollTop) <= 4);
+        panel.getBoundingClientRect(); // Commit the starting layout for a reversible CSS transition.
+        if (!opening && inner.contains(document.activeElement)) toggle.focus({ preventScroll: true });
+        section.setAttribute('data-open', String(opening));
+        toggle.setAttribute('data-open', String(opening));
+        toggle.setAttribute('aria-expanded', String(opening));
+        inner.inert = !opening;
+        inner.setAttribute('aria-hidden', String(!opening));
+        const sessionId = this.state.currentSessionId;
+        revealSources({
+            scroller, panel, trigger: toggle, opening, followBottom, bottomTarget,
+            toolbar: document.getElementById('chat-toolbar'), composer: this.elements.inputCard,
+            isCurrent: () => this.state.currentSessionId === sessionId
+                && section.getAttribute('data-open') === String(opening),
+            onUpdate: () => this.updateScrollButtonVisibility()
+        });
         this.updateScrollButtonVisibility();
     }
 
-    /**
-     * Scrolls to a specific citation.
-     * @param {string} messageId - The message ID
-     * @param {string} citationNum - The citation number
-     */
+    /** Scroll to a source using the same disclosure motion as its button. */
     scrollToCitation(messageId, citationNum) {
-        // First expand the citations if collapsed
+        this.setCitationsOpen(messageId, true);
         const carousel = document.getElementById(`citations-content-${messageId}`);
-        const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
-
-        if (carousel && carousel.classList.contains('hidden')) {
-            carousel.classList.remove('hidden');
-            if (chevronEl) {
-                chevronEl.style.transform = 'rotate(180deg)';
-            }
-
-            // Update scroll button visibility after content change
-            this.updateScrollButtonVisibility();
-        }
-
-        // Then find and scroll to the citation
         const citationEl = document.getElementById(`citation-${messageId}-${citationNum}`);
         if (citationEl && carousel) {
-            // Add a brief highlight effect
             citationEl.classList.add('citation-highlight');
-            setTimeout(() => {
-                citationEl.classList.remove('citation-highlight');
-            }, 2000);
-
-            // Calculate scroll position to center the citation
-            const citationLeft = citationEl.offsetLeft;
-            const citationWidth = citationEl.offsetWidth;
-            const carouselWidth = carousel.offsetWidth;
-            const scrollPosition = citationLeft - (carouselWidth / 2) + (citationWidth / 2);
-
+            setTimeout(() => citationEl.classList.remove('citation-highlight'), 2000);
+            const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             carousel.scrollTo({
-                left: scrollPosition,
-                behavior: 'smooth'
+                left: carousel.scrollLeft + citationEl.getBoundingClientRect().left - carousel.getBoundingClientRect().left
+                    - carousel.clientWidth / 2 + citationEl.offsetWidth / 2,
+                behavior: reduced ? 'instant' : 'smooth'
             });
-
-            // Also scroll the citation section into view if needed
-            citationEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 

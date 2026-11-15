@@ -1,9 +1,10 @@
+import { statusIcon } from '../../chat/zkapi/components/StatusIcon.js';
 import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from '../../chat/zkapi/components/WalletModalView.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { DepositAmount, ethUnits } from '../../chat/zkapi/services/depositAmount.mjs';
+import { DepositAmount, ethUnits, formatSuggestedDeposit } from '../../chat/zkapi/services/depositAmount.mjs';
 import { AddressDepositFlow } from '../../chat/zkapi/services/addressDepositFlow.mjs';
 import { formatFundingAmount } from '../../chat/zkapi/services/addressFunding.js';
 import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
@@ -46,7 +47,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
     const element = () => ({ events: {}, addEventListener(type, handler) { this.events[type] = handler; } });
     for (const name of ['amount', 'currency']) fields.set(`[data-funding-${name}]`, element());
     const methods = ['metamask', 'address'].map(value => Object.assign(element(), { dataset: { walletMethod: value } }));
-    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, formatFundingAmount, renderFundingProgress, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, formatFundingAmount, renderFundingProgress, DepositAmount, formatSuggestedDeposit, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
         depositOperationId: () => null, isWalletCancellation: () => false,
         readWelcomeModalIntent: () => null, writeWelcomeModalIntent() {},
         addressFundingWallet: wallet, getWalletMethod: () => method, walletMethodActionBusy: () => false, setWalletMethod: value => { method = value; },
@@ -58,7 +59,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
                 records.set(key, value); return true;
             } },
         renderFundingPaymentQr: options => { effects.qr.push(options); return '<svg data-test-qr></svg>'; },
-        prepareWalletMethod: async () => { effects.authorizations++; }, walletMethodText: value => value,
+        prepareWalletMethod: async () => { effects.authorizations++; }, walletMethodText: value => value, statusIcon,
         fundingSetupGuide: () => '', pendingDepositMessage: () => '', isIndexerLag: () => false,
         document: { activeElement: null }, queueMicrotask, setTimeout, clearTimeout
     };
@@ -170,7 +171,7 @@ test('QR uses exact remaining wei, stays during fee refresh, and clears on edits
     let html = f.controls.renderFundingAccount(f.owner);
     assert.match(html, /data-test-qr/);
     assert.deepEqual(JSON.parse(JSON.stringify(f.effects.qr.at(-1))), {
-        address, chainId: 1, amountWei: '1000000000000150'
+        address, chainId: 1, amountWei: '1000000000000150', caption: false
     });
     f.edit('0.006');
     assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
@@ -178,8 +179,7 @@ test('QR uses exact remaining wei, stays during fee refresh, and clears on edits
     f.owner.fundingFlow.fee.expiresAt = Date.now() - 1;
     const refreshing = f.controls.renderFundingAccount(f.owner);
     assert.match(refreshing, /data-test-qr/);
-    assert.match(refreshing, /data-funding-next[^>]*disabled/);
-    assert.match(refreshing, /Updating fee estimate/);
+    assert.doesNotMatch(refreshing, /data-funding-next/, 'no Deposit while the address still needs ETH');
     f.owner.fundingFlow.fee.expiresAt = Date.now() + 60_000;
     f.owner.fundingFlow.status = { ethBalance: f.owner.fundingFlow.totalWei };
     assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
@@ -317,10 +317,10 @@ test('Send Ethereum names a failed estimate instead of "Updating the ETH amountâ
     f.client.quoteDepositUsd = async () => { throw new Error('Temporary price read failure.'); };
     await f.hydrate();
     const html = f.controls.renderDepositAmount(f.owner) + f.controls.renderFundingAccount(f.owner);
-    assert.match(html, /<h3[^>]*>Estimate unavailable<\/h3>/);
+    assert.match(html, /<span class="zkapi-transfer-muted">Estimate unavailable<\/span>/);
     assert.doesNotMatch(html, /Updating the ETH amount|when the estimate is ready/);
     assert.equal((html.match(/Temporary price read failure\./g) || []).length, 1);
     assert.match(html, /aria-describedby="zkapi-amount-error"/);
-    assert.match(html, /Retrying automatically\. Changing the amount or switching between USD and ETH also starts a new estimate\./);
+    assert.match(html, /Retrying automatically\. Changing the amount or its currency also starts a new estimate\./);
     assert.match(html, /data-funding-copy/, 'the address stays available');
 });

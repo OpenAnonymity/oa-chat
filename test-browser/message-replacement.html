@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+<title>Regeneration storage checks</title>
+<style>body{font:16px system-ui;max-width:900px;margin:40px auto;padding:20px}button{font:inherit;padding:12px}pre{white-space:pre-wrap}li{margin:8px 0}.pass{color:#176326}.fail{color:#a52020}</style>
+<h1>Regeneration storage checks</h1>
+<p>Uses the real chat database code and this browser’s IndexedDB. Only synthetic chats in a separate database; no accounts, tickets, or network requests.</p>
+<button id="run">Run storage checks</button>
+<p id="status" role="status">Ready</p>
+<ol id="results"></ol>
+<pre id="summary"></pre>
+<script type="module" src="./message-replacement.mjs"></script>

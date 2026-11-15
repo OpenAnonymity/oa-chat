@@ -115,9 +115,19 @@ export async function runAddressAction(owner, details, report, action) {
         // A sponsored plan or record is bound to a transit account (its
         // `destination`) and names who is paid in `payout`: that is the
         // address the person confirmed, and the one the signer holds the
-        // operation to.
+        // operation to. Its network fee is paid from the withdrawal, so the
+        // funding address needs no fee budget for it.
         const payee = sponsoredPayee(record);
-        authorization = { kind: 'withdrawal',
+        let budget = null;
+        if (!payee && details.sponsored == null) {
+            budget = await addressFundingWallet.getWithdrawalFeeBudget(record?.mode || (kind === 'escape' ? 'escape' : zkapiClient.config?.prepared_withdrawal?.mode || owner.withdrawMode));
+            if (budget.shortfallWei !== '0') throw addressFundingWallet.paymentFailure('address_insufficient_eth', budget);
+            const reviewed = !record && owner.withdrawalFees?.quote;
+            if (reviewed && BigInt(budget.feeReserveWei) > BigInt(reviewed.feeReserveWei)) {
+                throw addressFundingWallet.paymentFailure('address_fee_quote_changed');
+            }
+        }
+        authorization = { kind: 'withdrawal', ...(budget?.transactionFeeWei != null ? { feeLimitWei: budget.transactionFeeWei } : {}),
             destination: payee ? fundingDestination(payee, undefined, { denied: [] }) : withdrawalDestination(owner, details.withdrawalRecordId),
             // An explicit escape choice can replace an unsubmitted mutual
             // plan. The SDK rechecks that transition under its wallet lock.

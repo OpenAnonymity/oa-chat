@@ -1,4 +1,5 @@
 import { logAccessDiscard } from './accessDiscardLog.js';
+import { isCurrentTrustedStationFallback } from '../trustedStations.js';
 
 export const VERIFIER_UNAVAILABLE_STATUS = 'verifier-unavailable';
 
@@ -6,8 +7,10 @@ export function isVerifierUnavailable(proof) {
     return proof?.status === VERIFIER_UNAVAILABLE_STATUS;
 }
 
-export function isVerifierResultUsable(result) {
-    return isVerifierProofApproved(result) || isVerifierUnavailable(result);
+// `options.now` lets a caller with a trusted issuer clock (zkAPI) check expiry.
+export function isVerifierResultUsable(result, options = {}) {
+    return isVerifierProofApproved(result) ||
+        (isVerifierUnavailable(result) && isCurrentTrustedStationFallback(result, null, options));
 }
 
 export const LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS = 'local-loopback-bypass';
@@ -33,21 +36,27 @@ export function isLocalLoopbackVerifierBypassProof(proof) {
 }
 
 export function isVerifierProofUsable(proof, options = {}) {
-    return isVerifierResultUsable(proof) ||
+    return isVerifierResultUsable(proof, options) ||
         (options.allowLocalBypass === true && isLocalLoopbackVerifierBypassProof(proof));
 }
 
 export function hasUsableVerifierApproval(session, options = {}) {
-    return isVerifierProofUsable(session?.apiKeyInfo?.verifierSubmitKeyProof, options);
+    if (session?.apiKey && session.apiKeyInfo?.key && session.apiKey !== session.apiKeyInfo.key) return false;
+    return hasUsableVerifierApprovalForAccessInfo(session?.apiKeyInfo, options);
 }
 
 export function hasUsableVerifierApprovalForAccessInfo(accessInfo, options = {}) {
+    if (isVerifierUnavailable(accessInfo?.verifierSubmitKeyProof)) {
+        return isCurrentTrustedStationFallback(accessInfo.verifierSubmitKeyProof, accessInfo);
+    }
     return isVerifierProofUsable(accessInfo?.verifierSubmitKeyProof, options);
 }
 
 export function buildExplicitlyVerifiedOpenRouterSharePayload(accessInfo) {
     if (!accessInfo || !hasExplicitVerifierApprovalForAccessInfo(accessInfo)) return null;
     return {
+        ...(accessInfo.modelPolicy ? { modelPolicy: accessInfo.modelPolicy } : {}),
+        ...(accessInfo.ticketsConsumed ? { ticketsConsumed: accessInfo.ticketsConsumed } : {}),
         backendId: 'openrouter',
         token: accessInfo.key || accessInfo.token || null,
         expiresAt: accessInfo.expiresAt || accessInfo.expires_at || null,
@@ -110,6 +119,7 @@ export function clearUnsafeOpenRouterCouncilAccess(session, options = {}) {
             || isBanned(lane.apiKeyInfo);
         if (!unsafe) continue;
 
+        (session.retiredTicketAccess ||= []).push({ key: lane.apiKey, expiresAt: lane.expiresAt || lane.apiKeyInfo?.expiresAt });
         discardedKeys.push(lane.apiKey);
         delete session.councilAccess[laneId];
         changed = true;
@@ -131,10 +141,23 @@ export function clearUnverifiedOpenRouterAccess(session, options = {}) {
         return false;
     }
 
-    let changed = clearUnsafeOpenRouterCouncilAccess(session, options);
+    let historyChanged = false;
+    const safeHistory = (info, key, expiresAt) => {
+        if (hasUsableVerifierApprovalForAccessInfo(info, options) && !options.isBanned?.(info)) return true;
+        historyChanged = true;
+        (session.retiredTicketAccess ||= []).push({ key, expiresAt });
+        return false;
+    };
+    if (session.ticketAccessHistory) session.ticketAccessHistory = session.ticketAccessHistory.filter(
+        info => safeHistory(info, info.key, info.expiresAt));
+    for (const [lane, history] of Object.entries(session.ticketLaneHistory || {})) {
+        session.ticketLaneHistory[lane] = history.filter(item => safeHistory(item.apiKeyInfo, item.apiKey, item.expiresAt));
+    }
+    let changed = clearUnsafeOpenRouterCouncilAccess(session, options) || historyChanged;
     if (session.apiKey && !hasUsableVerifierApproval(session, options)) {
         logAccessDiscard(session, options.reason || 'persisted-unverified');
         const discardedKey = session.apiKey;
+        (session.retiredTicketAccess ||= []).push({ key: discardedKey, expiresAt: session.expiresAt || session.apiKeyInfo?.expiresAt });
         session.apiKey = null;
         session.apiKeyInfo = null;
         session.expiresAt = null;

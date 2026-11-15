@@ -106,3 +106,16 @@ test('getStructuredTicketError unwraps FastAPI invalidation details', () => {
     assert.equal(parsed.message, 'Ticket signing key has already been invalidated');
     assert.equal(parsed.invalidatedKeyId, keyId);
 });
+
+test('structured ticket errors retain codes and nested text without serializing tickets', () => {
+    for (const code of ['TICKET_KEY_LEGACY', 'TICKET_KEY_INVALIDATED', 'TICKET_ALREADY_SPENT']) {
+        const detail = { error_code: code, message: { message: 'Ticket action required' },
+            legacy_key_id: 'cd'.repeat(32), input: 'private ticket' };
+        const parsed = getStructuredTicketError({ detail }, 'fallback');
+        assert.equal(parsed.code, code);
+        assert.equal(parsed.message, 'Ticket action required');
+        assert.equal(parsed.detail, detail);
+    }
+    assert.equal(getStructuredTicketError({ detail: [{ msg: 'Invalid ticket', input: 'secret' }] }, 'fallback').message,
+        'Invalid ticket');
+});

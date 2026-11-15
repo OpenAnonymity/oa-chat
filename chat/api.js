@@ -1,3 +1,6 @@
+import { getSystemPrompt } from './services/inference/systemPrompt.js';
+import { getErrorMessage } from './domain/errorMessage.js';
+import { isReportedModelId } from './domain/modelSelection.js';
 // OpenRouter API integration
 //
 // Direct-to-provider architecture: all inference requests (completions, streaming)
@@ -7,11 +10,13 @@
 // ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
 import { consumeSseBody } from './services/inference/sseStream.js';
+import { bearerToken, markInferenceKeyAccepted } from './services/inference/keyReadiness.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
-import { validateInferenceInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
+import { validateInferenceInput, validateConversationInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
 
-import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode, getInferenceAuthRetryCount, isInferenceAuthRetryResponse, isKeyLimitExceededResponse } from './services/inference/openRouterCreditRecovery.js';
 import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
+import { OPENROUTER_APP_HEADERS } from './services/inference/appAttribution.js';
 import {
     cancelAndroidNativeInferenceJob,
     isAndroidNativeInferenceAvailable,
@@ -23,33 +28,14 @@ import { resolveModelDisplayName } from './services/modelNames.js';
 import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
+import zeroDataRetention from './services/zeroDataRetention.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
+import { hasWithheldReasoning, reasoningTextFromDetails } from './services/reasoningParser.js';
 import { paragraphBreakBefore } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
 const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 const TITLE_SUMMARY_MAX_INPUT_CHARS = 4000;
-
-// System prompt to prepend to all conversations
-// Modify this function to change the default AI behavior
-// Use template literals (backticks) for multi-line prompts
-// This is a function so dynamic values (like date) are evaluated per request
-const getSystemPrompt = (modelId) => `
-You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, and direct answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences.  It is important to be concise: keep answers brief and to the point, but without losing important details.
-
-Formatting Rules:
-- Use Markdown for lists, tables, and styling.
-- Use \`\`\`code fences\`\`\` for all code blocks.
-- Format file names, paths, and function names with \`inline code\` backticks.
-- For all mathematical expressions, you must use \\(...\\) for inline math and \\[...\\] for block math. Use multi-line block math for complex equations.
-
-Current date: ${new Date().toLocaleDateString()}.
-`.trim();
-
-// To disable system prompt, return an empty string:
-// const getSystemPrompt = () => '';
-// Example:
-// const getSystemPrompt = () => `You are a helpful AI assistant.
 
 function hasPdfContent(messages = []) {
     return messages.some((message) => {
@@ -92,6 +78,10 @@ export class OpenRouterAPI {
     // Request-scoped leases isolate concurrent title/completion calls. Products
     // own credential acquisition, budget policy and cleanup, not SSE parsing.
     async withRequestAccess(token, options, operation) {
+        if (!zeroDataRetention.isReady() || zeroDataRetention.isEnabled()) {
+            const privacyError = await zeroDataRetention.checkModel(options.modelId);
+            if (privacyError) throw privacyError;
+        }
         const access = this.options.acquireRequestAccess
             ? await this.options.acquireRequestAccess(token, options)
             : this.defaultRequestAccess(token);
@@ -124,7 +114,11 @@ export class OpenRouterAPI {
         return {
             apiKey: key,
             baseUrl: this.baseUrl,
-            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }
+            headers: {
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+                ...OPENROUTER_APP_HEADERS
+            }
         };
     }
 
@@ -139,7 +133,12 @@ export class OpenRouterAPI {
             : body;
         // Composed billing adapters may reduce the allowance further, but may
         // not raise the user's 30,000-token ceiling or a smaller caller limit.
-        return applyOutputTokenLimit(prepared, model, callerLimit);
+        // Zero data retention is applied last, after every adapter, so no
+        // composed product hook can drop or widen the provider restriction.
+        const finalBody = zeroDataRetention.applyToBody(applyOutputTokenLimit(prepared, model, callerLimit));
+        validateInferenceInput(finalBody.messages, model);
+        validateSerializedInferenceBody(JSON.stringify(finalBody));
+        return finalBody;
     }
 
     prepareFetchOptions(access, init) {
@@ -150,19 +149,28 @@ export class OpenRouterAPI {
         };
     }
 
+    restrictFetchAttempt(init) {
+        if (!init.body) return init;
+        // Recheck the current preference on every retry without rerunning
+        // billing adapters or undoing a reduced output allowance.
+        return { ...init, body: JSON.stringify(zeroDataRetention.applyToBody(JSON.parse(init.body))) };
+    }
+
     fetchWithRetry(access, url, init, config) {
         return fetchWithOpenRouterCreditRecovery(
-            this.networkTransport.fetchWithRetry.bind(this.networkTransport),
+            (target, request, retryConfig) => this.networkTransport.fetchWithRetry(target, this.restrictFetchAttempt(request), retryConfig),
             url, this.prepareFetchOptions(access, init), {
                 ...config,
-                proxyConfig: access.proxyConfig || config?.proxyConfig
+                proxyConfig: access.proxyConfig || config?.proxyConfig,
+                prepareAttempt: request => this.restrictFetchAttempt(request)
             });
     }
 
     fetchWithRetryJson(access, url, init, config) {
         return this.networkTransport.fetchWithRetryJson(url, this.prepareFetchOptions(access, init), {
             ...config,
-            proxyConfig: access.proxyConfig || config?.proxyConfig
+            proxyConfig: access.proxyConfig || config?.proxyConfig,
+            prepareAttempt: request => this.restrictFetchAttempt(request)
         });
     }
 
@@ -174,24 +182,32 @@ export class OpenRouterAPI {
     }
 
     sendCompletionStrict(messages, modelId, token, options = {}) {
+        try { validateConversationInput(messages, this.getModelBudgetMetadata(modelId), [], modelId); }
+        catch (error) { return Promise.reject(error); }
         const requestOptions = { ...options, modelId, reasoningEnabled: options.reasoningEnabled ?? true };
         return this.withRequestAccess(token, requestOptions, request =>
             request._sendCompletionStrict(messages, modelId, token, requestOptions));
     }
 
-    generateSessionTitle(prompt, token, options = {}) {
+    async generateSessionTitle(prompt, token, options = {}) {
         if (!this.extractTextContent(prompt).trim()) return Promise.resolve('');
         const requestOptions = {
             ...options,
             modelId: options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID,
             reasoningEnabled: options.reasoningEnabled ?? true
         };
+        if (!zeroDataRetention.isReady()) await zeroDataRetention.ensureReady();
+        // The title model receives the first message. With zero data retention
+        // on and no eligible provider for it, keep the local title instead.
+        if (zeroDataRetention.isEnabled() && !zeroDataRetention.supportsModel(requestOptions.modelId)) {
+            return Promise.resolve('');
+        }
         return this.withRequestAccess(token, requestOptions, request =>
             request._generateSessionTitle(prompt, token, requestOptions));
     }
 
     streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null) {
-        try { validateInferenceInput(messages, this.getModelBudgetMetadata(modelId), files); }
+        try { validateConversationInput(messages, this.getModelBudgetMetadata(modelId), files, modelId); }
         catch (error) { return Promise.reject(error); }
         return this.withRequestAccess(token, {
             signal: abortController?.signal,
@@ -476,6 +492,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: response.status,
+                    sessionId: options.sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
@@ -522,6 +540,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: Number.isFinite(error?.status) ? error.status : 0,
+                    sessionId: options.sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
@@ -603,6 +623,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url,
                     status: response.status,
+                    sessionId: sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: {
@@ -617,12 +639,13 @@ export class OpenRouterAPI {
             }
 
             if (!response.ok) {
-                const errorMessage = data?.error?.message || data?.message || `HTTP error! status: ${response.status}`;
+                const errorMessage = getErrorMessage(data?.error, getErrorMessage(data, `HTTP error! status: ${response.status}`));
                 const error = new Error(errorMessage);
                 error.status = response.status;
                 error.data = data;
                 throw error;
             }
+            markInferenceKeyAccepted(bearerToken(headers));
 
             if (data?.usage && typeof options.onUsage === 'function') {
                 try {
@@ -702,6 +725,10 @@ export class OpenRouterAPI {
         let responseBody = null;
         let sawTerminal = false;
         let sawAnswer = false;
+        // Set when this request has returned or thrown. A delivery queued
+        // behind a callback that was still running at that moment must not
+        // reach the chat afterwards.
+        let streamSettled = false;
         const throwIfStreamAborted = () => {
             watchdog?.signal.throwIfAborted();
             if (!abortController?.signal?.aborted) return;
@@ -719,6 +746,9 @@ export class OpenRouterAPI {
             || null;
         let accumulatedContent = '';
         let accumulatedReasoning = '';
+        // The provider said the model reasoned but kept the words to itself
+        // (encrypted reasoning_details). There is nothing to show for it.
+        let reasoningWithheld = false;
         let completionFinishReason = null;
         let hasReceivedFirstToken = false;
         // Which stream the last delta belonged to. When a model interleaves
@@ -750,6 +780,11 @@ export class OpenRouterAPI {
                 reasoningBuffer = '';
                 reasoningFlushPromise = reasoningFlushPromise.then(async () => {
                     if (reasoningFlushError) return;
+                    // Stop (or a watchdog deadline) may have landed while the
+                    // previous delivery was still running: the request has
+                    // already been reported as cancelled, so this chunk is dropped
+                    // rather than delivered after the transcript was settled.
+                    if (streamSettled || watchdog?.signal.aborted || abortController?.signal?.aborted) return;
                     try {
                         await onReasoningChunk(bufferedReasoning);
                     } catch (error) {
@@ -910,6 +945,8 @@ export class OpenRouterAPI {
                 method: 'POST',
                 url: url,
                 status,
+                sessionId: sessionId || undefined,
+                keyRef: window.networkLogger.keyRefForHeaders(headers),
                 request: {
                     headers: window.networkLogger.sanitizeHeaders(headers),
                     body: logBody
@@ -947,24 +984,34 @@ export class OpenRouterAPI {
             try {
                 parsed = JSON.parse(data);
             } catch (error) {
-                throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an unreadable response. Any partial answer has been kept. Please retry.');
+                throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an unreadable response.');
             }
 
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an invalid response. Please retry.');
             }
             if (parsed.type === 'response.failed' || parsed.type === 'response.incomplete') {
-                throw inferenceError('INFERENCE_INCOMPLETE', 'The provider could not complete the response. Any partial answer has been kept. Please retry.');
+                throw inferenceError('INFERENCE_INCOMPLETE', 'The provider could not complete the response.');
             }
             if (parsed.type === 'response.completed') sawTerminal = true;
             const progressDelta = parsed.choices?.[0]?.delta;
             if (progressDelta?.content || progressDelta?.reasoning || progressDelta?.reasoning_details?.length
-                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) watchdog?.output();
+                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) {
+                watchdog?.output();
+                // Resumed output invalidates an earlier finish. EOF alone must
+                // not use that stale finish to mark a truncated reply complete.
+                completionFinishReason = null;
+            }
 
             // A router may identify the selected model in a role-only event.
             // Publish it before any output/usage from the same event, without
             // treating metadata as generated output or final provider usage.
-            const reportedModel = typeof parsed.model === 'string' ? parsed.model.trim() : '';
+            // An error event names no answering model (the router sends
+            // "unknown" when no provider took the request), so it is never
+            // published: the lane keeps the model that was asked for.
+            const reportedModel = !parsed.error && isReportedModelId(parsed.model)
+                ? parsed.model.trim()
+                : '';
             if (reportedModel && reportedModel !== modelUsed) {
                 modelUsed = reportedModel;
                 // Router prices describe the request selector, not the model
@@ -1038,15 +1085,37 @@ export class OpenRouterAPI {
                     }
                 }
 
-                // Check for reasoning in various possible formats
-                // OpenRouter might send reasoning in different ways
+                // Reasoning arrives in one of several shapes: a Responses-style
+                // event, a bare reasoning_delta, the chat delta's `reasoning`
+                // string, or only the delta's structured `reasoning_details`
+                // (reasoning.text / reasoning.summary). The string is read first
+                // so a chunk carrying both is not counted twice.
+                const reasoningDelta = parsed.choices?.[0]?.delta;
+                const reasoningString = typeof reasoningDelta?.reasoning === 'string' ? reasoningDelta.reasoning : '';
+                const detailReasoning = reasoningString ? '' : reasoningTextFromDetails(reasoningDelta?.reasoning_details);
+                if (hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
+                    const firstWithheld = !reasoningWithheld;
+                    reasoningWithheld = true;
+                    if (lastDeltaKind === 'content' && !reasoningString && !detailReasoning && !reasoningDelta?.content) {
+                        // Wordless thinking after part of the answer (the model
+                        // searched or called a tool and is thinking again): the
+                        // answer is not finished, and the next words start a new
+                        // paragraph.
+                        lastDeltaKind = 'reasoning';
+                        if (onReasoningChunk) await onReasoningChunk('', { withheld: true, resumed: true });
+                    } else if (firstWithheld && !accumulatedReasoning && onReasoningChunk) {
+                        // The model is thinking but the words are not shared by the provider: tell
+                        // the UI once, so it can say "Thinking..." and time the trace.
+                        await onReasoningChunk('', { withheld: true });
+                    }
+                }
                 if (parsed.type === 'response.reasoning.delta' ||
                     parsed.reasoning_delta ||
-                    (parsed.choices?.[0]?.delta?.reasoning)) {
+                    reasoningString || detailReasoning) {
 
                     let reasoningContent = parsed.delta ||
                                            parsed.reasoning_delta ||
-                                           parsed.choices?.[0]?.delta?.reasoning || '';
+                                           reasoningString || detailReasoning || '';
 
                     if (reasoningContent && onReasoningChunk) {
                         hasReceivedFirstToken = true;
@@ -1098,7 +1167,7 @@ export class OpenRouterAPI {
 
                 // Check for mid-stream errors
                 if (parsed.error) {
-                    const errorMessage = parsed.error.message || 'Stream error occurred';
+                    const errorMessage = getErrorMessage(parsed.error, 'Stream error occurred');
                     const error = new Error(errorMessage);
                     // The raw message stays on the error (credit detection reads
                     // it); the chat shows a readable summary, see app.js.
@@ -1200,9 +1269,14 @@ export class OpenRouterAPI {
 
                 // Check for finish reason
                 const finishReason = parsed.choices?.[0]?.finish_reason;
-                if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response. Please retry.');
+                if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response.');
                 if (finishReason) {
                     completionFinishReason = finishReason;
+                    // The provider has confirmed completion. Keep reading for the
+                    // tail ([DONE], final usage, citations), but only for a bounded
+                    // time: heartbeats on an otherwise finished connection must not
+                    // keep the answer "busy" until the output deadline.
+                    watchdog?.finished();
                 }
                 if (finishReason && finishReason !== 'stop') {
                     console.warn('Stream finished with reason:', finishReason);
@@ -1250,7 +1324,7 @@ export class OpenRouterAPI {
             throwIfStreamAborted();
 
             if (!sawTerminal && !completionFinishReason) {
-                throw inferenceError('INFERENCE_TRUNCATED', 'The response ended before completion was confirmed. Any partial answer has been kept. Please retry.');
+                throw inferenceError('INFERENCE_TRUNCATED', 'The response ended before it was complete.');
             }
             if (!sawAnswer) {
                 throw inferenceError('INFERENCE_EMPTY', 'The provider finished without an answer. Please retry or choose another model.');
@@ -1284,6 +1358,8 @@ export class OpenRouterAPI {
                 model: modelUsed,
                 finishReason: completionFinishReason,
                 reasoning: accumulatedReasoning || null,
+                // True when the provider reported reasoning it did not share.
+                reasoningWithheld: reasoningWithheld && !accumulatedReasoning,
                 citations: citations.length > 0 ? citations : null
             };
         };
@@ -1380,6 +1456,8 @@ export class OpenRouterAPI {
                         throwIfStreamAborted();
                         const { events } = pollAndroidNativeInferenceJob(jobId, afterSequence);
                         if (events.length === 0) {
+                            // Drain queued events before ending the completion tail.
+                            if (watchdog.tailExpired()) break;
                             await watchdog.wait(new Promise(resolve => setTimeout(resolve, 75)));
                             continue;
                         }
@@ -1390,6 +1468,9 @@ export class OpenRouterAPI {
                             if (event.type === 'stream-open') {
                                 if (!streamOpened) {
                                     streamOpened = true;
+                                    // The native job has no readiness resends,
+                                    // but its acceptance closes the key's window.
+                                    markInferenceKeyAccepted(bearerToken(headers));
                                     watchdog.opened();
                                     if (typeof onStreamOpen === 'function') {
                                         await watchdog.wait(onStreamOpen());
@@ -1438,8 +1519,11 @@ export class OpenRouterAPI {
                 return await watchdog.wait(finalizeStreamResult());
             }
 
-            // The outer send policy owns retries. A watchdog also races transports
-            // that do not reliably implement AbortSignal (including relay reads).
+            // The outer send policy owns retries, except the bounded same-request
+            // resends of a rejected HTTP request (402 budget, 401 auth) at the
+            // OpenRouter boundary. A watchdog also races transports that do not
+            // reliably implement AbortSignal (including relay reads).
+            const authRetryDelaysMs = this.options.inferenceTiming?.authRetryDelaysMs;
             const pendingResponse = this.fetchWithRetry(
                 access,
                 url,
@@ -1448,7 +1532,9 @@ export class OpenRouterAPI {
                     context: 'Inference stream',
                     maxAttempts: 1,
                     timeoutMs: 0, // watchdog owns connection + body deadlines
-                    signal: watchdog.signal
+                    signal: watchdog.signal,
+                    ...(Array.isArray(authRetryDelaysMs) ? { authRetryDelaysMs } : {}),
+                    ...(this.options.inferenceTiming?.authClock ? { authClock: this.options.inferenceTiming.authClock } : {})
                 }
             );
 
@@ -1460,11 +1546,26 @@ export class OpenRouterAPI {
             // Handle pre-stream errors
             if (!response.ok) {
                 const errorData = await readInferenceErrorBody(response, watchdog.signal);
-                const errorMessage = errorData.error?.message || `HTTP error! status: ${response.status}`;
-                const error = new Error(errorMessage);
+                const fallbackMessage = `HTTP error! status: ${response.status}`;
+                const originalMessage = errorData?.error?.message;
+                const error = new Error(typeof originalMessage === 'string' && originalMessage || fallbackMessage);
+                // Preserve the previous policy input before extracting display
+                // text. Nested credit text alone cannot authorize a new ticket.
+                error.creditRecoveryMessage = error.message;
+                error.message = getErrorMessage(errorData?.error, getErrorMessage(errorData, fallbackMessage));
                 error.status = response.status;
                 error.data = errorData;
-                if (response.status === 402) error.code = getCreditErrorCode(errorData);
+                if (response.status === 401 && isInferenceAuthRetryResponse(response)) {
+                    // Tagged here, at the inference HTTP response, and only when
+                    // the OpenRouter boundary resent this identical request.
+                    // Access issuance, verifier, wallet, account and other
+                    // endpoints' (e.g. local daemon) 401s never are.
+                    error.inferenceAuthRejected = true;
+                    error.authRetryCount = getInferenceAuthRetryCount(response);
+                }
+                if (response.status === 402 || isKeyLimitExceededResponse(response.status, errorData, error.creditRecoveryMessage)) {
+                    error.code = getCreditErrorCode(errorData);
+                }
                 throw error;
             }
 
@@ -1475,7 +1576,7 @@ export class OpenRouterAPI {
             logStreamingRequest(response.status, 'web');
 
             await watchdog.wait(consumeSseBody(response.body, processSseLine, {
-                signal: watchdog.signal, onActivity: () => watchdog.activity()
+                signal: watchdog.signal, onActivity: () => watchdog.activity(), getSettled: () => watchdog.settled
             }));
 
             return await watchdog.wait(finalizeStreamResult());
@@ -1521,17 +1622,21 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: streamError.status || 0,
+                    sessionId: sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody
                     },
-                    error: { status: streamError.status, code: streamError.code },
+                    error: { status: streamError.status, code: streamError.code,
+                        ...(streamError.providerReported === true ? { providerReported: true } : {}) },
                     isAborted: streamError.isCancelled === true // Flag user-initiated cancellation
                 });
             }
 
             throw streamError;
         } finally {
+            streamSettled = true;
             if (reasoningBufferTimer) clearTimeout(reasoningBufferTimer);
             discardResponseBody(responseBody);
             watchdog?.dispose();

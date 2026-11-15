@@ -1,8 +1,22 @@
+import { createDiagnosticTrail } from '../diagnostics.js';
 import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
 import { getDefaultModelConfig } from '../modelConfig.js';
+import { reportRequestFailure } from '../requestDiagnostics.js';
+
+async function observeRequest(phase, run, signal) {
+    const trail = createDiagnosticTrail(phase === 'completion' ? 'stream' : phase === 'verification' ? 'verify' : 'access');
+    trail.add('started');
+    try {
+        return await run();
+    } catch (error) {
+        trail.add('failed');
+        reportRequestFailure(phase, error, signal, trail.snapshot());
+        throw error;
+    }
+}
 
 const builtinBackends = [
     openRouterBackend,
@@ -188,14 +202,22 @@ const inferenceService = {
     isAccessExpired(session) {
         return getBackendForSession(session).isAccessExpired(session);
     },
+    async getAccessTicketCost(session, options = {}) {
+        const backend = getBackendForSession(session);
+        return backend.getAccessTicketCost?.({ ...options, session }) ?? null;
+    },
     async requestAccess(session, options = {}) {
         const backend = getBackendForSession(session);
-        return backend.requestAccess({ ...options, session });
+        return observeRequest('access', () => backend.requestAccess({ ...options, session }), options.signal);
     },
     async verifyAccess(session, accessInfo) {
         const backend = getBackendForSession(session);
         if (!backend.verification?.supports) return null;
-        return backend.verification.submitAccess(accessInfo);
+        const result = await observeRequest('verification', () => backend.verification.submitAccess(accessInfo));
+        if (result?.status === 'rejected') {
+            reportRequestFailure('verification', result.error || { code: 'VERIFICATION_REJECTED' });
+        }
+        return result;
     },
     setCurrentAccess(session, accessInfo) {
         const backend = getBackendForSession(session);
@@ -209,7 +231,7 @@ const inferenceService = {
     streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
-        return backend.streamCompletion(
+        return observeRequest('completion', () => backend.streamCompletion(
             messages,
             modelId,
             token,
@@ -224,7 +246,7 @@ const inferenceService = {
             reasoningEffort,
             onAccessProgress,
             onStreamHealth
-        );
+        ), abortController?.signal);
     },
     isTransportAccessReady(session) {
         const backend = getBackendForSession(session);
@@ -237,7 +259,7 @@ const inferenceService = {
             throw new Error(`Backend does not support strict completions: ${backend.id}`);
         }
         const token = backend.getAccessToken(session);
-        return backend.sendCompletionStrict(messages, modelId, token, options);
+        return observeRequest('completion', () => backend.sendCompletionStrict(messages, modelId, token, options), options.signal);
     },
     buildSharedAccessPayload(session) {
         const backend = getBackendForSession(session);
@@ -280,13 +302,25 @@ const inferenceService = {
         }
         return null;
     },
+    /** How an ephemeral key id is shown everywhere: prefix, head and tail. */
+    formatEphemeralKeyId(id) {
+        const value = String(id || '');
+        return value ? `ek-oa-v1-${value.slice(0, 6)}...${value.slice(-4)}` : '';
+    },
+    /**
+     * The ephemeral key id a session assigned to the key with this reference
+     * (the key's last four characters, as the network log records it), or null.
+     */
+    findEphemeralKeyId(session, keyRef) {
+        const mappings = session?.ephemeralKeyMappings;
+        if (!mappings || typeof keyRef !== 'string' || !keyRef) return null;
+        return Object.keys(mappings).find(id =>
+            String(mappings[id]?.underlyingKeyId || '').endsWith(keyRef)) || null;
+    },
     maskAccessToken(session, token) {
-        const prefix = 'ek-oa-v1-';
-
         // Use current ephemeral key ID if available (with ek-oa-v1- prefix)
         if (session?.currentEphemeralKeyId && session?.ephemeralKeyMappings) {
-            const id = session.currentEphemeralKeyId;
-            return `${prefix}${id.slice(0, 6)}...${id.slice(-4)}`;
+            return this.formatEphemeralKeyId(session.currentEphemeralKeyId);
         }
 
         // Fallback to backend-specific masking (no prefix - not an ephemeral key)

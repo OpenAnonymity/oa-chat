@@ -1,5 +1,21 @@
 # Privacy Model: Unlinkable Inference
 
+## Optional error reporting
+
+Builds with `SENTRY_DSN` explicitly set send limited uncaught JavaScript errors,
+bounded, explicitly instrumented request failures and a short catalogue of
+client incidents (a ticket sweep, a stream timeout, a failed local write or
+sync) to Sentry. Reports contain fixed error categories, allowlisted request
+phases/statuses, bucketed counts, four fixed-value tags (payment mode, surface,
+page visibility, online state), the failing operation's fixed steps and
+relative times (rounded to 100ms), and generated code locations — not
+exception text, chats, credentials, account identifiers, hosts, model names or
+cross-chat activity histories. Unscoped failures carry no trail.
+The direct transport still exposes source IP, browser HTTP metadata and error
+arrival time to Sentry. It is not covered by OA's inference relay or strongest
+metadata-unlinkability claims. Reporting is absent from unconfigured builds.
+See [SENTRY.md](SENTRY.md) for the exact data boundary and deployment controls.
+
 This document defines the full-system unlinkability and zero-trust model for
 oa-chat users, including the metadata tradeoff introduced when a user opts to
 sync inference tickets through a Google or pseudonymous username account.
@@ -215,10 +231,17 @@ station, and verifier do not receive any of these prompts or responses. Browser
 activity logs retain only operational metadata and redact
 prompt/response content at the logging sink.
 
-Response rendering also remains inside this boundary. Citation and inline-link
-domains are derived locally; the client does not automatically send response URLs
-to preview proxies, favicon services, or cited origins. A source origin sees the
-browser only after the user explicitly opens that link.
+Response rendering stays mostly inside this boundary. Citation and inline-link
+titles and domains are derived locally; the client never sends response URLs to
+preview proxies or to the cited origins, and a source origin sees the browser
+only after the user explicitly opens that link. Site icons are the one
+exception, by product decision on 2026-10-09 (they were removed on 2026-08-21
+and restored because unmarked sources were not recognisable): as an answer
+renders, the browser loads `https://icons.duckduckgo.com/ip3/<hostname>.ico`
+for each cited or linked hostname, so DuckDuckGo's icon service learns those
+hostnames and the browser's IP address at that moment. It receives the hostname
+only, never the path or query, and no referrer. Icons for the providers OA ships
+with are bundled and never requested.
 
 ### 4. Key verification (verifier)
 
@@ -233,9 +256,28 @@ The client submits the key to the verifier for station compliance verification:
 Even if the verifier retained the key, it could not link it to a user identity
 because the key was issued through blind signatures with no user identity attached.
 
-Clients submit newly issued keys to the verifier before inference. An explicit,
-matching `verified` result records approval. Under the operator-approved policy
-matching existing production, transport failures/timeouts and transient HTTP
+Clients submit newly issued keys to the verifier before inference. Unverified
+continuation additionally requires an explicit client-side station ID/public-key
+pin scoped to the configured verifier origin, and local Ed25519 verification of
+the station signature over the exact station ID, provider key and expiry. The
+current operator trust list contains `oa-station` at verifier2 and
+`oa-production-station` at the existing production verifier origin. The latter
+pin was matched against both the TLS-protected verifier broadcast and production
+org trust cache on October 4, 2026; it permits temporary outages only. Neither an
+org `recentlyAttested` flag nor membership in a live broadcast adds a trusted
+station. The initial `oa-station` pin is the key observed in the HTTPS verifier
+broadcast on October 1, 2026; its operator identity was not independently
+confirmed through another channel. The release accepts that one-time trust
+bootstrap. Future broadcasts cannot add or rotate trusted pins; a reviewed
+client change is required. Unknown stations can still use matching successful verifier approvals;
+they cannot use any outage or advisory exception. For fallback, invalid station
+signatures always block. Known bans, expired keys and mismatched verifier
+approvals always block. A browser
+without the required signature-verification support also blocks fallback.
+
+An explicit,
+matching `verified` result records approval. Under the `strict` outage policy,
+transport failures/timeouts and transient HTTP
 errors (408, 500, 502, 503, 504) may activate an unexpired key as
 `verifier-unavailable` only when issuance reports `recentlyAttested === true`.
 HTTP 429 and the exact 503 `unverified` / `ownership_check_error` response may
@@ -253,6 +295,30 @@ user identity. A matching successful response upgrades the key; rejection clears
 it. A healthy broadcast alone never promotes it. Pending saved keys resume on
 use after reload; exhausted retries remain visibly unverified until expiry or
 replacement. Outage keys cannot enter shared-chat access payloads.
+
+The compiled `OA_VERIFIER_OUTAGE_POLICY` also supports `tolerant` and `advisory`;
+the production build defaults to `advisory`. Tolerant admits temporary outages,
+pending or malformed replies for locally authenticated pinned stations. Advisory
+also admits a verifier refusal, including `Invalid org signature`, for the
+staging pin. The production pin explicitly forbids that exception: negative
+ownership, invalid signatures and other explicit refusals block even inside a
+5xx or success envelope. This is an explicit operator trust exception: a valid pinned
+station signature establishes who issued the key, but does not establish org
+signature validity, provider-account ownership or logging/training settings.
+The interface retains `verifier-unavailable`/unverified status. This weaker
+assurance must not be described as verifier approval or zero-trust station
+compliance. The local trust policy revision is bound into saved fallback proofs;
+older unscoped advisory approvals and approvals under changed pins are invalid.
+Revisions include only the configured verifier origin's pins, so adding a
+production pin does not invalidate existing staging proofs.
+
+Browser zkAPI uses this same host policy after its SDK's request identity,
+spending-cap, quote, expiry, origin and evidence checks. It retains the raw key
+only in the active in-memory lease, projects the unverified status into the
+System Panel, and rechecks bans/current policy before each credential checkout.
+It does not put SDK keys in OA's ticket-key background retry queue; each new
+lease performs verification again. The wallet recovery journal, proof-file
+SHA-256 checks and signed settlement checks remain enforced.
 
 Ticket spending commits before the browser verification check. A hard verification
 failure still discards the bounded child key without restoring the ticket.
@@ -290,6 +356,15 @@ an OA sync account. In those opt-in flows:
    are inside ciphertext or represented only by HMAC-derived opaque IDs.
    For these accounts, redemption consumption does not trigger
    immediate sync; it propagates during the next initial/periodic sync.
+   Visible unlocked clients reconcile every 30 seconds and on foreground resume,
+   independently of whether a redemption occurred. Each installation also keeps
+   a separate encrypted removal snapshot at a stable HMAC-derived address so
+   concurrent devices cannot overwrite each other's spent/deleted-ticket state.
+   Its random writer ID is inside ciphertext and local account-scoped storage.
+   This adds a stable installation-level opaque record and increases sync traffic
+   and the frequency of observable ciphertext-size changes. Fixed scheduling
+   avoids a direct redemption-triggered request, but does not eliminate timing
+   or size correlation. Background/offline clients catch up on resume.
 7. Neither a provider identity nor a username can be linked onto an existing
    legacy account. Each resolves a dedicated account partition so it cannot
    inherit a namespace with historical ticket-sync metadata.
@@ -313,10 +388,12 @@ for implementation details.
 
 ### 6. Verifier fail-closed policy
 
-The browser and daemon require matching station/key approval or the narrow,
-explicitly unverified outage exception in section 4. Pending, unknown,
-mismatched, malformed and explicit refusal results fail closed; transport
-failures qualify only under that exception. Because ticket spending commits
+The browser requires matching station/key approval or the explicitly unverified
+trusted-station exception for its compiled policy in section 4. Under strict
+policy, pending, unknown, mismatched, malformed and explicit refusal results
+fail closed; transport failures qualify only under that exception. Tolerant
+and advisory browser builds also admit the documented trusted-station cases.
+These browser exceptions do not change the daemon policy. Because ticket spending commits
 before verification, a hard failed check discards the bounded child key but
 does not restore the ticket.
 
@@ -328,7 +405,7 @@ routing. The build rejects OA production hostnames and never queries the
 production verifier. Both exceptions label the result as a bypass rather than
 `verified`, exclude the credential from shared-access payloads, and identify
 the reduced assurance in the security UI. Production and ordinary staging
-builds retain station/key checks and only the explicit outage exception from
+builds retain station/key checks and only the trusted-station exceptions from
 section 4. See
 [Disposable Demo Frontend Routing](DEMO_DEPLOYMENT.md).
 
@@ -535,6 +612,15 @@ independent parties (universities, other organizations).
 
 ## Metadata Considerations
 
+Ticket-mode web OpenRouter requests include one fixed app attribution pair:
+`HTTP-Referer: https://chat.openanonymity.ai` and `X-Title: OA Chat`. This tells
+OpenRouter that the request belongs to the OA Chat app/cohort and enables its
+app rankings and aggregate usage attribution. The values are shared across
+production, staging and preview deployments; they contain no account, device,
+conversation, current-page path or query identifier. They do not remove the
+existing IP, timing, content or credential-reuse correlation surfaces. Composed
+providers such as the zkAPI SDK retain their separate attribution behavior.
+
 See blog post [Section 2.2: Traffic Mixing](https://openanonymity.ai/blog/unlinkable-inference/#22-traffic-mixing)
 for how network relays and mixing mitigate metadata leakage.
 
@@ -605,6 +691,12 @@ prepaid note meets a coarse model-tier cap. The SDK owns local note/proof and
 settlement state; it does not receive account identities or chat content. OA's
 provider adapter sends inference with the ephemeral credential. Private note
 storage is browser-local and separate from account-backed chat/ticket sync.
+
+Before a new private key, the SDK may read the configured protocol server's
+unauthenticated, non-cacheable `GET /v2/time` (Sepolia sends its shared
+password as for other `/v2/*` calls). It carries no wallet, note, request or
+account data and the server keeps no state; it adds one request whose timing
+sits next to the existing quote and lease requests on the same transport.
 
 SDK protocol, manifest, configuration, and daemon requests explicitly omit
 account cookies, including on same-origin reverse-proxy paths. The host passes
@@ -842,3 +934,32 @@ moving later is a new vault and a user migration, which is a public withdrawal
 and deposit and is linkable as described under upgrading. Version 1's repaired
 setup is also single-party (see [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md)).
 Details: [ZKAPI_VERSIONING.md](ZKAPI_VERSIONING.md#single-party-development-proof-setup-known-limitation).
+
+
+## Optional commercial feature analytics
+
+The commercial web composition can opt into fixed-name feature usage events for
+Memory, Tab Tab, Parallel and Council through its existing Fathom loader. The
+standalone app has no reporter by default. Events have no prompt, response,
+memory content, model, account, chat, credential or ticket fields, and do not join
+accounts to inference keys. The analytics provider still sees ordinary network
+metadata and event timing; this feature telemetry is outside the cryptographic
+unlinkability guarantee. Browser Global Privacy Control and Do Not Track disable
+collection. See [event definitions and limits](FEATURE_ANALYTICS.md).
+
+Settings-change analytics use the same optional fixed-event boundary. Only the
+covered setting name and direction relative to its built-in default are reported;
+the previous and next values stay in the browser. No preference census, user
+history, identity, model selection or content is sent. See
+[FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for scope and exclusions.
+
+
+## Optional phone pairing
+
+The computer approves a fresh passkey prompt before sending the account master
+key encrypted under a QR-secret-bound ephemeral ECDH key. The org sees account
+identity, pairing time, source IPs and ciphertext sizes, and stores the resulting
+credential/encrypted wrapper. It cannot decrypt the mailbox messages from its
+retained values. Pairing links devices to an account; it does not make that account
+activity anonymous. It introduces no account identifiers into inference or ticket
+redemption. QR secrets and keys never enter telemetry. See [PHONE_PAIRING.md](PHONE_PAIRING.md).

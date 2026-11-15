@@ -22,6 +22,29 @@ export function buildSessionTitleSearchText(content) {
         .slice(0, 1000);
 }
 
+export const DEFAULT_SESSION_PREVIOUS_TITLE_LIMIT = 5;
+
+/**
+ * Titles a chat used to have, so a search for a name someone remembers still
+ * finds the renamed chat. Newest first, bounded, without the current title or
+ * placeholders. Returns null when nothing changes.
+ */
+export function recordPreviousSessionTitle(session, nextTitle, options = {}) {
+    const limit = options.limit || DEFAULT_SESSION_PREVIOUS_TITLE_LIMIT;
+    const clean = value => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
+    const previous = clean(session?.title);
+    const next = clean(nextTitle);
+    const existing = Array.isArray(session?.previousTitles) ? session.previousTitles.map(clean) : [];
+    const keep = title => title && title !== 'New Chat' && title !== next;
+    const titles = [];
+    for (const title of [previous, ...existing]) {
+        if (keep(title) && !titles.includes(title)) titles.push(title);
+    }
+    const bounded = titles.slice(0, limit);
+    const unchanged = bounded.length === existing.length && bounded.every((title, i) => title === existing[i]);
+    return unchanged ? null : bounded;
+}
+
 export function buildForkSessionTitleFields(sourceSession, firstUserContent, options = {}) {
     const forkSuffix = options.forkSuffix || ' (fork)';
     const sourceTitle = typeof sourceSession?.title === 'string'

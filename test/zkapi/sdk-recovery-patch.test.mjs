@@ -9,13 +9,18 @@ import { execFileSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { ZkapiClient } from '@openanonymity/zkapi-browser-sdk/client';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
-import registry from '../../deployments/zkapi/registry.json' with { type: 'json' };
+import { validRegistry } from './_registryFixtures.mjs';
+
+// The install guard uses a dormant successor fixture; no second SDK is activated.
+const registry = validRegistry();
 import patch from '../../patches/zkapi-browser-sdk-wallet-recovery.mjs';
-import { patchRegisteredSdks, patchZkapiSdk, zkapiSdkPatchProvenance } from '../../scripts/patch-zkapi-sdk.mjs';
+import { patchRegisteredSdks, patchZkapiSdk, zkapiSdkPatchProvenance, zkapiSdkPatches } from '../../scripts/patch-zkapi-sdk.mjs';
 
 const installed = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const digest = value => createHash('sha256').update(value).digest('hex');
+const patchFiles = zkapiSdkPatches.flatMap(definition => definition.files);
+const sdkFiles = [...new Set(patchFiles.map(entry => entry.file))];
 const LEGACY_ALIAS = '@openanonymity/zkapi-browser-sdk';
 const LEGACY_PIN = `github:OpenAnonymity/zkapi#${patch.revision}`;
 
@@ -24,14 +29,17 @@ const LEGACY_PIN = `github:OpenAnonymity/zkapi#${patch.revision}`;
 async function writePristineSdk(sdk) {
     await fs.mkdir(sdk, { recursive: true });
     await fs.copyFile(path.join(installed, 'package.json'), path.join(sdk, 'package.json'));
-    for (const file of patch.files) {
-        let source = await fs.readFile(path.join(installed, file.file), 'utf8');
-        if (digest(source) === file.afterSha256) {
-            for (const replacement of [...file.replacements].reverse()) source = source.replace(replacement.after, replacement.before);
+    for (const file of sdkFiles) {
+        const chain = patchFiles.filter(entry => entry.file === file);
+        let source = await fs.readFile(path.join(installed, file), 'utf8');
+        for (const entry of [...chain].reverse()) {
+            if (digest(source) === entry.afterSha256) {
+                for (const replacement of [...entry.replacements].reverse()) source = source.replace(replacement.after, replacement.before);
+            }
         }
-        assert.equal(digest(source), file.beforeSha256);
-        await fs.mkdir(path.dirname(path.join(sdk, file.file)), { recursive: true });
-        await fs.writeFile(path.join(sdk, file.file), source);
+        assert.equal(digest(source), chain[0].beforeSha256);
+        await fs.mkdir(path.dirname(path.join(sdk, file)), { recursive: true });
+        await fs.writeFile(path.join(sdk, file), source);
     }
 }
 
@@ -49,15 +57,15 @@ async function pristineFixture(t, { hoisted = false } = {}) {
 for (const hoisted of [false, true]) {
     test(`pristine ${hoisted ? 'hoisted consumer' : 'local'} SDK applies exactly the reviewed patch and repeated checks do not rewrite it`, async t => {
         const fixture = await pristineFixture(t, { hoisted });
-        assert.equal(await patchZkapiSdk(fixture.root), 2);
+        assert.equal(await patchZkapiSdk(fixture.root), sdkFiles.length);
         const mtimes = [];
-        for (const file of patch.files) {
-            const target = path.join(fixture.sdk, file.file);
-            assert.equal(digest(await fs.readFile(target)), file.afterSha256);
+        for (const file of sdkFiles) {
+            const target = path.join(fixture.sdk, file);
+            assert.equal(digest(await fs.readFile(target)), patchFiles.findLast(entry => entry.file === file).afterSha256);
             mtimes.push((await fs.stat(target)).mtimeMs);
         }
         assert.equal(await patchZkapiSdk(fixture.root), 0);
-        assert.deepEqual(await Promise.all(patch.files.map(async file => (await fs.stat(path.join(fixture.sdk, file.file))).mtimeMs)), mtimes);
+        assert.deepEqual(await Promise.all(sdkFiles.map(async file => (await fs.stat(path.join(fixture.sdk, file))).mtimeMs)), mtimes);
     });
 }
 
@@ -66,6 +74,22 @@ test('a changed second SDK file fails before the first file is modified', async 
     await fs.appendFile(path.join(fixture.sdk, patch.files[1].file), '\n// unexpected SDK change\n');
     await assert.rejects(patchZkapiSdk(fixture.root), /Unexpected zkAPI SDK contents/);
     assert.equal(digest(await fs.readFile(path.join(fixture.sdk, patch.files[0].file))), patch.files[0].beforeSha256);
+});
+
+test('an interrupted install resumes from an already reviewed intermediate patch', async t => {
+    const fixture = await pristineFixture(t);
+    const entry = patchFiles[0];
+    const target = path.join(fixture.sdk, entry.file);
+    let source = await fs.readFile(target, 'utf8');
+    for (const replacement of entry.replacements) source = source.replace(replacement.before, replacement.after);
+    assert.equal(digest(source), entry.afterSha256);
+    await fs.writeFile(target, source);
+    await patchZkapiSdk(fixture.root);
+    for (const file of sdkFiles) {
+        assert.equal(digest(await fs.readFile(path.join(fixture.sdk, file))),
+            patchFiles.findLast(candidate => candidate.file === file).afterSha256);
+    }
+    assert.equal(await patchZkapiSdk(fixture.root), 0);
 });
 
 test('a changed SDK pin requires review rather than silently applying a previous repair', async t => {
@@ -96,7 +120,7 @@ test('recovery binding preserves Sepolia mutual authentication and password-free
     } };
     const client = new ZkapiClient();
     client.browserMode = true;
-    const options = { destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'saved-withdrawal' };
+    const options = { destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'saved-withdrawal', reviewedFunding: null };
     const withdrawals = [];
     t.mock.method(client, 'performWithdrawal', async (mode, _status, received) => {
         withdrawals.push({ mode, ...received });
@@ -170,7 +194,8 @@ function retiredLegacyRegistry() {
 async function checkout(t, { registryData = registry, dependencies, legacy = false, successor = false } = {}) {
     const temp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'oa-patch-guard-')));
     t.after(() => fs.rm(temp, { recursive: true, force: true }));
-    for (const file of ['scripts/patch-zkapi-sdk.mjs', 'patches/zkapi-browser-sdk-wallet-recovery.mjs']) {
+    for (const file of ['scripts/patch-zkapi-sdk.mjs', 'patches/zkapi-browser-sdk-wallet-recovery.mjs',
+        'patches/zkapi-browser-sdk-server-time.mjs', 'patches/zkapi-browser-sdk-proof-cache.mjs', 'patches/zkapi-browser-sdk-provider-verification.mjs']) {
         await fs.mkdir(path.dirname(path.join(temp, file)), { recursive: true });
         await fs.copyFile(path.join(repositoryRoot, file), path.join(temp, file));
     }
@@ -200,16 +225,20 @@ function runGuard(script, cwd) {
     }
 }
 
+// The result of a file's whole patch chain (the recovery patch, then the
+// compatibility patches that start from its result).
+const finalHash = name => patchFiles.filter(entry => entry.file === name).at(-1).afterSha256;
+
 const patchedFiles = async sdk => Promise.all(patch.files.map(async file => digest(await fs.readFile(path.join(sdk, file.file)))));
 
 test('install guard: a live legacy row patches the SDK and a repeat changes nothing', async t => {
     const tree = await checkout(t, { legacy: true });
     const first = runGuard(tree.script, tree.temp);
     assert.equal(first.code, 0, first.output);
-    assert.deepEqual(await patchedFiles(tree.sdk), patch.files.map(file => file.afterSha256));
+    assert.deepEqual(await patchedFiles(tree.sdk), patch.files.map(file => finalHash(file.file)));
     const second = runGuard(tree.script, tree.temp);
     assert.equal(second.code, 0, second.output);
-    assert.deepEqual(await patchedFiles(tree.sdk), patch.files.map(file => file.afterSha256));
+    assert.deepEqual(await patchedFiles(tree.sdk), patch.files.map(file => finalHash(file.file)));
 });
 
 test('install guard: a retired legacy row needs neither its package nor its dependency', async t => {
@@ -263,7 +292,7 @@ test('install guard: runs when started through a symlink to the checkout', async
     const outcome = runGuard(path.join(link, 'scripts/patch-zkapi-sdk.mjs'), link);
     assert.equal(outcome.code, 0, outcome.output);
     // The guard really ran: the pristine SDK is patched, not silently skipped.
-    assert.deepEqual(await patchedFiles(tree.sdk), patch.files.map(file => file.afterSha256));
+    assert.deepEqual(await patchedFiles(tree.sdk), patch.files.map(file => finalHash(file.file)));
 });
 
 test('bundled into another entry file, neither the install guard nor the registry CLI runs', async t => {
@@ -303,6 +332,6 @@ test('patchRegisteredSdks drives every row, legacy included, from its status', a
     const mixed = structuredClone(registry);
     mixed.versions[0].networks.sepolia = { status: 'retired', activatedAt: '2026-09-30T00:00:00Z', retiredAt: '2027-02-01T00:00:00Z' };
     const live = await checkout(t, { registryData: mixed, legacy: true });
-    assert.equal(await patchRegisteredSdks(live.temp, { rows: mixed.versions }), 2);
+    assert.equal(await patchRegisteredSdks(live.temp, { rows: mixed.versions }), sdkFiles.length);
     assert.equal(await patchRegisteredSdks(live.temp, { rows: mixed.versions }), 0);
 });

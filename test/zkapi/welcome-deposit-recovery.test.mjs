@@ -116,7 +116,7 @@ test('an explicitly opened Welcome survives reload even after onboarding was dis
         context.setWalletMethod = () => {};
         context.document = { activeElement: null, addEventListener() {}, removeEventListener() {},
             documentElement: { removeAttribute() {}, setAttribute() {} } };
-        context.window = { location: { search: '?s=current-chat' } };
+        context.window = { location: { search: '?c=current-chat' } };
         context.localStorage = { getItem: () => 'true', setItem() {} };
         context.URLSearchParams = URLSearchParams;
         context.showSurface = () => {};

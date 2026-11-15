@@ -12,6 +12,15 @@ ticket, station, verifier, and inference paths as ordinary Chat.
   settle, a separately selected synthesis model receives the canonical chat
   context plus the anonymous first-stage responses and writes one review.
 
+The Council review model selector offers only available pinned models, in the
+same order as the main model picker's Pinned section. Its searchable keyboard
+picker uses the same restriction. Primary and secondary model pickers retain
+the full catalog. A previously chosen unpinned Council model stays visible as
+`(current)` but cannot be selected again after switching; rendering the shorter
+list never rewrites a saved chat or acquires a key. If no pinned models are
+available, selection is disabled rather than falling back to the full catalog.
+Both selectors refresh when the pinned-model configuration changes.
+
 Parallel is selected explicitly and the latest Chat/Parallel composer choice is
 remembered across new chats and newly opened browser tabs/windows. If the user
 opens a new view while Parallel is selected, its empty composer starts in
@@ -85,3 +94,37 @@ content, credentials, and tickets.
 
 Parallel/Council sharing includes transcript and mode configuration, but never
 lane credentials or the ticket wallet.
+
+## Lane output and quiet streams (2026-10-08)
+
+Parallel lanes retain generated images alongside text during streaming and in saved
+responses. An image-only answer counts as completed. Council review receives text
+and an explicit image-count note, not the generated image bytes; it must not claim
+to have inspected those images. The canonical text answer prefers a lane with text.
+After output pauses for 1.2 seconds, an unfinished lane shows “Still working…”.
+The label clears on resumed output, reasoning, completion, failure, or cancellation.
+Lane failures retain the provider error and HTTP code where available. Image,
+working, and error reveals honor reduced motion and do not change access issuance.
+
+## Provider errors inside an HTTP 200 stream (2026-10-14)
+
+An accepted streaming connection can still contain a terminal provider error
+before any answer. Its numeric code is diagnostic data, not the HTTP response
+status. The lane/log formatter previously accepted only string codes and the
+UI removed the remaining parentheses, so these failures could appear only as
+“Request failed.” A finite numeric provider-code allowlist now survives as
+`PROVIDER_CODE_NNN`, rendered as “Provider error NNN” with the standard status
+name. Provider errors without an allowlisted numeric code say “The provider
+reported an error.” Arbitrary provider strings and raw error bodies are excluded.
+
+The compact error line preserves this distinction in both failed lanes and
+Council-review fallback notices: `Error: Gateway timeout (HTTP 504).` versus
+`Error: Gateway timeout (provider error 504).` Keep coverage on the final
+rendered message, not just `describeCouncilLaneError`, so a later copy change
+cannot silently drop the error's origin.
+
+This changes presentation and diagnostics only. It does not assign HTTP status
+to an operational error, trigger credit recovery, replay requests, spend tickets
+or change cancellation. Sibling lanes keep their results. The original live
+Haiku failure's cause cannot be recovered from the old generic record.
+Reference: [OpenRouter streaming error format](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/streaming.mdx).

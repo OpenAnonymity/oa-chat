@@ -10,7 +10,8 @@ const reduced = el => el?.ownerDocument?.defaultView?.matchMedia?.('(prefers-red
 export function motionDuration(el, property, fallback = 150) {
     if (reduced(el)) return 0;
     const value = el?.ownerDocument?.defaultView?.getComputedStyle?.(el).getPropertyValue(property)?.trim();
-    return value ? parseFloat(value) * (value.endsWith('ms') ? 1 : 1000) : fallback;
+    const duration = value ? parseFloat(value) * (value.endsWith('ms') ? 1 : 1000) : fallback;
+    return Number.isFinite(duration) && duration >= 0 ? duration : fallback;
 }
 
 export function showSurface(root, kind = 'modal') {
@@ -24,13 +25,22 @@ export function showSurface(root, kind = 'modal') {
     if (!root.ownerDocument?.defaultView?.getComputedStyle) return;
     const panel = kind === 'modal' ? root.firstElementChild : root;
     if (!panel) return;
+    // Refreshing content must not replay the entrance. Reopening during an
+    // exit reverses the existing CSS transition from its current position.
+    if (old?.panel === panel && old.kind === kind) {
+        old.closing = false;
+        panel.classList.remove('is-closing');
+        panel.classList.add('is-open');
+        root.dataset.motionPhase = 'open';
+        return;
+    }
     const state = { panel, kind, timer: null, display: root.style.getPropertyValue('display'), displayPriority: root.style.getPropertyPriority('display') };
     surfaces.set(root, state);
     panel.classList.remove('is-closing', 'is-open');
     panel.classList.add(`t-${kind}`);
     if (kind === 'modal') root.classList.add('oa-motion-backdrop');
     root.dataset.motionPhase = 'opening';
-    void panel.offsetWidth;
+    if (!reduced(root)) void panel.offsetWidth;
     panel.classList.add('is-open');
     root.dataset.motionPhase = 'open';
 }
@@ -41,7 +51,7 @@ export function hideSurface(root, { remove = false, clear = false } = {}) {
     if (state?.closing) return;
     const view = root.ownerDocument?.defaultView;
     const display = view?.getComputedStyle?.(root).display;
-    if (state?.kind === 'modal' && root.firstElementChild) {
+    if (state?.kind === 'modal' && root.firstElementChild && state.panel !== root.firstElementChild) {
         state.panel = root.firstElementChild;
         state.panel.classList.add('t-modal', 'is-open');
         void state.panel.offsetWidth;
@@ -49,6 +59,7 @@ export function hideSurface(root, { remove = false, clear = false } = {}) {
     root.inert = true;
     root.classList.add('hidden');
     const finish = () => {
+        if (state && surfaces.get(root) !== state) return;
         if (state) restoreDisplay(root, state);
         state?.panel?.classList.remove('is-closing', 'is-open');
         if (remove) root.remove();
@@ -77,7 +88,9 @@ export function revealText(element) {
 // Keep the native <details> state and keyboard behavior. The wrapper supplies
 // the grid track; browsers without ::details-content retain a normal disclosure.
 export function enhanceDetails(root) {
-    for (const details of root?.querySelectorAll?.('details') || []) {
+    const candidates = [...(root?.querySelectorAll?.('details:not([data-motion-details])') || [])];
+    if (root?.matches?.('details:not([data-motion-details])')) candidates.unshift(root);
+    for (const details of candidates) {
         if (details.dataset.motionDetails) continue;
         const summary = details.querySelector(':scope > summary');
         if (!summary) continue;
@@ -132,9 +145,18 @@ export function watchDisclosures(root) {
     if (!root?.ownerDocument?.defaultView?.MutationObserver) return () => {};
     enhanceDetails(root);
     const observer = new root.ownerDocument.defaultView.MutationObserver(records => {
-        for (const record of records) for (const node of record.addedNodes) {
-            if (node.nodeType !== 1) continue;
-            enhanceDetails(node.parentElement || node);
+        const added = new Set();
+        for (const record of records) {
+            // A details shell may be inserted before its summary arrives.
+            if (record.target?.matches?.('details:not([data-motion-details])')) added.add(record.target);
+            for (const node of record.addedNodes) if (node.nodeType === 1) added.add(node);
+        }
+        for (const node of added) {
+            // Streaming inserts should scan only the new subtree, never the
+            // transcript/body. A parent in this batch already covers its child.
+            let parent = node.parentElement;
+            while (parent && !added.has(parent)) parent = parent.parentElement;
+            if (!parent) enhanceDetails(node);
         }
     });
     observer.observe(root, { childList: true, subtree: true });

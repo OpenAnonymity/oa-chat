@@ -76,7 +76,7 @@ function settlementState(transition) {
             phase: 'closing',
             tone: 'working',
             title: 'Finishing previous chat',
-            detail: 'You can keep typing. Sending will wait until its balance update is complete.',
+            detail: 'Updating what you spent in the previous chat. New messages can send when this finishes.',
             compact: 'Finishing previous chat',
             busy: true,
             blocksSend: false
@@ -394,9 +394,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
                     compact: 'Check withdrawal'
                 }
             : {
-                title: 'Withdrawal ready to finish',
-                detail: 'No transaction is moving. Finish withdrawing or set this balance aside.',
-                compact: 'Withdrawal ready'
+                title: 'Withdrawal paused',
+                detail: 'Nothing has been sent. Continue it from Withdraw, or set this balance aside.',
+                compact: 'Withdrawal paused'
             };
     // Last in line behind every withdrawal in motion (the chains below ask for
     // those first), so a plan, a transaction or a pending escape keeps its words.
@@ -569,8 +569,8 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
     const closingPrimary = settlementNeedsAttention ? transitionState : closingState ? {
         ...closingState,
         phase: 'closing',
-        title: 'Closing previous chat',
-        compact: 'Closing previous chat'
+        title: 'Updating your balance',
+        compact: 'Updating your balance'
     } : null;
 
     const showComposer = Boolean(

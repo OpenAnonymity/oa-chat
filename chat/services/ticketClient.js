@@ -32,13 +32,21 @@ import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
 import ticketCodeRecoveryStore from './ticketCodeRecoveryStore.js';
+import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
 import accountService from './accountService.js';
 import { TicketCodeRedeemer } from '../application/ticketCodeRedeemer.js';
+import { legacyTransferStateStore } from './legacyTransferStateStore.js';
+import { LegacyTicketTransfer } from '../application/legacyTicketTransfer.js';
+import sessionService from './sessionService.js';
 import { ORG_API_BASE } from './orgEndpoints.js';
 import {
-    getStructuredTicketError
+    getStructuredTicketError,
+    normalizeTicketKeyId
 } from '../domain/ticketKeys.js';
+
+const LEGACY_TRANSFER_PATH = '/api/billing/legacy-transfer';
+const LEGACY_TRANSFER_WAIT_MS = 20000;
 
 class TicketClient {
     constructor() {
@@ -66,7 +74,32 @@ class TicketClient {
     }
 
     getTicketCount() {
-        return this.ticketStore.getCount();
+        // Previous-version tickets that cannot move are kept but never usable.
+        return this.ticketStore.getCount() - (this.ticketStore.getStrandedCount?.() || 0);
+    }
+
+    /**
+     * The count to show. While previous-version tickets are being moved, the
+     * old ones leave the wallet before their replacements are signed; the
+     * count shown holds at its value from the start of the move so it never
+     * dips to zero (or doubles) on the way. Spending logic keeps using
+     * getTicketCount().
+     */
+    getVisibleTicketCount() {
+        const count = this.getTicketCount();
+        return this.legacyMove?.accountId === this.getLegacyDisplayAccountId()
+            ? (this.legacyMove.awaitingRedeem ? count + this.legacyMove.pendingTickets : Math.max(count, this.legacyMove.baseline)) : count;
+    }
+
+    /** Previous-version tickets kept in the wallet that could not be moved. */
+    getStrandedTicketCount() {
+        return this.ticketStore.getStrandedCount?.() || 0;
+    }
+
+    /** Previous-version tickets waiting to move, or being moved right now. */
+    getMovingTicketCount() {
+        if (this.legacyMove?.accountId === this.getLegacyDisplayAccountId()) return this.legacyMove.tickets;
+        return this.ticketStore.getHeldCount?.() || 0;
     }
 
     getArchivedTicketCount() {
@@ -84,13 +117,33 @@ class TicketClient {
 
     createTicketRedemptionError(data, status, fallbackMessage) {
         const parsed = getStructuredTicketError(data, fallbackMessage);
-        const messageLower = String(parsed.message || '').toLowerCase();
+        const messageLower = String(parsed.classificationMessage || '').toLowerCase();
+
+        // Only the explicit rejected-count response permits repricing and retry.
+        // The org rolls this rejection back; the local wallet must keep its tickets.
+        if (status === 400 && (parsed.code === 'TIER_TICKETS_MISMATCH'
+            || (!parsed.code && messageLower.trim() === 'invalid ticket count'))) {
+            const error = new Error('Model pricing changed. Please try again.');
+            error.code = 'TICKET_PRICE_CHANGED';
+            error.status = status;
+            return error;
+        }
 
         if (parsed.code === 'TICKET_KEY_INVALIDATED') {
             const error = new Error('The org rotated its ticket signing key. Tickets from the old key were invalidated.');
             error.code = 'TICKET_KEY_INVALIDATED';
             error.status = status;
             error.invalidatedKeyId = parsed.invalidatedKeyId;
+            error.serverMessage = parsed.message;
+            return error;
+        }
+
+        if (parsed.code === 'TICKET_KEY_LEGACY') {
+            // Previous-org tickets: nothing was spent and they must be kept.
+            const error = new Error('Your tickets from the previous version are being moved. Please try again in a moment.');
+            error.code = 'TICKET_KEY_LEGACY';
+            error.status = status;
+            error.legacyKeyId = normalizeTicketKeyId(parsed.detail?.legacy_key_id);
             error.serverMessage = parsed.message;
             return error;
         }
@@ -105,6 +158,12 @@ class TicketClient {
             error.code = 'TICKET_USED';
             error.status = status;
             error.consumeTickets = true;
+            // The org checks tickets in order and stops at the first one it
+            // had already seen, rolling the earlier ones back; the later ones
+            // were never looked at. Only that ticket is dead. Without the
+            // index (an older org) the whole selection is set aside.
+            const failedIndex = parsed.detail?.failed_ticket?.index;
+            if (Number.isInteger(failedIndex) && failedIndex >= 0) error.usedIndices = [failedIndex];
             return error;
         }
 
@@ -526,20 +585,22 @@ class TicketClient {
         );
     }
 
+    async getReadyWalletScope() {
+        const account = accountService.getState();
+        if (!account.isReady || (account.accountId && (
+            !account.sessionVerified || account.status !== 'unlocked' ||
+            !account.accountScopeReady || !account.ticketSyncReady
+        ))) throw new Error('Wait for your ticket wallet to finish opening, then retry redemption.');
+        return syncService.assertAccountDataAccess();
+    }
+
     getCodeRedeemer() {
         if (!this.codeRedeemer) {
             this.codeRedeemer = new TicketCodeRedeemer({
                 pendingStore: ticketCodeRecoveryStore,
                 privacyPass: this.ppExtension,
                 ticketStore: this.ticketStore,
-                getAccountScope: async () => {
-                    const account = accountService.getState();
-                    if (!account.isReady || (account.accountId && (
-                        !account.sessionVerified || account.status !== 'unlocked' ||
-                        !account.accountScopeReady || !account.ticketSyncReady
-                    ))) throw new Error('Wait for your ticket wallet to finish opening, then retry redemption.');
-                    return syncService.assertAccountDataAccess();
-                },
+                getAccountScope: () => this.getReadyWalletScope(),
                 fetchIssuer: async () => {
                     const { data } = await networkProxy.fetchWithRetryJson(
                         `${ORG_API_BASE}/api/ticket/issue/public-key`,
@@ -569,8 +630,328 @@ class TicketClient {
         return this.codeRedeemer;
     }
 
+    async fetchLegacyTransferInfo() {
+        const url = `${ORG_API_BASE}${LEGACY_TRANSFER_PATH}`;
+        const { response, data } = await networkProxy.fetchWithRetryJson(
+            url,
+            { cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' } },
+            { context: 'Ticket move status', maxAttempts: 2, timeoutMs: 10000 }
+        );
+        // An org without the transfer answers 404: nothing to move.
+        if (response.status === 404) return { enabled: false };
+        if (!response.ok) throw new Error(`Ticket move status unavailable (${response.status})`);
+        return data;
+    }
+
+    /**
+     * Learn the previous org's key before anyone signs in, so previous-version
+     * tickets are held from spending and counted as moving from the first
+     * screen after sign-up. Only a wallet that already holds tickets asks.
+     */
+    async primeLegacyTransfer() {
+        if (this.legacyTransferPrimed) return;
+        this.legacyTransferPrimed = true;
+        try {
+            await this.ticketStore.init?.();
+            if (!this.ticketStore.getCount()) {
+                // Nothing to hold yet. On the first load after a previous-
+                // version account is released, the wallet opens only after
+                // this runs; the watcher asks again when tickets appear.
+                this.legacyTransferPrimed = false;
+                return;
+            }
+            const info = await this.fetchLegacyTransferInfo();
+            const keyId = normalizeTicketKeyId(info?.key_id);
+            if (info?.enabled === true && keyId && !this.legacyTransferRun) {
+                this.ticketStore.setHeldKeyIds([keyId]);
+                this.ticketStore.emitUpdate?.();
+            }
+        } catch (error) {
+            // The move itself fetches the same status again after sign-in.
+            this.legacyTransferPrimed = false;
+            console.warn('Ticket move status could not be read yet:', error);
+        }
+    }
+
+    getLegacyDisplayAccountId() {
+        const account = accountService.getState();
+        return account.sessionVerified && account.accountScopeReady &&
+            account.accountId === syncService.getLocalAccountScope() ? account.accountId : null;
+    }
+
+    hideLegacyMoveToastOnAccountChange() {
+        if (this.legacyMove && !this.legacyMove.toastHidden &&
+            this.legacyMove.accountId !== this.getLegacyDisplayAccountId()) {
+            this.legacyMove.toastHidden = true;
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('legacy-tickets-move-settled', { detail: { moved: 0 } }));
+            }
+        }
+    }
+
+    handleLegacyMoveStart(tickets, accountId = this.getLegacyDisplayAccountId()) {
+        const count = Math.max(0, Number(tickets) || 0);
+        if (!count || !accountId || accountId !== this.getLegacyDisplayAccountId()) return;
+        this.legacyMove = { accountId, tickets: count, baseline: this.getTicketCount() };
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('legacy-tickets-moving', { detail: { tickets: count } }));
+        }
+        this.ticketStore.emitUpdate?.();
+    }
+
+    getLegacyTransfer() {
+        if (!this.legacyTransfer) {
+            const url = `${ORG_API_BASE}${LEGACY_TRANSFER_PATH}`;
+            this.legacyTransfer = new LegacyTicketTransfer({
+                fetchInfo: () => this.fetchLegacyTransferInfo(),
+                onStart: ({ tickets, accountId }) => this.handleLegacyMoveStart(tickets, accountId),
+                onAttention: (message, accountId) => {
+                    if (accountId === this.getLegacyDisplayAccountId() && typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('legacy-tickets-attention', { detail: { message } }));
+                    }
+                },
+                // Signed-in request: it needs the account session, so it goes
+                // through the session transport, not the relay.
+                submit: async (tickets, { expectedAccountId }) => {
+                    const response = await sessionService.fetch(url, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                        body: JSON.stringify({ tickets, expected_account_id: expectedAccountId })
+                    });
+                    let data = null;
+                    try { data = await response.json(); } catch { data = null; }
+                    if (!response.ok) {
+                        const parsed = getStructuredTicketError(data, `Ticket move failed (${response.status})`);
+                        const error = new Error(parsed.message);
+                        error.code = parsed.code || undefined;
+                        error.status = response.status;
+                        // How many more the allowance takes (LEGACY_TRANSFER_LIMIT).
+                        const remaining = Number(data?.detail?.remaining);
+                        if (Number.isFinite(remaining)) error.remaining = remaining;
+                        throw error;
+                    }
+                    return data;
+                },
+                listTickets: () => this.ticketStore.getTickets(),
+                removeTickets: (tickets, options) => this.ticketStore.removeTickets(tickets, options),
+                // A login parks this browser's wallet when the account already
+                // had one; old tickets in it move to that account too.
+                listParkedTickets: () => syncService.readUnclaimedTickets(),
+                removeParkedTickets: (tickets, options) => syncService.removeUnclaimedTickets(tickets, options),
+                holdKeyIds: keyIds => this.ticketStore.setHeldKeyIds(keyIds),
+                pendingStore: ticketCodeRecoveryStore,
+                attemptStore: legacyTransferStateStore(chatDB),
+                rejectedStore: {
+                    get: accountId => chatDB.getSetting(`legacy-transfer-rejected:${accountId}`),
+                    put: (accountId, value) => chatDB.updateSettings([{ key: `legacy-transfer-rejected:${accountId}`, value }])
+                },
+                getAccountScope: () => this.getReadyWalletScope(),
+                redeemPending: options => this.runCodeRedemption(null, undefined, options)
+            });
+        }
+        return this.legacyTransfer;
+    }
+
+    /**
+     * Move tickets from the previous production org into this wallet. Runs
+     * once at a time; callers share the in-flight run.
+     */
+    runLegacyTransfer() {
+        if (!this.legacyTransferRun) {
+            const accountId = this.getLegacyDisplayAccountId();
+            if (!accountId) return Promise.resolve({ status: 'signed-out', moved: 0 });
+            this.unannouncedLegacyMoves ||= new Map();
+            this.legacyTransferRun = (async () => {
+                let result = null;
+                try {
+                    result = await this.getLegacyTransfer().run({ expectedAccountId: accountId });
+                    return result;
+                } finally {
+                    // A run that only redeems a move's saved code (the move
+                    // itself settled earlier) has nothing to settle again.
+                    const ownsDisplay = accountId && this.getLegacyDisplayAccountId() === accountId;
+                    const move = this.legacyMove?.accountId === accountId ? this.legacyMove
+                        : result?.pendingTickets > 0 ? { accountId, tickets: result.pendingTickets, baseline: this.getTicketCount() + result.pendingTickets, awaitingRedeem: true } : null;
+                    const wasMoving = Boolean(move) && !move.awaitingRedeem;
+                    // The old tickets have left the wallet and their code is
+                    // saved, but the new ones are not issued yet (the redeem
+                    // failed and is retried). They are still moving: keep the
+                    // count where it was rather than drop it to zero and show
+                    // "Get tickets" to someone who has tickets on the way.
+                    const awaitingRedeem = Boolean(result?.redeemError) &&
+                        (Number(result?.moved) > 0 || Boolean(move?.awaitingRedeem));
+                    if (move) this.legacyMove = awaitingRedeem
+                        ? { ...move, tickets: result?.pendingTickets ?? Math.max(0, Number(result?.moved) || move.tickets),
+                            pendingTickets: result?.pendingTickets ?? move.pendingTickets ?? (Number(result?.moved) || 0),
+                            baseline: Math.max(0, move.baseline - (result?.stranded?.length || 0)), awaitingRedeem: true } : null;
+                    this.legacyTransferRun = null;
+                    this.ticketStore.emitUpdate?.();
+                    // A move counts as done once its new tickets are in the
+                    // wallet. When the redeem fails, the saved code is redeemed
+                    // by a later run, which then announces the earlier count.
+                    // Tickets that cannot move stay held, apart from the
+                    // count; a closed window releases everything instead.
+                    if (ownsDisplay && result && result.status !== 'signed-out') {
+                        this.ticketStore.setStrandedTickets?.([...(result.stranded || []), ...(result.reserved || [])]);
+                    }
+                    const stranded = result?.stranded?.length || 0;
+                    let moved = 0;
+                    if (Number.isFinite(result?.restoredTickets)) {
+                        // Report only tickets issued by this run, even when other
+                        // codes still need retrying. No cumulative promise across reloads.
+                        moved = result.restoredTickets;
+                        this.unannouncedLegacyMoves.delete(accountId);
+                    } else if (result?.redeemError) {
+                        this.unannouncedLegacyMoves.set(accountId, (this.unannouncedLegacyMoves.get(accountId) || 0) + (Number(result.moved) || 0));
+                    } else if (result) {
+                        moved = result.restoredTickets ?? (Number(result.moved) || 0);
+                        if (Number.isFinite(result.restoredTickets)) this.unannouncedLegacyMoves.delete(accountId);
+                        if (result.redeemed && this.unannouncedLegacyMoves.has(accountId)) {
+                            moved += this.unannouncedLegacyMoves.get(accountId);
+                            this.unannouncedLegacyMoves.delete(accountId);
+                        }
+                    }
+                    if (typeof window !== 'undefined') {
+                        if (ownsDisplay && result?.reserved?.length) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-attention', { detail: { message: 'Some saved tickets belong to an unfinished restoration in another account. Sign in to that account to restore them.' } }));
+                        }
+                        if (wasMoving) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-move-settled', { detail: { moved: ownsDisplay ? moved : 0 } }));
+                        }
+                        if (ownsDisplay && moved > 0) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-moved', { detail: stranded ? { moved, stranded } : { moved } }));
+                        } else if (ownsDisplay && stranded > 0 && result) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-stranded', { detail: { stranded } }));
+                        }
+                    }
+                }
+            })();
+            this.ticketStore.emitUpdate?.();
+        }
+        return this.legacyTransferRun;
+    }
+
+    isLegacyTransferRunning() {
+        return Boolean(this.legacyTransferRun);
+    }
+
+    /** Wait (bounded) for a running move so a send sees the moved tickets. */
+    async awaitLegacyTransfer(timeoutMs = LEGACY_TRANSFER_WAIT_MS) {
+        const run = this.legacyTransferRun;
+        if (!run) return;
+        let timer = null;
+        try {
+            await Promise.race([
+                run.catch(() => {}),
+                new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })
+            ]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    getHeldTicketCount() {
+        return this.ticketStore.getHeldCount?.() || 0;
+    }
+
+    /**
+     * Start moving previous-org tickets automatically once a signed-in
+     * wallet is open. Retries a failed move a few times with backoff; a
+     * later sign-in (or a TICKET_KEY_LEGACY answer) tries again.
+     */
+    startLegacyTransferWatcher() {
+        if (this.legacyTransferWatcher) return;
+        void this.primeLegacyTransfer();
+        if (typeof window !== 'undefined') {
+            window.addEventListener('tickets-updated', () => {
+                if (!this.legacyTransferPrimed) void this.primeLegacyTransfer();
+            });
+        }
+        const attempts = new Map();
+        const check = () => {
+            this.hideLegacyMoveToastOnAccountChange();
+            const account = accountService.getState();
+            if (!account?.accountId || account.sessionVerified !== true ||
+                account.status !== 'unlocked' || account.accountScopeReady !== true ||
+                account.ticketSyncReady !== true) return;
+            const state = attempts.get(account.accountId) || { done: false, tries: 0, timer: null };
+            attempts.set(account.accountId, state);
+            if (state.done || state.timer || this.legacyTransferRun) return;
+            const startedFor = account.accountId;
+            this.runLegacyTransfer().then(result => {
+                if (result?.redeemError) throw result.redeemError;
+                if (result?.recoveryPending) throw new Error('Saved ticket restoration is still pending.');
+                if (result?.status !== 'signed-out') state.done = true;
+            }).catch(error => {
+                state.tries += 1;
+                console.warn('Moving tickets from the previous version will be retried:', error);
+                if (state.tries < 4) {
+                    state.timer = setTimeout(() => {
+                        state.timer = null;
+                        check();
+                    }, Math.min(10 * 60 * 1000, 30000 * 2 ** (state.tries - 1)));
+                }
+            }).finally(() => {
+                // Account events arriving during the prior run must not be lost.
+                if (accountService.getState()?.accountId !== startedFor) check();
+            });
+        };
+        this.legacyTransferWatcher = accountService.subscribe(check);
+        check();
+    }
+
+    handleLegacyTicketError(error) {
+        if (error?.code !== 'TICKET_KEY_LEGACY') return;
+        if (error.legacyKeyId) this.ticketStore.setHeldKeyIds([error.legacyKeyId]);
+        this.runLegacyTransfer().catch(transferError => {
+            console.warn('Moving tickets from the previous version will be retried:', transferError);
+        });
+    }
+
     alphaRegister(invitationCode, progressCallback) {
-        return this.getCodeRedeemer().run(invitationCode, progressCallback);
+        return this.runCodeRedemption(invitationCode, progressCallback);
+    }
+
+    /**
+     * Runs the code redeemer and announces its progress on the page, so the
+     * ticket status (top right) can show any redemption: a code typed in,
+     * the free trial, a resumed one, or the move from the previous version.
+     * Events: tickets-redemption-progress { source, message, percent } while
+     * it works, then tickets-redemption-settled { source, ok, issued } once,
+     * only for a run that reported progress.
+     */
+    runCodeRedemption(code, progressCallback, options = {}) {
+        const source = options?.source || (code === null ? 'resume' : 'code');
+        let reported = false;
+        const owner = accountService.getState();
+        const ownerFields = ['accountId', 'isReady', 'status', 'sessionVerified', 'accountScopeReady', 'ticketSyncReady'];
+        let ownerCurrent = true;
+        // Invalidate permanently if ownership/readiness changes, even if the
+        // same account later unlocks again. Never put the owner in DOM events.
+        const unsubscribe = accountService.subscribe(snapshot => {
+            if (ownerFields.some(field => snapshot[field] !== owner[field])) ownerCurrent = false;
+        });
+        const emit = (type, detail) => {
+            if (!ownerCurrent) return;
+            if (typeof window === 'undefined' || typeof CustomEvent !== 'function') return;
+            window.dispatchEvent(new CustomEvent(type, { detail }));
+        };
+        const progress = (message, percent) => {
+            progressCallback?.(message, percent);
+            reported = true;
+            emit('tickets-redemption-progress', { source, message, percent });
+        };
+        return Promise.resolve().then(() => this.getCodeRedeemer().run(code, progress, options)).then(result => {
+            if (reported) {
+                const issued = Number(result?.restoredTickets ?? result?.tickets_issued ?? 0) || 0;
+                emit('tickets-redemption-settled', { source, ok: true, issued });
+            }
+            return result;
+        }, error => {
+            if (reported) emit('tickets-redemption-settled', { source, ok: false, issued: 0 });
+            throw error;
+        }).finally(unsubscribe);
     }
 
     getPendingCodeRedemption() {
@@ -578,7 +959,7 @@ class TicketClient {
     }
 
     resumeCodeRedemption(progressCallback) {
-        return this.getCodeRedeemer().run(null, progressCallback);
+        return this.runCodeRedemption(null, progressCallback);
     }
 
     /**
@@ -687,7 +1068,8 @@ class TicketClient {
 
                     return { response, data, code: normalizedCode };
                 },
-                { order: 'tail' }
+                // A share moves tickets to someone else: not usage.
+                { order: 'tail', recordUsage: false }
             );
 
             const { data, code } = result;
@@ -707,6 +1089,7 @@ class TicketClient {
             };
         } catch (error) {
             this.notifyTicketKeyInvalidation(error);
+            this.handleLegacyTicketError(error);
             console.error('Ticket split error:', error);
             throw error;
         }
@@ -868,6 +1251,7 @@ class TicketClient {
                 key: data.key,
                 keyHash: data.key_hash,
                 ticketsConsumed: data.tickets_consumed || tickets.length,
+                modelPolicy: data.model_policy || null,
                 creditLimit: data.credit_limit,
                 durationMinutes: data.duration_minutes,
                 expiresAt: data.expires_at,
@@ -885,6 +1269,7 @@ class TicketClient {
             };
         } catch (error) {
             this.notifyTicketKeyInvalidation(error);
+            this.handleLegacyTicketError(error);
             console.error('Request API key error:', error);
             throw error;
         }
@@ -1009,6 +1394,7 @@ class TicketClient {
             return result;
         } catch (error) {
             this.notifyTicketKeyInvalidation(error);
+            this.handleLegacyTicketError(error);
             console.error('Request confidential API key error:', error);
             throw error;
         }

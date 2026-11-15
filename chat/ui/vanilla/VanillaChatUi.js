@@ -12,7 +12,7 @@ import SettingsDialog from '../../components/SettingsDialog.js';
 import ThanksPanel from '../../components/ThanksPanel.js';
 import InPageFind from '../../components/InPageFind.js';
 import shareModals from '../../components/ShareModals.js';
-import { buildTypingIndicator, configureMessageTemplateServices } from '../../components/MessageTemplates.js';
+import { buildTypingIndicator, configureMessageTemplateServices, getPendingIndicatorLabel } from '../../components/MessageTemplates.js';
 import { createVanillaUiInterface } from '../appInterface.js';
 import { updateDetailedPendingIndicator } from '../../components/PendingIndicator.js';
 import { normalizePendingPhase } from '../../domain/streamingState.js';
@@ -103,8 +103,8 @@ export default class VanillaChatUi {
         indicator.dataset.phase = normalizedPhase;
         const label = indicator.querySelector('.pending-response-label');
         if (label) {
-            label.textContent = normalizedPhase === 'waiting-response'
-                ? 'Waiting for response' : 'Requesting ephemeral key';
+            const text = getPendingIndicatorLabel(normalizedPhase, progress);
+            if (label.textContent !== text) label.textContent = text;
             label.classList.add('pending-response-streaming');
         }
     }

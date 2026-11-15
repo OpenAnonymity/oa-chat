@@ -304,7 +304,9 @@ function mirror(t, registry) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'oa-registry-mirror-'));
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
     for (const relative of ['scripts/zkapiRegistry.mjs', 'scripts/patch-zkapi-sdk.mjs', 'chat/zkapi/versioning',
-        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs', 'patches/zkapi-browser-sdk-proof-cache.mjs',
+        'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-server-time.mjs',
+        'deployments/zkapi/mainnet.json', 'deployments/zkapi/sepolia.json']) {
         fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true });
         fs.cpSync(path.join(repoRoot, relative), path.join(directory, relative), { recursive: true });
     }

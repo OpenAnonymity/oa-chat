@@ -1,3 +1,12 @@
+## 2026-11-15: Production client fixes synchronized into public main
+
+The public source integrates production client `a20f2e04` while preserving the
+existing public protocol-version framework and unchanged `oa-clientd` module.
+The timing experiment, browser daemon authorization, and staging deployment
+activations are excluded. This is a source publication, not a hosted release.
+See [PUBLIC_MAIN_SYNC.md](PUBLIC_MAIN_SYNC.md) for the integration decisions,
+validation, and the `[preserve-deployments]` publication marker.
+
 ## 2026-11-02: oa-clientd source on main (web app unchanged)
 
 - `oa-clientd/` is the canonical source of the local ticket daemon, a Go module
@@ -814,6 +823,1548 @@ host write to the wallet slot in
   `MODULE_TYPELESS` warning from pure-`.mjs` tests); give
   `scripts/generate-zkapi-vercel-config.mjs` the basename plus realpath guard.
 
+## 2026-11-11 — Retry/Resend follows the selected model (candidate)
+
+Single-model Retry and Resend capture `session.model` at click time and pass
+`modelNameOverride` to regeneration. That model drives the privacy preflight,
+ticket checks, key eligibility/acquisition and inference. Later picker changes
+do not retarget this retry. Original prompt metadata, files, search, Memory and
+reasoning settings keep their existing behavior. Internal automatic retries
+without an override retain the original prompt model; Council still uses its
+configured lanes. No new telemetry or relaxation of privacy/ticket enforcement.
+The companion org patch repairs missing known Latest aliases in the price map.
+This entry describes a local candidate, not a completed deployment.
+
+## 2026-11-10 — ZDR and ticket usage production candidate
+
+ZDR tooltip (2026-11-10): removed the final “When off” sentence at the user’s request. Routing, shields, 401 recovery and usage-history persistence are unchanged.
+
+The release test runner also carries the existing desktop workaround for Node 24.4 clock-test worker IPC: server-time tests run in a separate process without a nested worker. Every test still runs; product code is unchanged.
+
+- Selectively ports ZDR and the account-scoped, local-only daily ticket usage log
+  from staging onto `721cd0ae`. Existing 401/fresh-key recovery stays intact.
+- Excludes request timing source, collector/configuration and unrelated in-chat
+  chart code. The Account usage chart is a commercial composition feature.
+- ZDR shields appear only while enabled. Blocked rows keep screen-reader reasons.
+  Off uses ordinary routing; ZDR-preferred routing is not implemented.
+- ZDR applies at final dispatch and each 401/402 retry. Search/PDF plugin scope is
+  unchanged. Account switches isolate usage counts; sharing does not count.
+- Validation and release status: workspace deployment/zdr-usage-prod-20261110.
+
+## 2026-11-08 — fresh-key readiness window for inference 401 (local, not deployed)
+
+Implements the fix proposed in the diagnosis note below. Details:
+[inference reliability](INFERENCE_RELIABILITY.md).
+
+**Registry.** `chat/services/inference/keyReadiness.js` is an in-memory,
+per-tab registry.
+- It is keyed by a non-cryptographic FNV-1a lookup tag. That tag is not a
+  protection, so nothing is logged or persisted.
+- At most 16 windows are open at once. At most 64 keys are remembered as
+  already used, and each key gets a window at most once per page load.
+
+**Enrollment.** Keys are enrolled only by `acquireVerifiedAccess`, the
+verified-acquisition step that the chat, QuickAsk and council lanes share.
+- The window opens only when the verifier result is explicitly `verified`.
+  Trusted-station fallback, loopback bypass, and custom or private (zkAPI)
+  access are never enrolled.
+- The 60 s window is measured on the monotonic clock from when the station
+  returned the key, before verification. A slow verifier therefore uses up
+  the window.
+
+**Resends.** `fetchWithOpenRouterCreditRecovery` decides at a call's first
+send whether that call uses a window.
+- If it does, the identical request is resent after 1, 2 and 4 s, then every
+  5 s, but only while the next send would still fall before the deadline and
+  the key's expiry.
+- Hard cap: 16 requests.
+- The window and the expiry are rechecked immediately before every resend,
+  so a pause that overruns (throttled timers, a sleeping device) sends
+  nothing more.
+- A call that started in a window never falls back to the short policy.
+- Each call snapshots the window's deadline and expiry at its first send.
+  A 2xx or 402 answer removes the registry entry, so later calls get no
+  window. A call already pausing (for example an inline QuickAsk sharing the
+  chat's key) still resends on its own snapshot, deadline, signal and
+  attempt cap.
+- Keys without a window keep the 1/2/4 s policy.
+
+**Title.**
+- For a key still in its window, `startOrDeferSessionTitle` in `app.js`
+  starts the automatic title only from this turn's stream-open callback, on
+  both the send and the Retry paths.
+- Stop or an early failure therefore leaves no title job behind. That job
+  would otherwise hold `isSessionBusy`, the composer and payment-mode
+  switching, and could bill later.
+- `titleGenerationPending` stays set, so the next accepted Retry titles the
+  chat. A follow-up message does not: titles key off the first user message,
+  as before.
+- `_generateSessionTitle` itself never waits.
+
+**Android native and tests.**
+- Android native streaming gets no readiness resends. Its stream-open only
+  closes the window.
+- Tests inject `inferenceTiming.authClock` (`now`, `wallNow`, `sleep`). The
+  transport never receives it.
+
+## 2026-11-07 — inference 401 follow-up: fresh-key readiness delay (diagnosis only)
+
+A user capture on the deployed same-key-retry build showed a freshly issued,
+verifier-approved ticket key rejected with OpenRouter `401 "User not found."`
+for roughly the first half-minute after issuance. The background title request
+was rejected the same way. The identical key and request body were then
+accepted with no new key and no payload change. Learnings:
+- **Fact:** the 1/2/4 s per-call budget (about 7-8 s) is too short for this
+  delay. A manual Retry starts a fresh budget, which is why "Retry a few
+  times" eventually works.
+- **Inference, not established:** an upstream authentication
+  readiness/consistency delay for new keys. The provider's internals are
+  unknown.
+- **Title path:** title generation (`_generateSessionTitle` via
+  `fetchWithRetryJson`) never resends a 401 and fails silently into the local
+  title.
+- **Proposed fix (not implemented):** a bounded readiness window anchored to
+  the local monotonic time when this tab received a fresh, verified key.
+  Within it, resend the same request only; there is no window for keys of
+  unknown age.
+- **Better upstream fix:** the station should confirm acceptance of the new
+  key before returning it. A single-endpoint probe is not proof that every
+  region is ready.
+
+## 2026-11-07 — inference 401: bounded same-key retry (local); cause still unknown
+
+See [inference reliability](INFERENCE_RELIABILITY.md). The report
+was an OA-ticket inference `POST openrouter.ai/.../chat/completions` that
+returned 401 on Sonnet 5.5. The upstream body was not captured, and fresh and
+reused Sonnet keys both worked on live `1afdc812`. The user says pressing
+Retry a few times works. Implemented locally, not deployed: resend the
+identical request 3 times (1 s, 2 s, 4 s). Non-obvious learnings:
+- The retry lives in `fetchWithOpenRouterCreditRecovery`, beside the 402
+  resends. It runs inside one `withRequestAccess` scope, so private mode
+  keeps the same checked-out lease. Do not add 401 to
+  `isRetryableInferenceError` or `fetchRetry`: those also see issuance,
+  verifier and wallet 401s, which must stay fail-closed.
+- `chat/api.js` tags the final response 401 (`inferenceAuthRejected`,
+  `authRetryCount`) only when the recovery module handled it
+  (`isInferenceAuthRetryResponse`); a daemon or other base-URL 401 stays
+  untagged. Only tagged errors get the "provider rejected this chat's access
+  key" copy; other 401s keep "Authentication error".
+- Each resend writes a sanitized `console.warn`. The timeline still logs one
+  entry per stream call, so 401s that recovered are visible only in the
+  console.
+- The schedule can be overridden for tests via
+  `inferenceTiming.authRetryDelaysMs`. It is stripped before reaching the
+  transport.
+- Android native streaming does not resend. QuickAsk, council lanes and
+  regeneration do, because they share `streamCompletion`.
+- Unchanged and still open: no automatic key rotation (a purchase costs the
+  tier price, 3 tickets for Sonnet 5.5); panel "Regenerate key" can
+  reinstall the same eligible key via `findTierAccess`; ticket-key expiry
+  uses the device clock.
+- `npm run test` hardcodes `/tmp` for its bundle, which sandboxes may block.
+  An equivalent copy of the runner using `$TMPDIR` works. The two Anvil /
+  real-EVM payment tests fail on baseline too.
+
+## 2026-11-06 — zkAPI server time for private keys (backwards compatible)
+
+See [ZKAPI_PAYMENTS.md](ZKAPI_PAYMENTS.md#zkapi-server-time-for-private-keys-2026-11-06).
+Non-obvious learnings:
+- Generate `patches/zkapi-browser-sdk-server-time.mjs` only from the exact
+  post-`provider-verification-v1` bytes (`09cf761c…`). Every replacement's
+  `after` text must be unique: the patch tests reverse the chain with
+  `replace(after, before)`.
+- Three time uses: `protocolTimeMs()` (authoritative; `required: true` for new
+  keys, reuse and post-verification), `protocolAuthorizationNowMs()` (strict
+  synchronous, Infinity after a suspend or a clock change over the 2 s
+  discontinuity tolerance) and
+  `protocolEstimateMs()` (display and settlement timers only). Never pass the
+  estimate to an authorization callback.
+- `performance.now()` can pause during OS sleep. Suspend is detected as
+  wall-vs-monotonic disagreement, so a strict check fails closed. Lifecycle
+  events only force the next authoritative resample.
+- The `/v2/time` 404 from the production `/zkapi-deployment/` proxy is
+  authoritative (`zkapiAuthoritativeProxy`). Falling through to a direct
+  request would hit CORS on old mainnet servers.
+- Saved-quote recovery is structural (`validateSavedNativeQuote`). New-quote
+  validation stays strictly fresh.
+- `.vercelignore` must list every patch the patcher imports.
+- The Anvil provider test now waits for receipts before reading state. Anvil
+  1.8.5 can answer `eth_sendRawTransaction` before mining. It still fails
+  afterwards, for a reason that predates this work. Since `a1e856f5`
+  (2026-10-12, ERC-20 removal) its recovery context is `kind: 'deposit'`, so
+  the real SDK `resumeExternalTransaction` needs complete native funding (the
+  fixture lacks the price-feed fields), a durable SDK `pendingDeposit` and a
+  vault `NoteDeposited` event, none of which the minimal EVM fixture models.
+  The same error reproduces on the exact pre-server-time SDK bytes. Fixing it
+  needs a deliberate fixture redesign (for example a real vault deployment),
+  not a stub. Without Anvil installed, the test skips itself.
+
+## 2026-10-31 — Ticket expiry notice with next step
+
+The `ticket-key-invalidated` listener now shows the neutral, text-only
+“Your unused tickets have expired. Tickets expire at the end of each month.
+Open Account to get more tickets.” notice for five seconds, and only when
+`removedCount` is a positive integer. This is a confirmed invalidation/removal
+notice, not a midnight timer: it appears when a key request discovers a retired
+issuer key. The event cannot distinguish scheduled monthly expiry from a manual
+rotation. Per the user's October 31 copy request, it explains the monthly expiry
+rule without attributing the removed tickets to a particular month. The server's
+UTC month boundary remains authoritative.
+No ticket spending, deletion, syncing, or expiry policy changed.
+
+## October 28, 2026 — double-click rename release preparation
+
+Port the reviewed sidebar rename and bounded old-title search from ecc7aff1 onto
+current production, preserving pairing/passkey changes. Desktop also retains its
+0.1.49 native and client safeguards. No request-timing experiment included.
+Commands/evidence: workspace deployment/double-click-release-20261028/.
+No deployment or exact-build manual acceptance claimed.
+
+## October 27, 2026 — incompatible passkey storage guidance
+
+Username signup now says: “This passkey storage option doesn’t support account
+encryption. Choose another option to save your passkey.” This replaces the
+misleading suggestion to use browser storage after an incompatible browser
+profile credential fails PRF. Copy only; encryption requirements and retry
+behavior are unchanged. No provider compatibility promises are added.
+
+## October 27, 2026 — production-based pairing candidate, local only
+
+Pairing changes are selectively applied to production client 5ba13ac5. Staging
+request-timing source is excluded. Existing production Google/passkey transport
+and current UI fixes are preserved. Server candidate is based on a read-only
+snapshot of the deployed source, including its stricter account-bound keyring ADD
+check. Server, web and iOS pairing stay off by default. No deployment or phone
+installation. Candidate evidence: workspace
+`deployment/phone-pairing-20261027/production-candidate/`.
+
+## October 19, 2026 — local review of database-close recovery
+
+`831654b` is distinct from the withdrawn history-hardening candidate: healthy
+message saves still resolve on request success. Local Mac full-suite validation
+of that commit passed (4,477 tests, 12 skipped). A fresh adversarial review found
+two recovery edge cases; local follow-up changes address them:
+
+- If the reopened handle closes or receives `versionchange` while its database
+  marker is being adopted, reject recovery and retain the lost/reload-required
+  state. Do not announce a dead handle as recovered. Late schema-change events
+  on replaced handles cannot close the current database.
+- Before restoring account settings/keys from memory after a reset, verify the
+  authenticated `/auth/keyring` account ID matches the captured account under
+  the account-data lock. Session existence alone was insufficient after a
+  missed cross-tab account switch. Missing/mismatched identity, request failure,
+  or a concurrent account change prevents restoration and sync. This request
+  is only in reset recovery; normal saves and startup add no such request.
+
+Final candidate plus follow-up: 4,483 tests passed, 12 skipped, zero failures.
+Independent re-review approved the fixes and reran all 36 focused tests.
+Follow-up remains uncommitted in the isolated review worktree; publish neither
+the original candidate alone nor this staging-based source to production.
+New regression tests cover the lifecycle race and identity failures. No staging,
+production, desktop publication, live sign-in, chat send or ticket spend occurred.
+The supplied storage benchmark is not an end-to-end response/startup benchmark.
+See workspace `release-evidence/db-close-recovery-20261019/VALIDATION.md`.
+
+## October 18, 2026 — chat storage closed under an open tab (recovery, not a cause)
+
+Context: staging lost every conversation (the database had 0 sessions) and the
+Account controls needed a refresh. The cause is unknown; browser eviction under
+disk pressure is one unproven hypothesis. This change fixes the recovery gap,
+whatever closed the database.
+
+- Before this change, a browser-closed `IDBDatabase` (site data removed, eviction,
+  disk error) stayed dead: every operation threw `InvalidStateError` until reload,
+  and the next window focus ran `restoreSharedAccount`, whose catch called
+  `lock({ accountChanged: true })`. That locked the tab out of its account (reproduced in real
+  Chromium with CDP `Storage.clearDataForOrigin`, and in
+  `test/services/dbConnectionRecovery.test.js`).
+- `chatDB` now marks the connection lost on `close` or `InvalidStateError` but
+  **keeps the dead reference**: external `chatDB.db` checks must not read
+  "no database" and fall back to empty values (the ticket wallet could be
+  saved back empty). `init()` reopens whenever `connectionLost` is set, so every
+  caller does, and it holds all the bookkeeping. After a failed reopen it fails fast for 3 s.
+  `versionchange` still refuses to reopen ("Reload to continue").
+- **Reset detection.** Each created database stores a random `db-incarnation` in
+  `settings`. Databases from before markers get one on first open. A reopen
+  that created the database, or that finds a missing or different marker
+  (because another tab or an older build recreated it), sets `resetAt` and
+  `resetReconnectCount` and fires `oa-db-reset`. A marker that cannot be read
+  counts as unknown, not as a reset.
+- **After a reset**, `saveSession` and `saveSessionWithMessages` refuse to create
+  a row that is absent and was created before the reset (`CHAT_STORAGE_RESET`),
+  and `saveMessage` refuses a message whose chat row is absent. Imports pass
+  `{ allowRecreate: true }`. New chats save normally ("new" means `createdAt >=
+  resetAt` by wall clock; a clock moved backwards after a reset can refuse a new
+  chat's save. The toast shows and the composer keeps its text, so nothing is
+  lost, but don't build on this check). One toast says the browser
+  cleared chat storage and to copy what's needed before reloading. **Export
+  reads the database, not the tab, so the copy never promises Export.**
+  `collectChats` now throws on a read failure instead of producing an empty file.
+  A failed ticket read while the connection is lost throws instead of reading
+  as an empty wallet.
+- **Account.** `oa-db-reconnected` fires synchronously before the reopened
+  connection is handed out. `restoreSharedAccount` first awaits
+  `chatDB.connection()`, starts recovery itself if this reconnect hasn't been
+  handled, and waits for it. When storage can't open, or the connection was
+  lost mid-check, it does not lock.
+- **Recovery.** If the account record is present, re-run sync (await one already
+  started after this reconnect, never cancel it). If the record is missing
+  *and* the latest reconnect was a reset *and* SuperTokens still has a session
+  in this browser, write the record and key bundle back from memory in one
+  `updateSettings` call. A record missing after a plain close means a sign-out
+  and is left alone.
+- **Persistent storage.** `storageManager` records `persisted()`/`persist()`
+  locally only (no telemetry, no UI: the owner declined a Settings note on
+  2026-10-19). Persistence is requested again on `appinstalled`. Encrypted sync
+  carries tickets and preferences only, never chats.
+- Speed: 1000 `saveMessage` and 200 `getSessionsPage` per round, headless
+  Chromium, 6+ alternating rounds against `3fa32bdb`: no difference beyond
+  noise (about 0.6 ms per save both ways). Normal-state operations check the connection flags and do not await
+  `connection()` unless storage is missing or lost.
+
+## October 17, 2026 — restore earlier reasoning labels, retain stalled-text feedback
+
+The user confirmed restoring the summer rounded-seconds wording. Positive short durations round to seconds
+(`Thought for 0s` / `Thought for 1s`), streaming traces can show the provider's
+latest explicit heading, and restored untimed traces use their heading or
+`Reasoning complete`. Live untimed completion retains its original
+`Reasoning complete` fallback. Provider headings are escaped in HTML templates.
+This supersedes the fixed-header/quiet-label choices documented below; do not
+simplify these labels again as part of unrelated stall work.
+
+No reported reasoning still means no reasoning header. Existing hidden-reasoning
+headers remain non-expandable and use the same rounded time (or `Thought` when
+the duration is unknown). Do not restore the October 9 “not shared by the
+provider” suffix: it was not summer wording and was mistakenly restored in the
+initial local draft. This restores the requested rounding, not the entire summer
+UI. Resumed hidden thinking still says `Thinking...`. Visible words take
+precedence over the withheld flag. Existing duration measurement is unchanged.
+
+Keep the one-second `Still working…` line after answer text stalls in an open
+reply, including replies with no reasoning. Reasoning/text resumption and terminal
+cleanup, chat-switch restoration, and model → reasoning → answer ordering remain.
+No transport, storage, analytics or production/staging experiment code changes.
+These are local source changes; the previously signed desktop 0.1.43 does not
+contain this restoration and must not be presented as the updated release.
+
+## October 15, 2026 — late reasoning stays below the model header
+
+Live insertion of first visible or withheld reasoning now anchors after the model
+header (and any standalone access trace), matching restored-message order. The
+previous group-level prepend put Thinking/Thought above the model name. The
+anchor works without a text bubble, including image-only replies; hidden-to-visible
+replacement keeps a single trace. Parallel lane bodies keep their existing order.
+The browser regression fixture checks DOM order and rendered geometry for live,
+settled, restored and hidden-to-visible reasoning, alongside stall behavior.
+
+## October 15, 2026 — isolated production candidate
+
+This candidate starts at the live production client `e6f55300`. It selectively
+includes the sidebar menu and filtered deletion repairs, resumed thinking and
+one-second stalled-text feedback, operation-scoped Sentry diagnostics, and the
+Security Details / sync-status repairs. It excludes the staging request-timing
+experiment entirely, including its recorder, hooks, uploader, configuration and
+commits. The production zkAPI SDK and payment configuration remain at the base.
+Do not merge the experiment-bearing staging branch into this candidate.
+
+Earlier dated entries describe their historical staging/local status. They do
+not establish production deployment or acceptance for this candidate. Hosted
+Sentry IP/geography scrubbing and exact-candidate device/live coverage remain
+release gates; the final preparation record is maintained outside this checkout.
+
+## October 15, 2026 — Sentry client repairs for staging
+
+Security Details now tolerates a failed native version getter. Sync status checks
+use the existing five-second background request policy, preserve unknown/error
+results rather than reporting up-to-date, validate the server timestamp, and
+ignore stale-account responses. Existing Sentry status diagnostics are retained.
+See [investigation and verification](SENTRY_TRIAGE_20261015.md). No ticket merge,
+redemption, provider retry, encryption or request-timing behavior changed.
+
+## October 15, 2026 — deleted chats leave filtered sidebar results
+
+Live staging QA found that Delete succeeded in IndexedDB but left its row in
+an active sidebar search until the query changed or the page reloaded. Search
+merges a separate result cache with the paged session list; deleting only from
+the latter resurrected the visible row. Successful deletion now prunes both
+lists and records the completed-deletion ID before rendering. Searches exclude
+those IDs both while scanning and before publishing/caching their results, so
+an older snapshot or an awaited index refresh cannot restore a deleted row.
+Storage failures retain the existing row. Controller regressions cover text
+and starred filters, stale reads, deletion during indexing, and failed writes.
+This fix adds no network calls, persisted data, or telemetry. Local candidate;
+live staging needs rechecking after deployment.
+
+## October 15, 2026 — one-second stalled-text feedback
+
+The staging candidate now includes `e05aba3a` and supersedes the earlier
+"Thinking until the end" choice below. The header shows "Thinking..." only during
+reasoning, settles to "Thought for Ns" at answer text, and reopens if thinking
+resumes. Existing paragraph boundaries and measured durations are preserved.
+Single replies and Parallel lanes show "Still working…" after one second without
+new answer text while the stream remains open and is not reasoning. Text,
+reasoning, completion, failure and Stop clear it, using the existing lane fade.
+
+Integration handles visible or withheld reasoning that first starts after answer
+text, including Parallel/synthesis headers. Hidden-to-visible lane reasoning
+replaces its header rather than duplicating IDs. A small per-turn in-memory map
+restores a single reply's live reasoning flags and stalled line when switching
+back to its chat; it is removed on every terminal path. It adds no storage,
+network requests or telemetry. Only disclosed reasoning is rendered.
+
+The browser fixture `test/fixtures/stall-browser.html` exercises actual ChatApp
+signals, ChatArea DOM methods, message templates and shipped CSS with synthetic
+text and no wallet or provider calls. Bundle `test/fixtures/stall-browser.js` to
+`local/stall-browser.js` with esbuild (browser ESM), serve the repository, then
+click "Run streaming checks". Controller tests use fake clocks for exact timing,
+short pauses, Stop, completion, hidden thinking and navigation restoration.
+
+## October 15, 2026 — earlier thinking header choice (superseded above)
+
+The candidate includes the complete `79e33389` branch alongside the menu and
+scoped diagnostics fixes. The chosen behavior applies to all models: an existing
+reasoning header says "Thinking..." throughout the reply, then "Thought for Ns"
+when it completes. Reasoning text still settles when answer text starts; only
+the header remains active. No alternative header designs are pending.
+
+Duration starts when the stream opens and ends at the last thinking stretch,
+rather than measuring only a provider's late reasoning burst or the whole reply.
+Resumed withheld reasoning updates that duration and preserves paragraph breaks
+between answer segments. Interrupted single-model replies retain their measured
+duration when saved and reloaded. Council text-reasoning headers likewise stay
+active until their lane completes. This does not add provider reasoning that was
+never disclosed, or introduce any additional telemetry.
+
+Integration review also keeps the fixed header during live heading updates and
+session restoration (provider headings remain in the trace body), and corrects
+Stop during resumed thinking to persist the latest duration rather than the
+first segment's time. Deterministic tests cover text and withheld reasoning.
+
+## October 15, 2026 — staging menu and scoped diagnostics candidate
+
+The row menu is portaled outside the scrolling list, opens below when it fits,
+flips above near the bottom, and scrolls on the roomier side in short windows.
+Keyboard activation focuses its first action; Escape restores the trigger.
+Outside click/focus, list scroll, window resize, keyboard shortcuts and hiding
+the sidebar close it. The deletion VM test now supports the named placement
+helper export. Test top/bottom rows and Star, Rename, Delete in a browser.
+
+Diagnostics add four fixed-value tags and catalogued incidents, at most once
+per minute per name, ten per name and sixty per page. The existing handled
+request-error reporter retains its separate twenty-category per-page cap.
+The desktop tag requires the actual Electron bridge, not app readiness.
+
+The selected privacy boundary is option (a): no global Activity Timeline trail.
+Each failed access/verification/completion observation or stream watchdog owns
+its own buffer. Steps use fixed names and relative milliseconds rounded to 100ms,
+up to forty entries. There are no shared current-session lookups or transmitted
+request/turn IDs. Unscoped incidents and uncaught exceptions have no trail.
+A trail describes only the failing operation within the turn, not every earlier
+operation in that turn. The real SDK envelope tests cover both diagnostics and
+captureException; the latter must attach its trail through beforeSend's hint,
+because captureException does not accept a top-level breadcrumbs context.
+Newer ticket removal counts, shortage copy and 45-second idle policy are retained.
+See [SENTRY.md](SENTRY.md#diagnostics-and-the-trail--2026-10-14).
+
+Source-map uploads, server instrumentation and hosted Sentry IP/geography
+settings are separate work; none is configured by this client change.
+
+## October 14, 2026 — compact spent-ticket activity and steady relay toggle
+
+The RHS groups adjacent ticket-selection / already-spent request-key refusal
+pairs into one expandable "Used tickets · N checks" row. Grouping is presentation
+only: raw in-memory network logs, cleanup, ticket retirement, retries, account
+boundaries and telemetry are unchanged. Counts are checks, not tickets lost:
+requests can contain several tickets but retire only the refused one. The first
+selection's row ID/time stay stable while a group grows. Success, other failures,
+intervening activity, chat/origin changes and pending selections stay separate.
+Counts cover the retained memory-log window, not a lifetime wallet total.
+
+The proxy toggle already retained its DOM nodes, but `data-busy` dimmed it to
+55% on every request and then restored it, creating a flash during a sweep.
+Only that toggle now stays opaque during ordinary request activity. Its busy
+cursor, aria-disabled state, explicit-toggle guard and existing t-toggle motion
+remain. User-initiated disabled/pending controls retain their original styling.
+
+Release regression: inject 100 spent-ticket refusal pairs and assert one summary,
+then a visible success or unrelated failure. Verify expansion, raw-log retention,
+and live counts. Alternate proxy active/idle state while sampling computed opacity
+and confirm it stays 1, with the same connected switch node and busy guard.
+Check light/dark and reduced motion. No real tickets should be consumed for this
+synthetic UI check.
+
+## October 14, 2026 — keep proxy controls attached and preserve error provenance (local)
+
+Review of cb9fed96 found that replacing a parent's innerHTML and reinserting
+its old proxy section still detached the live controls. Real Chrome interaction
+lost keyboard focus, restarted CSS animation, and swallowed a click when a
+wallet update landed between mousedown and mouseup. The partial render now
+parses new markup off-page and updates only siblings around an unchanged proxy
+section. The section stays attached throughout. Help visibility is managed in
+place by setOpenHelp, independently of the proxy render key.
+
+The cached-HTML fast path also checks the live proxy presentation key. Retry
+mutates the switch/icon while its request is pending; a failure returning to
+the same logical status must still clear that transient DOM state. A failed
+Retry now restores an enabled switch and the unavailable icon. Retained retry
+controls use one transitionend handler, so repeated notifications do not
+accumulate animation callbacks.
+
+Compact lane and Council-review errors retain their origin: `(HTTP 504)` versus
+`(provider error 504)`. The regressions assert the final rendered message.
+The earlier ticket, provider diagnostic, and 45-second timeout code is unchanged;
+the shorter timeout still needs slow-provider/relay validation before release.
+
+Regression acceptance for the System Panel: focus Security Details, update
+wallet markup, and verify focus and animation continuity; update during a native
+press and verify the click still arrives. Exercise failed Retry returning to
+the original unavailable state, repeated notifications, and opening/closing
+help. Use synthetic fixtures for failures; do not mutate a personal wallet or
+change live relay preferences to induce them. No transport, account, telemetry
+or privacy-protocol behavior is changed by these UI repairs.
+
+Validation: official runner 1,661 core + 893 payment tests passed (2 skipped);
+fresh independent adversarial review approved the repair. Native Chrome checks
+retain focus and deliver the click without restarting animation. Local changes
+only; no new release pin or deployment has been created.
+
+## October 14, 2026 — the System Panel's proxy section holds still (local)
+
+The panel's top section was rebuilt from scratch on every account
+notification and every wallet change (start-up sync steps, the periodic sync,
+the shared-account check on each window focus, every `tickets-updated`
+broadcast from any tab). Each rebuild replaced the network-proxy status icon —
+restarting its "connecting" pulse, which read as a flashing icon — dropped its
+tooltip, and put a new Security Details button under the pointer, so a press
+that straddled a rebuild (the first click after switching back to the tab is
+the common case: focus runs the account check, which notifies) never became a
+click. `renderTopSectionOnly` now leaves markup identical to the last render
+alone, and when the section does change it keeps the live proxy section
+(`#proxy-section`, keyed by its controls through `proxySectionKey`) instead
+of replacing it; in-place status updates record
+the new key (`syncProxySectionKey`). A full `render()` resets the comparison.
+
+The Security Details dialog treats "open" as the overlay being on the page:
+a flag left behind by a build that threw, or by an overlay removed without
+`close()`, no longer makes every later press a no-op; a failed build resets
+the flag.
+
+Tests: `components/rightPanelTopSection` (5), `components/tlsSecurityModalOpen` (2).
+
+## October 14, 2026 — shorter failure copy; a silent stream ends at 45 s (local)
+
+Failure lines say what happened and stop: "The provider stopped the reply
+with an error." (the provider's own text stays in the Activity Timeline),
+"The provider stopped responding.", "The connection closed before the model
+replied." — no "Any partial answer has been kept" or "Retry sends a new
+request" (the kept text and the regenerate action show both). A stream that
+sends no byte at all for 45 s, heartbeats included, now ends the turn; it
+used to show "Taking longer than usual…" at 45 s and wait until 180 s.
+Routers send keep-alives while a model thinks, so a thinking model is not
+cut off. The 120 s limit for the provider to open a response is unchanged.
+
+## October 14, 2026 — one error line everywhere; the ticket sweep in two toasts (local)
+
+Dominic's review of the state mockups. A failed reply now reads the same
+wherever it fails: "**Error:** …" in answer type (`buildResponseErrorHtml`),
+as a turn that failed before any text always did. Below a partial answer it
+is the next line (the red-ruled box and its "Retry response" button are gone;
+retry is the reply's own regenerate action). A failed Parallel lane and a
+failed Council review use the same line ("Error: Gateway timeout (504).");
+the lane's retry is its regenerate action. The already-used-ticket sweep no
+longer changes the pending row: one loading toast "Removing already-used
+tickets…" for the whole sweep, then "Removed N already-used tickets" (or
+"…. No tickets left for this message." when it emptied the wallet, instead
+of a second toast). Shortage toasts are no longer red. The stalled-sweep
+error now says "Couldn’t update the tickets saved on this device."
+## October 14, 2026 — a failed Parallel lane keeps its model and names its status
+
+Seen on prod: a Parallel lane that failed before answering was labelled
+"unknown" with a "U" avatar and said only "Request failed." The router's error
+event (HTTP 200, one event, `error.code` 502) carried `"model": "unknown"`, and
+two things turned that into the lane's header and a bare message.
+
+- **The stream parser published the error event's model.** Any `model` string
+  on an event became the answering model (`modelOnly` token update), and the
+  council controller stored it as the lane's `responseModel`. Now an event that
+  carries `error` publishes no model, and the string "unknown" is never a
+  model (`isReportedModelId` in `chat/domain/modelSelection.js`, used by the
+  parser and by `resolveResponseModelName`). A concrete routed id on a role-only
+  event is still published as before.
+- **A lane that failed before showing anything** now drops any `responseModel`
+  it had picked up on the way to the error (`markLaneFailed`): the header is the
+  model that was asked for. A lane that answered partially and then failed
+  keeps the model that answered.
+- **Conversations saved by earlier builds** may hold `responseModel: "unknown"`
+  on a failed lane; the template (`councilLaneResponseModel`) skips it and shows
+  the requested model, so those turns render correctly without a migration.
+- **The router's numeric error code is named — as the provider's.** The lane
+  text kept only string codes, so a mid-stream `code: 502` was dropped and the
+  lane could not say more than "Request failed." On this line that is the
+  provider-diagnostic code of the entry below ("Haiku failure and provider
+  diagnostic codes"): `Request failed. (PROVIDER_CODE_502)`, read as "Bad
+  gateway. Provider error 502" with Try again. It is kept apart from the
+  response status — `HTTP nnn` / "Error nnn" is only ever the HTTP response —
+  so an HTTP 200 stream carrying a provider 504 event never reads as an HTTP
+  504. (The first cut of this fix, `111864ec` on the prod pin, counted a
+  numeric code as the status; this integration keeps the distinction.)
+
+Tests: `application/councilLaneFailedLabel` (5), `components/councilLaneFailedRender`
+(3), `zkapi/stream-error-model` (3).
+
+## October 14, 2026 — every Parallel lane renders its math (local)
+
+A Parallel turn whose second lane (Claude Haiku) answered with \(…\) math
+showed the delimiters as text once the turn finished, although the lane had
+rendered them while streaming. The finished message is painted whole by
+`ChatArea.appendMessage`, and all three of its paths rendered math in only the
+first `.message-content` — the first lane. They now render every content
+element of the message (`renderMessageMath`). Single chats were unaffected
+(one content element), as was a reload (which renders every element).
+## October 14, 2026 — already-used tickets are swept, not counted to ten (local)
+
+A wallet whose tickets had been spent from another device (or left behind by
+a lost sync) stopped after `ticketsRequired + 10` refusals with "All available
+tickets were already spent" — a 477-ticket wallet checked 13 — and raised a
+toast per refusal. Key acquisition now sets each refused ticket aside and tries
+the next for as long as the wallet lasts; Stop cancels, and a wallet that runs
+out is the ordinary shortage (reload or offers), never that message. A refusal
+that does not shrink the wallet (a store that cannot write, an org refusing
+everything) stops the sweep with `TICKET_SWEEP_STALLED` instead of looping.
+The pending reply shows one state, "Skipping already-used tickets · N", with
+the count ticking in place (tabular digits); one toast at the end says how
+many left the wallet. The Activity Timeline names a refused ticket as skipped.
+
+Underneath: the org checks a multi-ticket request in order, stops at the first
+ticket it has already seen and rolls the earlier ones back, reporting
+`failed_ticket.index`. The client archived the whole selection, so on a
+three-ticket model every stale ticket silently cost two good ones. Only the
+named ticket is set aside now; an org that names none still sets the selection
+aside as before — and the count shown (the ticking label and the closing toast)
+is what the wallet lost, not the number of refusals. A sweep is still one org
+round trip per stale ticket — a batch "which of these are spent" check would
+let the org link the unspent tickets' future requests to one wallet, which the
+privacy model forbids.
+
+Review correction (same day): a `TICKET_KEY_INVALIDATED` refusal retires one
+old signing-key generation; the loop continues while the wallet still covers
+the model and shrank on the refusal, bounded by the wallet and by Stop, never
+by a count. (The first cut capped it at three, so a wallet holding four old
+generations ahead of its current tickets stopped with "4 valid tickets remain,
+but this model needs 1"; the previous code reached the fifth request.) An
+invalidation that does not shrink the wallet stops with `TICKET_SWEEP_STALLED`.
+
+## October 14, 2026 — Haiku failure and provider diagnostic codes (local)
+
+Staging serves commercial d3764d08 / client f55fdb2b, built at 18:44:40 UTC.
+A new-send Parallel lane completion failed at 18:48:35–36 UTC, immediately
+before the user's Haiku screenshot. The tab's sanitized Activity Timeline and
+Sentry OA-CHAT-4 both recorded the failure; deployed stack locations map to
+sendCapturedMessage → runMultiModelTurn → streamed lane completion. The recorded
+category was unexpected and no underlying error detail survived. Both inspected
+staging chats later showed completed lanes. Neither that recovery nor this
+diagnostic repair establishes the original failure's cause.
+
+Provider SSE errors already retain numeric code on the operational error, but
+lane/log formatting accepted only string codes and Sentry ignored provider
+codes. New diagnostic-only normalization keeps a finite provider-code allowlist
+or generic provider-stream category. Lane UI distinguishes provider codes from
+actual HTTP status; Sentry uses provider_code_NNN / provider_error. Raw provider
+messages, bodies and arbitrary provider codes remain excluded. HTTP status,
+credit recovery, retries, cancellation and ticket spending are unchanged.
+Details: [Parallel/Council](PARALLEL_COUNCIL.md) and [Sentry](SENTRY.md).
+This local update has not been deployed; upstream failure remains unresolved.
+
+## October 14, 2026 — staging relay lifecycle and phone facade repair (local)
+
+The live staging run exposed repeated libcurl WASM errors. Closing a vendored
+session left its polling interval alive; shutdown also skipped handles while
+mutating its request list and could double-free a queued removal. These paths
+are repaired, including late cancellation and repeated close. The built lazy
+vendor URL now carries its content hash. Stream error/cancel tracking releases
+active request counts using pipe settlement on browsers ignoring the newer
+transformer.cancel callback, while retaining that callback where supported.
+RightPanel no longer auto-disables a failed relay (OA-CHAT-2), and its
+facade now exposes hideSidebar for phone handoff (OA-CHAT-3).
+
+Correction to the live report: 360px desktop Chrome does not activate phone
+mode; two rails there are expected. The missing facade method is a separately
+confirmed phone bug, now covered by twenty fixture handoffs. Real phone testing
+is still required. Upstream Gemini abort and the original 520 remain unresolved;
+these client repairs do not establish their cause. Hosted Sentry geography needs
+an admin-owned server scrub rule. See [repair details](RELAY_LIFECYCLE.md) and
+[Sentry privacy](SENTRY.md). Nothing has been deployed by this repair task.
+
+## October 14, 2026 — updated ownership staging integration
+
+The supplied staging merge 07310783 was based on c468c3cc, before the deployed
+Council correction 1b096668. It is merged onto that newer client plus the local
+rendering/Sentry fixes, preserving the latest prompt, first-send and edit-model
+changes. Review caught two original gaps: loadInitialSessions still cleared the
+carried session map, and exclusive ifAvailable ownership silently lost second
+writers or writers colliding with a probe. The real loader now preserves the map
+when called by reload; writers use shared ownership and observers probe/wait
+exclusively. Acquisition never blocks the request pipeline. All writers remain
+represented until the last releases, including when a transient probe held the
+lock. Release watchers are cancelled at render entry, including empty chats.
+Regression tests exercise the real paged/fallback loaders, overlapping writers,
+probe contention and switching to an empty chat.
+
+## October 14, 2026 — long equations and handled request diagnostics (local)
+
+Display math now scrolls within its response instead of overflowing into the
+clipped chat/lane container. Its content gets max-content width with a 100%
+minimum, so both ends of long equations are reachable and short math remains
+centered. Display blocks have keyboard focus and an Equation region label.
+
+Sentry-enabled builds now receive synthetic handled request errors from the
+inference service access, verification and completion boundaries, including
+HTTP 520. Only finite categories/statuses and generated stack locations survive
+sanitization; original errors, prompts, models, keys, URLs and account data do
+not enter the report. Per-page category deduplication and a 20-event cap bound
+volume; no persistent identifier is added. Cancellation and expected 402 credit
+recovery are excluded. This adds diagnosis, not a 520 retry or backend fix.
+Verifier refusals can remain generic where its adapter drops HTTP metadata;
+tolerated verifier outages are outside this boundary. Browser checks at 360,
+680 and 1050 px response widths reached both equation ends without page overflow
+or math errors. The actual SDK bridge emitted one sanitized handled 520 envelope
+to an intercepted local transport; a repeat was deduplicated. Independent review
+approved the changes. Full verification: 1,581 core and 889 payment tests pass
+(2 payment skips), and a Sentry-enabled build passes. The initial full run caught
+a redundant equation focus ring; it was removed to use the existing global
+keyboard-navigation focus treatment, and the full rerun passed.
+The existing relay-failure candidate is still separate
+and undeployed.
+
+## October 14, 2026 — Sentry and Council 520 investigation
+
+Production Sentry's unresolved 14-day view shows OA-CHAT-2 (102 matching
+events) and OA-CHAT-3 (2). Sampled deployed bundle stacks map the first to
+RightPanel.handleProxyChange auto-disabling a failed relay during an active
+request: updateSettings rejects and the caller does not catch it. Existing
+uncommitted oa-chat-proxy-failure-20261013 addresses this; it is undeployed.
+The second stack maps to updatePanelVisibility calling hideSidebar when a
+phone sidebar is visible. COMPONENT_APP_KEYS does not expose hideSidebar,
+so the facade supplies undefined. This newly diagnosed bug is not yet fixed.
+
+The Council screenshot's shared `Model request failed.` banner and identical
+pending-lane 520 errors match the outer setup catch, making key acquisition
+the leading hypothesis, not a confirmed endpoint. fetchRetry.js does not
+retry 520; requestApiKey preserves it as a redemption error. Sentry only
+captures unhandled runtime failures, so it cannot rule out handled 520s.
+Current staging verifier/station checks are healthy; original failure
+evidence is unavailable and promotion remains on hold. Full sanitized notes:
+deployment/council-ui-eval-20261014/sentry-520-triage.md in the family workspace.
+
+## October 14, 2026 — price ratings and detached link previews
+
+Production client `d5e8ddd1` visibly corrupted a restaurant Markdown table:
+the broad `$$...$$` extraction paired parts of `**$$$**` / `**$$$$**` across
+rows, replacing table syntax with math placeholders. The shared display-dollar
+scanner now accepts exact unescaped two-dollar delimiters, leaves emphasized
+price ratings and bare rating cells literal, and prevents cross-row pairing.
+DOM math normalization uses the same scanner before KaTeX, rather than letting
+KaTeX independently interpret every dollar run. Real display/inline math,
+multiline absolute values, aligned equations, escaped dollars and code retain
+coverage. Unformatted `$$` in arbitrary prose remains ambiguous with math.
+
+The body-level link preview had no cleanup when its anchor disappeared. A
+pending hover callback or visible card could outlive a message rerender or New
+Chat. Preview callbacks now check anchor ownership; hiding cancels pending work;
+transcript mutations, New Chat, full renders, window blur and scrolling dismiss
+the card. This handles the stale-card path; the exact reported new-window
+startup sequence has not been reproduced (a fresh production page loaded).
+
+Browser fixture verification: all five table rows and three equations render
+with zero KaTeX errors; replacing the transcript with an empty chat removes the
+visible preview. The same fixture using production code retains only two
+rows, emits two math errors and leaves the detached preview visible. All 179
+relevant tests pass and independent review approved the code diff. Regression
+tests fail on the base and pass with these fixes. No inference, ticket,
+account, storage or provider request behavior changes. These local rendering
+fixes do not resolve the separately reported staging Council HTTP 520. A live
+staging two-Haiku/Grok Council new send and Retry both completed without a
+520 during follow-up; the original failure remains unexplained.
+
+## October 14, 2026 — a reply painted from storage says who is writing it
+
+A reply saved mid-stream is painted from storage by any tab showing the chat,
+and by this tab whenever it re-reads the chat. Until now the only thing such a
+paint could say was "This tab is no longer connected to the response. Check any
+other open tab before retrying", with a Retry button — shown while another tab
+was still streaming the answer, and shown by the writing tab itself whenever a
+re-read landed in a moment it did not count as its own reply.
+
+- **Turn ownership (`chat/services/turnOwnership.js`).** The tab writing a
+  reply holds a shared origin-wide Web Lock `oa-turn:<sessionId>` from the moment
+  the turn streams (`setSessionStreamingState(true)` in `sendCapturedMessage`
+  and `regenerateCapturedResponse`) until the row is settled on disk (released
+  in `finally`, before the streaming state clears). Writers share the lock; acquisition is scheduled without blocking the turn
+  and queues behind short observer probes rather than losing ownership; the browser releases it
+  when the page reloads, closes or crashes. When `ChatArea.render` paints a
+  chat it is not streaming and a row still carries streaming flags
+  (`wasReplyStreaming`), it probes the lock once (an exclusive `ifAvailable`
+  request): held → the row shows what has arrived so far with the pending-line
+  shimmer "Answering in another tab", no error, no actions, and the area waits
+  (an exclusive request, abortable, dropped at the start of the next render) for the release to
+  re-read the chat; free → the chat is read once more (the lock is let go only
+  after the settled row is on disk, so a snapshot taken while the turn was
+  finishing never paints a completed reply as interrupted) and a row still
+  carrying the flags is an interrupted turn with Retry that says so: "The
+  connection to this reply was lost before it finished. Retry sends a new
+  request." (a pending turn: "…this request was lost before a reply
+  arrived…"). Without Web Locks the cautious "check any other open tab" copy
+  stays. Chats whose rows are all settled never touch the lock.
+- **The chat list reload no longer disowns the reply being written.**
+  `reloadSessions` (every cross-tab `sessions-updated`, and after a turn that
+  deferred one) emptied `state.sessionsById` for the duration of the reload, so
+  `getCurrentSession()` was undefined and `isCurrentSessionStreaming()` false
+  while a reply streamed: a re-read in that window painted the reply as
+  interrupted, a cross-tab event in it wiped the chat to the empty state, and a
+  send or retry entering in it hit the `if (!session) return` safety check and
+  was silently dropped. The chats this tab is showing or writing in
+  (`liveSessionIds`: selected, streaming, send in flight, retry in flight) are
+  carried into the new map and replaced by their fresh copies as the pages
+  load; a carried chat storage no longer has is dropped as before unless this
+  tab is still writing in it. `isCurrentSessionStreaming()` now answers by
+  `state.currentSessionId` rather than through the cached session object.
+- **A regeneration's placeholder is a pending turn.** `regenerateCapturedResponse`
+  saved its placeholder with streaming flags but neither `isLocalOnly` nor
+  `pendingTurn`, so a reload before the first chunk showed the "no longer
+  connected to the response" copy with an empty row, and the empty row was
+  eligible for model context. It is now persisted like a send's pending turn
+  (local-only, `pendingTurn: true`, `persistPendingTurn`), cleared by
+  `markPendingTurnStarted` at the first chunk and at completion.
+
+Tests: `services/turnOwnership` (hold/probe/wait/abort, no Web Locks),
+`components/messageTemplates` (+2: answering elsewhere; the lock-aware copy),
+`components/chatAreaRestoredOwnership` (render with a held / free lock, the
+release repaint, dropped waits, the re-read on a free lock, no probe while
+streaming or for settled chats),
+`application/restoredResponseOwnership` (the send holds and releases the lock,
+the regeneration placeholder, the reload window, id-based streaming check).
+
+## October 14, 2026 — an edited prompt goes to the model on its edit card
+
+Editing a prompt and resubmitting it after switching the model picker still
+answered with the model the prompt was first sent to. `confirmEditPrompt`
+committed the new text and attachments but left the prompt's stored `model`
+as it was, and the regeneration that follows an edit reads that stored model
+(Retry's contract: a regenerated turn reuses the accepted model, search,
+Memory and reasoning settings). The edit card's model chip mirrors the
+session model, so the edit now records the session's current model on the
+prompt as part of the committed edit; the regeneration, its typing header,
+the ticket preflight and the reply's attribution then follow the chip. Retry
+on an assistant message is unchanged and still reuses the accepted model.
+Parallel/Council edits were already resolved from the live session config.
+Test: `application/chatRuntimeOwnership` ("an edited prompt is resubmitted to
+the model on the edit card").
+
+## 2026-10-14: Preserve Council's brief review followed by a final answer
+
+- User comparison of production and staging showed that the summary-only
+  rewrite lost the useful answer structure and produced long recaps of each
+  draft. Restored the production prompt verbatim except for one rule: replace
+  "If one response is clearly stronger, say so and explain why" with "Focus on
+  specific differences, useful contributions, and limitations; avoid declaring
+  an overall winner."
+- Keep the brief material comparison, concrete errors and caveats, synthesis,
+  and concise final answer. Do not impose equal attention or praise, or remove
+  the final answer when tuning the reviewer. Existing anonymity, partial-draft,
+  context, and fallback behavior remain unchanged.
+- Evaluation should preserve this output structure as well as check for
+  gratuitous winner declarations. Compare the same fixed draft pair under both
+  prompts; screenshots with different draft inputs do not isolate prompt impact.
+  Construction/controller tests do not establish live model adherence.
+
+## October 13, 2026 — the first send on a fresh page is never dropped or restarted by start-up
+
+On the web build (sign-in required) the send preflight checked the shared
+account before the budget. On a freshly loaded page that check ran while this
+tab was still verifying the saved session, activating the wallet scope and
+running the first encrypted sync, and it did two harmful things: the stable-
+account fast path required the scope and sync flags, so the check fell through
+to the serialized handoff — which waited for the origin-wide `oa-sync` lock
+(held across the sync's network round trips, by this tab or any other tab) and
+then, seeing the same account with its scope not yet active, locked the account
+and restored it from the key bundle (session check, scope activation and sync
+all over again) — and when it returned with `ticketSyncReady` still false the
+send was dropped with "Your inference tickets are still loading." The Stop
+button is shown for the whole pending send, so the user saw Stop, the prompt
+still in the composer, and then a notice. The desktop build does not require
+sign-in and never ran this block.
+
+- `accountService.sharedAccountBindingIsCurrent()` treats this tab's own
+  start-up as current: the session check still pending
+  (`authBootstrapComplete` false), the scope activation in flight
+  (`syncInitializationInFlight`, published by `initializeSync`) or the first
+  sync not yet done are not a change made in another window. A changed
+  binding, a pending login marker, a different live scope, missing keys or a
+  handoff still take the serialized path, and a scope that is neither active
+  nor activating is still retried there.
+- `preflightTurnTicketBudget` waits for the auth bootstrap before judging the
+  account, then waits (spinner showing; Stop cancels; `ACCOUNT_SCOPE_WAIT_MS`
+  10 s) for the scope instead of dropping the send; a shortage waits
+  (`TICKET_SYNC_WAIT_MS` 15 s) for the first sync, which can cover the turn
+  without a purchase, and rechecks the wallet. A wallet that already covers the
+  turn never waits for the sync. The notices after a wait that runs out, the
+  Log in dialog for a signed-out page, the held-ticket branch, the shortage
+  dialog and automatic reload are unchanged.
+- `verifySessionInBackground` starts `initializeSync` as soon as the session is
+  confirmed, before the identity refresh and its one-second burst-protection
+  delay, which had been holding the wallet scope and sync behind it.
+- `chatDB.backfillMissingUpdatedAt()` compares the session count with the
+  `updatedAt` index count and walks the store only when a session is missing
+  the field. The readwrite walk over every session record had run on every
+  page load; a user message written while it ran queued behind it (0.4 s at
+  3,000 sessions, 0.9 s at 8,000 in headless Chromium).
+
+Not changed: the sync service still holds `oa-sync` across its network calls,
+so a second tab's start-up sync can still delay this tab's scope activation and
+the ticket redemption after the prompt is accepted. Tests:
+`application/sendPreflightStartup` (+6), `services/usernameSwitch` (+4),
+`services/startupSyncOrder` (new), `services/updatedAtBackfill` (new).
+
+## October 13, 2026 — consistent response model names
+
+Parallel lane and Council synthesis model names use the single-response header's
+0.7rem size, 500 weight and 1rem line height. The change is scoped to
+`.council-response-model-name`; provider icons, role badges and response text
+retain their existing styles.
+
+## 2026-10-13: Quiet reasoning headers
+
+- Removed the “not shared by the provider” suffix from completed reasoning with
+  no visible reasoning text. The existing non-expandable “Thought”/timing header
+  remains; actual reasoning still expands normally. The same phrase is removed
+  from the zkAPI thinking description. No hidden text is invented.
+- Positive sub-second durations show “Thought for less than 1s” in both initial
+  rendering and live updates, instead of rounding down to “Thought for 0s”.
+- Ticket-sync and reasoning changes are now based on the live staging client
+  `44001ac4`, preserving the recent stream-settlement and independent-send fixes.
+  Staging and production still lack this local ticket-sync patch as of the
+  manifest check on October 13. The installed development phone targets staging;
+  the user confirmed testing the staging web origin too. Account identity/unlock
+  and live convergence still need verification after deployment.
+
+## 2026-10-13: Cross-device spent-ticket reconciliation
+
+- Google/username redemption intentionally avoids an immediate authenticated
+  sync. The previous status-only poll could not upload these local changes and
+  the full-sync fallback waited 30 minutes. Visible, unlocked clients now run a
+  full pull/merge/push every 30 seconds, regardless of spending, and on initial
+  polling/resume. Healthy foreground devices normally converge within two ticks
+  (about a minute plus request time). Offline, hidden, locked-account, throttled,
+  or older clients can take longer. This is eventual consistency, not a global
+  reservation: simultaneous redemptions still rely on server double-spend checks.
+- Shared archive/deletion blobs use server last-write-wins. Two devices pulling
+  before either pushes could overwrite disjoint removals. Each account's local
+  installation now retains a random `sync-wallet-writer-id` and publishes its
+  encrypted archive and transfer tombstones under its own HMAC-derived address.
+  All devices union these records using the existing consumed/deleted-wins rules.
+  The writer ID is local account-scoped metadata, never synced as a preference
+  or sent in plaintext. No per-ticket plaintext identifiers or new API required.
+- Aggregate records remain for compatibility. Schema 3 forces a one-time full
+  pull to recover dynamic records an older client skipped. Both clients need
+  the update for full concurrent-write protection. Existing lost server records
+  can only be recovered from a device that still retains the consumption state.
+- Background requests allow one attempt with a five-second header/body deadline,
+  retrying on the next tick rather than holding the wallet lock through network
+  retries. Explicit account sync retains its normal retry policy.
+- Sync still holds the account-data lock; ticket listeners finish hydration
+  before sync completion. Hidden clients do no periodic work; foreground resume
+  reconciles local deferred changes even if server status has not advanced.
+- Cost/tradeoff: frequent full sync uploads the wallet even when unchanged,
+  including one extra removal snapshot per installation. The combined snapshot
+  shares the server's 10 MiB blob limit; very large archives plus tombstones may
+  reach it sooner than the separate legacy records. Compaction/chunking remains
+  follow-up work. Stable opaque writer
+  records and more frequent ciphertext-size observations add metadata/bandwidth;
+  see [Privacy Model](PRIVACY_MODEL.md#5-optional-account-sign-in-and-encrypted-sync).
+- Synthetic tests cover disjoint simultaneous spends/transfers, both blob orders,
+  stale active replay, clean-device restore, original-device convergence, writer
+  persistence, encrypted address validation, awaited wallet notifications,
+  schema upgrade, fixed foreground scheduling and a stalled-body lock-release
+  regression. No live tickets were spent. The earlier origin/main candidate
+  passed 1,103 core and 742 payment tests (2 skipped), production build and
+  adversarial review. The staging-based candidate passed 1,556 core and 889
+  payment tests (2 environment-dependent skips), production build, and a fresh
+  adversarial review. Two time-sensitive stream checks failed during the first
+  run alongside a build, then passed in isolation and in the complete serial
+  rerun. The release gate reproduced the rearmed-tail test failure: its 70 ms
+  idle deadline left only 25 ms beyond the intentional pause. The test now uses
+  a 100 ms tail, a 150 ms pause (still longer than the tail), and a 1 s idle
+  budget. Runtime streaming behavior is unchanged. This fix is not deployed yet.
+
+## October 13, 2026 — a finished reply settles promptly; Stop stops every update
+
+Three ways a single chat could stay busy or keep changing after it should have
+settled (reproduced in `deployment/stalled-followup-investigation-20261013`).
+The Requesting / Waiting / Thinking / Stop presentation is unchanged.
+
+- **Confirmed finish, open connection.** The stream parser ended a read only on
+  `[DONE]`, `response.completed` or EOF; a `finish_reason` was recorded and the
+  reader kept waiting, with heartbeat comments resetting the idle deadline, until
+  the ten-minute output deadline failed a complete answer. Now a finish reason
+  arms a bounded tail in the watchdog (`tailMs`, 5 s; heartbeats do not extend
+  it) during which `[DONE]`, final usage and citations are still consumed; when
+  it lapses the reader is cancelled and the stream finalizes as complete. Output
+  after a finish reason disarms the tail until completion is confirmed again.
+  Error and incomplete events in the tail still fail the stream. `[DONE]` still
+  ends the read at once.
+- **Deliveries after Stop.** A reasoning flush queued behind a delivery still
+  running when Stop landed was delivered after the cancellation; a chunk or
+  reasoning callback resuming from its own awaited IndexedDB write repainted the
+  stopped row and could re-save it as still thinking. The queued flush is now
+  dropped once the request is aborted or settled, and the chunk/reasoning
+  callbacks in `sendCapturedMessage` and `regenerateCapturedResponse` return at
+  entry and after each await when the turn's signal is aborted (`turnStopped`).
+  The first delivery's `appendMessage` still runs after its write so a partial
+  row is never missing; it shows the settled record. Parallel lanes have
+  synchronous callbacks and are covered by the API-side fence.
+- **Bookkeeping on the acceptance path.** The conversation search-index refresh
+  ran, awaited, between the final save and the render, inside the turn that
+  holds `sendSubmissionsInFlight`; a slow or failing index write kept the
+  composer busy or turned a finished reply into an error row. It now runs in the
+  background (`refreshSessionSearchTextInBackground`) once the reply is on disk.
+  Usage recording (zkAPI ledger), the final message save, pending-row cleanup
+  and the final render remain awaited before the composer is released — a
+  follow-up still waits for the reply to be written.
+
+Tests: `test/zkapi/inference-reliability.test.cjs` (tail, usage in the tail,
+re-armed finish, error in the tail, dropped queued reasoning) and
+`test/application/streamSettle.test.js` (held writes at Stop, late deliveries,
+background indexing, the required save). The investigation's diagnostic
+fixtures invert on this change except the injected usage-hook stall, which is
+accounting and stays protected.
+
+## October 12, 2026 — preserve the original answer during regeneration
+
+Regenerate keeps the original answer and later turns on disk until a completed
+replacement commits in one IndexedDB transaction. Stop, provider failure, or a
+failed write restores the saved transcript with a neutral status and Retry
+response. Existing Requesting/Waiting/Thinking/Stop presentation and all ticket
+and acquisition paths are unchanged. This ports the private desktop fix to web.
+
+- Draft replies remain in memory; reload during a retry leaves the original
+  persisted transcript intact. Search metadata and memory extraction wait for
+  commit. Commit compares the saved baseline and refuses to overwrite another
+  tab's edit, append or deletion. Late enrichment cannot resurrect a discarded
+  draft or the replaced answer.
+- Full-turn Parallel/Council regeneration commits only after all requested
+  stages complete; per-lane regeneration retains its existing behavior.
+- Unit regressions cover the non-destructive action boundary, commit/rollback
+  choice, rollback metadata failures and rendering. Open
+  `test-browser/message-replacement.html` on a loopback static server for real
+  IndexedDB commit, cancellation, reopen, conflict, aborted-transaction and
+  30-retry checks. This fixture uses separate synthetic databases, blocks
+  external connections, and does not boot accounts or spend tickets.
+- Discarded-message IDs are retained only in memory until page reload to reject
+  late enrichment writes. Active drafts are released after each attempt. This
+  targeted fixture is not the complete release soak/latency protocol.
+
+## October 12, 2026 — keep background work off the Send acceptance path
+
+A prompt could remain in the composer while two unrelated background jobs ran:
+the foreground/periodic pricing refresh, and encrypted account sync. Deterministic
+regressions reproduced both waits on `7ec64afa`; two live 0.1.34 sends accepted
+promptly, so the live intermittent incident itself was not captured.
+
+Single-model budget previews now reuse a map validated earlier in this page even
+while a refresh is pending or has failed. A persisted cache alone is insufficient
+on startup. Acquisition still forces a live price refresh and fails closed; an
+apparent preview shortage is freshly priced before offers/automatic reload so a
+price reduction cannot cause an unnecessary purchase. Council's aggregate live
+budget check is unchanged. Initial catalog/pricing loads and genuine shortages
+can still require a wait.
+
+Stable account reconciliation reads the account binding, pending-login marker
+and active scope in one readonly IndexedDB transaction, then rechecks the local
+login generation/readiness. It need not acquire `oa-sync`, whose encrypted
+network pull/push can be slow. Changed bindings still follow the serialized
+handoff path. Wallet mutation, redemption, scope checks and sync retain their
+existing locks; no account/ticket migration or credential telemetry is added.
+
+Coverage: modelTiersReady, usernameSwitch, settingsSnapshot and
+sendPreflightStartup; retain explicit account-change and failed-refresh cases.
+This entry describes a local candidate, not a deployed web/desktop version.
+
+Follow-up screenshot: the submitted draft remained in the composer while the
+red Stop button was visible. Streaming ownership begins after preflight but
+before the user-message transaction finishes. For a text-only submission with
+an unchanged draft, this narrows the wait to the local save/acceptance boundary,
+not the provider's response. It does not prove the cause on the user's device.
+Two regression tests found that a throwing cross-tab notification could leave
+the save promise unresolved even after the IndexedDB transaction committed.
+Those notifications are now best effort; actual storage failures still reject,
+and the draft is still cleared only after a successful durable commit. No
+account/ticket writes, migrations or spend rules change.
+The notification transport also catches late failures from its debounce timer;
+a real closed BroadcastChannel regression covers both immediate and delayed
+delivery, alongside normal coalescing behavior.
+
+User constraint: preserve the existing Requesting / Waiting / Thinking UI,
+labels, indicators and Stop behavior. The illustrative demo is not a proposed
+replacement. These Send fixes do not edit the presentation or status components.
+
+## October 12, 2026 — accept sends promptly, validate before spending
+
+Single-model courtesy preflight reuses the successfully loaded pricing map,
+removing the forced price fetch before the prompt appears. Acquisition still
+refreshes immediately before spending and retries one explicit rejected-count
+response. Council keeps its aggregate preflight refresh and per-lane spending
+check. Never remove the final refresh based on `TICKET_PRICE_CHANGED`: deployed
+org `920ece8` selects a credit tier by ticket count, not the requested model.
+An old price may still be a valid tier and would not be rejected (including a
+higher old price after a reduction). No model IDs or identities were added to
+anonymous redemption, and no backend change is required.
+
+Acquisition shortages share the existing host reload/offers path, including a
+wallet emptied by another tab. Recovery is bounded to one reload attempt and
+one locked-selection retry. Held previous-version tickets stay held and do
+not trigger purchases. TicketStore reports only counts on selection failure;
+its selection, persistence, tombstones and archive behavior are unchanged.
+Rejected prices and failed refreshes do not consume tickets.
+
+The single-model pending reply can show “Reloading tickets…” when the host starts a reload. Council retains its existing reload toast.
+An uncovered single-model turn keeps its prompt and a Retry reply. Council
+lanes share the shortage handler and retain keys already acquired by other
+lanes. Stop ends the caller's wait promptly and suppresses late reload/offers
+UI. Billing checks the send's cancellation before submitting a new charge;
+a payment already submitted continues the existing idempotent preparation
+path so paid tickets are not abandoned. Existing reload references and
+account-generation checks remain in force.
+
+Regression coverage: accessController, councilController, sendPreflightStartup,
+modelTiersReady, ticketStoreLegacyHold, and commercial billingClient suites.
+No account, wallet, sync, issuer, database-schema or storage-origin migration.
+
+## October 11, 2026 — the first send no longer queues behind start-up work
+
+Between the send click and the prompt appearing, the ticket preflight waited on
+two start-up jobs that could not change its answer. Both waits are gone:
+
+- The move of previous-version tickets starts on every page load of a signed-in
+  wallet (status request, cross-tab lock, several reads). The preflight awaited it
+  unconditionally, so the first send of every visit queued behind it. It now
+  waits only when the wallet does not already cover the turn — the one case
+  where the move can turn a shortage into a sufficient balance — and rechecks the
+  balance afterwards. The held-ticket notice, the automatic reload and the
+  shortage dialog are unchanged.
+- A send before the model catalog had arrived started a second download of the
+  same catalog (`fetchModels`) and waited for it. `loadModels()` now publishes its
+  in-flight download (`modelsLoadPromise`, cleared when it settles) and the
+  preflight waits for that download instead; the fallback fetch remains for a
+  catalog that is empty with no download in flight.
+
+Pricing is untouched: the preflight still refreshes the live price map, and key
+acquisition still obtains the authoritative price before redemption.
+Tests: `test/application/sendPreflightStartup.test.js`.
+
+## October 10, 2026 — opening Sources reveals the cards in the chat viewport
+
+Opening a Sources chip now scrolls the transcript only enough to show its cards,
+accounting for the toolbar, composer and phone visual viewport. Already visible
+cards do not scroll; tall lists retain their trigger below the toolbar. This uses
+a 250 ms eased scroll (instant for reduced motion), yields to wheel/touch/
+pointer/keyboard input, and cancels on collapse or panel/session replacement.
+`ui/sourceReveal.js` owns the animation frames, avoiding a browser-native scroll
+that can continue a frame after cancellation. Normal streaming
+bottom-follow pauses while it is active. Explicit scroll-to-bottom takes over.
+Closing does not request another reveal. The shared handler also covers Parallel
+lane source chips. Existing inline-citation navigation cancels any chip reveal
+before it takes over. No extra network requests or persisted state are added.
+Tests: `test/ui/sourceReveal.test.js`, `test/components/citationDisclosure.test.js`.
+
+## October 10, 2026 — Sources chevrons use the shared accordion motion
+
+The Sources chip keeps its site icons and now uses the existing Transitions.dev
+`.t-acc-chevron` flip (250 ms, reduced-motion aware). Both clicking Sources and
+opening from an inline citation update the trigger's `data-open` and
+`aria-expanded`; `aria-controls` names the existing carousel. No inline rotation
+competes with the CSS transition. Fast repeated clicks reverse the transition.
+Source links, icon requests, carousel layout and inference behavior are unchanged.
+Controller regressions: `test/components/citationDisclosure.test.js`.
+
+## October 9, 2026 — the settings panel hangs above the composer on every layout
+
+On laptops the gear's panel was hung from the gear button, so its bottom edge
+sat inside the composer card, over the text box. It now hangs 8px above the
+card's top edge on every layout (`ChatInput`: `anchorTop` is the card's top
+whenever the card is measurable), still centred on the gear and clamped to the
+viewport on laptops; phones keep the card's edges and the 70% cap. The fold /
+re-anchor logic is unchanged (it reads the resting `bottom`). Test:
+`test/components/phoneOverlays.test.js`.
+
+## October 9, 2026 — release test browser fixtures must stay local
+
+The unit-test runner uses `--test-isolation=none`. A module-level `document`/
+`window` fixture in `councilLaneStoppedRender.test.js` was overwritten before
+its rendering assertions ran. The rendering tests now install their browser
+fixtures inside each test's render call, import the template there, and restore
+the previous globals in `finally`.
+
+Separately, shared browser fixtures caused `passkeyRelay.test.js` to initialize
+a nonexistent relay page at import time. Its pure-helper tests now import the
+module with `document` temporarily absent, then restore the original property
+descriptor in `finally`. Keep both files in the full suite: isolated runs miss
+these interactions. The subsequent zkAPI suite also needed its credit-recovery
+logger mock to supply the new `keyRefForHeaders` method; otherwise the mock's
+TypeError hid the provider error being asserted. It now restores the previous
+logger after the test, including on failure. No application rendering, passkey
+behavior, test assertions, or release gate is changed.
+
+## October 9, 2026 — the activity timeline names the key each entry ran under
+
+A separator in the System Panel timeline used to label every session with the
+current conversation's key: `getSessionKey` read that session's live token,
+and `maskApiKey` formatted it with the *current* session's ephemeral key id. So
+older activity carried the current conversation's label (a display defect only;
+requests always used their own session's key). Entries from `api.js` also fell
+back to `networkLogger.currentSessionId`, so a stream or title request that
+finished after a conversation switch was filed under the new conversation.
+
+Now `networkLogger.logRequest` records `keyRef` (the last four characters of the
+Authorization bearer, captured before redaction; never the key), `api.js` passes
+the request's own `sessionId` and `keyRef`, and `RightPanel.getLogKeyLabel(log)`
+names the entry's key for the entry's own session: the ephemeral key id that
+session assigned to that key (`inferenceService.findEphemeralKeyId`, formatted by
+`formatEphemeralKeyId`), the session's current key for entries without a
+reference, or `...<ref>` when the session no longer knows the key. A session
+that moved to a new key gets a new separator. Tests:
+`test/components/rightPanelTimelineKeys.test.js`.
+
+## October 9, 2026 — site icons are back in sources and inline links
+
+The sources chip stack, the source cards and inline links show each site's
+icon from DuckDuckGo's icon service again (`chat/services/citationIcons.js`,
+`citationIconUrl`), as before 2026-08-21; the providers OA ships with keep
+their bundled icons and a local website symbol appears when the service has no
+icon or fails. Loading an icon tells icons.duckduckgo.com the cited hostname
+and the browser's IP (hostname only, no referrer; see PRIVACY_MODEL.md).
+Preview proxies and any fetch of the cited page stay out; the privacy test now
+pins exactly that.
+
+## October 9, 2026 — Stop keeps partial Parallel output; a stopped lane closes its turn
+
+Round-2 robustness checks found two Parallel cancellation defects. Both are in
+`application/councilController.js` and `components/MessageTemplates.js`.
+
+1. Stop no longer erases what was on screen. `runMultiModelTurn` deleted the
+   assistant row whenever the request was cancelled and no lane had *completed*,
+   ignoring partial text. Now a cancelled lane that had shown anything (text,
+   an image, or reasoning; `hasLanePartialOutput`) keeps it: the row stays,
+   each such lane is `cancelled` with its partial `response`/`reasoning`, the
+   lane with the most text becomes the message's canonical content (as a
+   stopped single chat keeps its partial), and the status line reads "Stopped
+   before any model finished." Only a turn in which no lane had shown anything
+   is still removed. In the template a cancelled lane with output renders like a
+   complete one plus a "Stopped here." line and its copy/regenerate actions; a
+   cancelled lane with nothing says "Stopped before this model answered." with
+   Try again.
+
+2. A stopped lane's history no longer leaves old requests open. For its own
+   lane, `buildLaneConversationMessages` dropped the assistant turn of any lane
+   that had not completed, so after one-lane or all-lane stops the lane saw
+   user, user, user and treated every earlier task as still pending (Gemini
+   spent ~85 s reworking cancelled tasks on a two-line prompt). Now a cancelled
+   lane that spoke answers with its partial text, and a cancelled or failed
+   lane that never spoke gets a one-line closing turn ("[This reply was stopped
+   by the user before it began. That request is no longer open.]" / "[This
+   reply failed before it began. …]"), so roles alternate and only the latest
+   prompt is open.
+
+Tests: `test/application/councilStopKeepsPartial.test.js`,
+`test/components/councilLaneStoppedRender.test.js`. Not changed: a single chat
+stopped before its first chunk still deletes the pending row, which leaves
+user, user in that history too; same fix, separate change.
+
+## October 12, 2026 — restore model-specific input limits
+
+Removed the fixed 64,000 estimated text-input token cap introduced on October 9.
+Long conversations can again use the selected model's advertised context window;
+when metadata is absent, the provider decides its context limit. This is not an
+unlimited-input promise. The local estimate remains characters / 4 plus message
+framing, with the same system instructions counted in composer and API preflights.
+Final prepared request validation, 32 MB aggregate request size, 32-image limit,
+and provider/output/credit controls remain unchanged. Unknown metadata does not
+bypass the byte/image checks. No storage, wallet, ticket, or server changes occur.
+Existing draft/history preservation and no-spend rejection tests now exercise an
+actual model-context limit rather than the removed OA-wide cutoff.
+
+
+## October 6, 2026 — OA/zkAPI selection analytics
+
+The optional commercial reporter counts successful explicit payment-mode changes
+inside `changeMode`, after the backend update and before optional zkAPI funding
+checks. The toolbar and explicit “Use zkAPI instead” entry pass `userAction: true`; automatic billing-return
+switches remain uncounted. Capture the previous mode from the owning conversation, not just the
+new-chat default. Restores, navigation, same-choice and failed switches do not
+count. Only fixed OA/zkAPI labels leave this hook. See
+[FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for interpretation and privacy limits.
+
+## October 5, 2026 — settings summary events
+
+Added aggregate `Default changed` for away-from-built-in-default actions. It
+shares the existing successful explicit-setting hook, so hydration, same-choice
+clicks and dependent automatic changes remain excluded. `App active` is a fixed
+code for the commercial host's daily interaction denominator; no standalone
+network or storage behavior is added. See [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md).
+The commercial local report uses daily visitor estimates and labels multi-day
+counts as visitor-days. Deploy the client and commercial event adapter together.
+
+## 2026-10-05: Optional commercial feature usage counts
+
+## October 5, 2026 — settings-change analytics
+
+Added optional fixed events for eight deliberate setting changes, comparing the
+previous and next states with built-in defaults. One total and one direction event
+per change; no values or identifiers leave the client. Restores, same-choice
+clicks and coupled automatic changes are excluded. See [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md)
+for coverage, overlap with existing Memory events and interpretation limits.
+
+[Feature analytics](FEATURE_ANALYTICS.md) defines the fixed event vocabulary and
+exact counting points for Memory, Tab Tab, Parallel and Council. The public app
+has no reporter by default. Commercial startup opts into its existing Fathom
+loader, which enforces host and browser privacy checks. No dynamic event fields
+or persistent telemetry state are added; completion counts exclude aborted work.
+
+## 2026-10-04: Structured send errors
+
+Send and Retry now extract text from error `message`, `detail`, `error` and `msg`
+fields, including nested objects and validation arrays. The terminal send
+handler previously called `includes` directly on `error.message`; a structured
+message could crash error reporting, lose the local error row or leave a partial
+reply without its interruption notice. Missing or non-Error throws use a readable
+fallback. Provider HTTP/stream and ticket parsing use the same helper so useful
+text survives instead of becoming `[object Object]`. Unknown objects are never
+serialized into chat history: request input, tickets and response metadata are
+not message fields. Traversal is cycle/depth bounded.
+
+Error codes, HTTP statuses, legacy-ticket recovery, wallet mutation, verifier
+policy and automatic retry rules are unchanged. Regression tests cover Send,
+Retry, partial replies, access acquisition, failed credit refresh, null/string
+throws, nested provider errors and structured legacy-ticket metadata. The
+reported real-user trigger is unconfirmed; this fixes reproduced error handling
+failures without claiming every underlying server rejection is repaired.
+
+Keep display text separate from policy input: `classificationMessage` preserves
+the string-only ticket heuristic and `creditRecoveryMessage` preserves provider
+credit-refresh decisions. Newly extracted nested text must not mark a ticket
+spent (for example `Authentication refused` contains `used`) or buy another key
+for a structured credit error. Tests cover both cases, including positive output
+affordability and the existing explicit `openrouter_key_limit` recovery signal.
+
+## 2026-10-03: Group repeated verifier-unavailable timeline rows
+
+The System Panel groups consecutive unavailable retries for the same key digest,
+station, verifier and chat into one row. Its first timestamp and expansion ID stay
+stable; expanded details show the check count and latest check time. A collapsed
+retry does not scroll the panel or notify the floating panel. Other activity,
+new keys and verifier verdicts start separate rows. Raw logs stay memory-only
+and unchanged; the existing 200-entry cap also bounds the displayed history.
+The added key digest is non-secret and stays in the existing local log. No retry,
+trust policy, grace clock, account, ticket or wallet behavior changes.
+
+## 2026-10-03: Pending Google passkey setup on a later visit
+
+An ordinary visit or Account reopen no longer automatically starts WebAuthn when
+Google session restoration finds unfinished encryption-passkey setup. The card
+shows **Create passkey** and waits for the user's click. A fresh Google sign-in
+or its one-use landing handoff retains the single automatic setup attempt.
+The permission is modal-local UI state, not a persisted account preference.
+Existing keyring unlock and preview-domain recovery remain explicit choices;
+username sign-in, key ownership checks, encrypted storage and wallet scopes are
+unchanged. OAuth completion does not itself establish encrypted-data unlock.
+
+## 2026-10-03: iPhone attachment persistence and preview ownership
+
+Picked attachments are stored as bytes plus metadata before message acceptance,
+because iPhone Safari may reject picked File objects in IndexedDB. Retry revives
+the bytes as Files and still accepts older stored File records. Composer images
+use small thumbnails. Full-image blob URLs have explicit composer/viewer owners:
+removal or Send releases them, obsolete renders cannot recreate them, and an
+already-open expanded image retains its URL until all viewers close.
+
+Keep model selection applied before closing the picker. Closing before the
+database-backed action resolves exposes Send while the previous model is still
+selected, potentially selecting a different ticket tier. No authentication,
+ticket-wallet, database schema, zkAPI or deployment settings change here.
+
+## 2026-10-02: Fixed OpenRouter app attribution
+
+## 2026-10-02: Separate zkAPI deployment verifier from ticket verifier
+
+Staging deliberately hosts Mainnet zkAPI while tickets use the staging org and
+verifier2. The host adapter incorrectly compared both against the ticket
+verifier, rejecting valid Mainnet leases as a different trusted verifier.
+Builds now compile `ZKAPI_VERIFIER_URL` from the reviewed SDK deployment profile.
+The payment adapter uses a separate StationVerifier when that differs from the
+ticket origin; payment broadcasts/bans use an origin-scoped cache. The ticket
+verifier retains its existing cache key and behavior. Wallets are untouched.
+The separate instance has no cross-origin advisory station pins: approval must
+come from its pinned verifier. SDK lease/cap/signature/origin validation remains.
+Payment verifier initialization is lazy and awaits shared DB readiness before
+loading cached bans and accepting a key. The attestation dialog receives the
+verifier for the selected payment mode, keeping its evidence and command aligned.
+Production currently uses the same verifier for both and reuses one instance.
+See [deployment notes](ZKAPI_FRESH_DEPLOYMENT_20260930.md#host-verifier-routing-2026-10-02).
+
+
+Ticket-mode web completions, streaming, title requests and the provider key
+check send `HTTP-Referer: https://chat.openanonymity.ai` and `X-Title: OA Chat`.
+`chat/services/inference/appAttribution.js` owns these fixed values across
+production, staging and previews. They label the app/cohort without adding an
+account, device or conversation identifier or copying the current page URL.
+The existing proxy, ephemeral credentials and retry paths are unchanged.
+
+Composed providers keep their own request headers; this does not change zkAPI
+SDK attribution or native iOS/chatbar clients. Tests exercise actual completion,
+title, stream and key-check dispatch, and guard the composed-provider boundary.
+The earlier removal (`ebec52a`) gave no reason in its commit message; the user
+requested restoring fixed attribution on staging. Production promotion remains
+a separate review, including the collaborator's requested discussion with Erik.
+See [metadata considerations](PRIVACY_MODEL.md#metadata-considerations).
+
+## 2026-10-01: Restore Mainnet verifier pin in the production source line
+
+Production Commercial `a8325ba` selected core `549c138`, which omitted the
+earlier Mainnet verifier-pin fix. Its SDK browser profile still trusted
+`verifier2`, while the live manifest named the production verifier, causing
+initialization to fail closed. Restore the reviewed production verifier in
+the `fresh-20260930` Mainnet profile and retain tests of the SDK's actual
+manifest trust check. Sepolia and wallet/deployment identity remain unchanged.
+Commercial also needs an independent production artifact assertion so a
+reverted source pin cannot satisfy its own expected-profile comparison.
+See [the deployment notes](ZKAPI_FRESH_DEPLOYMENT_20260930.md#mainnet-production-verifier-pin-regression-2026-10-01).
+
+## 2026-10-01: Deposit wallet labels
+
+The funding selector reads **Ethereum wallet** / **Send to address**. The
+initial wallet deposit view uses Ethereum wallet in its network-fee row,
+source-account row and Continue button. The transfer rows are literal HTML
+and need their own copy changes; `walletMethodText` does not rewrite them.
+
+## 2026-10-01: Mainnet endpoint hostname
+
+The `fresh-20260930` Mainnet profile now uses
+`https://zkapi-mainnet.openanonymity.ai` for its manifest, protocol and indexer.
+The former `mainnet.100.21.48.23.sslip.io` hostname fails TLS and causes the
+Commercial `/zkapi-deployment/config.json` rewrite to return 502, blocking
+previous-key settlement during SDK initialization. Both emitted browser pins
+and generated Vercel rewrites must be rebuilt together. This is a hostname
+change only: deployment ID, contract, signing keys, proof hashes and the
+`zkapi-browser-wallet-fresh-20260930-mainnet-v1` database stay unchanged.
+Do not reset browser recovery records or switch deployments to repair it.
+
+## 2026-10-01: Choose Google unlock before opening native passkey prompts
+
+Returning Google keyrings now show **Use saved passkey** explicitly, plus
+**Move passkey to this site** immediately when preview recovery is eligible.
+Do not automatically open a current-domain assertion: the keyring does not
+identify the credential's original RP, so that can strand preview users behind
+a phone picker before they see recovery. New Google setup still prompts once;
+username flows and cryptographic ownership checks are unchanged. See
+[Encryption Passkeys](ENCRYPTION_PASSKEYS.md).
+
+## 2026-10-01: Move preview Google passkeys onto the final domain
+
+The explicit recovery button now says **Move passkey to this site**. It unlocks
+the preview credential once, then **Save passkey for this site** starts the
+current-origin prompt directly from a fresh click, wrapping the same master key.
+The org appends it with an account-binding check; old wrappers
+and tickets remain intact. An account-owned encrypted-wrapper journal makes lost
+replies and reloads retryable without creating another passkey. Closing the
+dialog or changing accounts aborts native prompts and rejects late results.
+See [Encryption Passkeys](ENCRYPTION_PASSKEYS.md). Deploy the backend capability
+before the client. Username credentials are not migrated by this Google flow.
+
+## 2026-10-01: Google account switch from remembered sign-in
+
+Browser Google sign-in now supports an account different from the remembered
+username/Google account. The OAuth cookie exchange uses the same shared lock
+and durable pending marker as username login. Old tickets stay in their account
+scope, and mismatched encryption keys are removed atomically with the new saved
+identity. Failed/uncertain exchanges remain locked until another sign-in.
+Generation and account-binding checks reject late writes after a cross-tab
+switch. See [Encryption Passkeys](ENCRYPTION_PASSKEYS.md).
+
+New usernames already use the current-domain passkey flow; do not force a
+platform-only authenticator to compensate for old temporary-domain credentials.
+The earlier explicit Google pre-launch passkey recovery remains available.
+
+## 2026-10-01: Explicit recovery for pre-launch Google passkeys
+
+The final production hostname can offer a pre-launch passkey retry after a
+Google encryption unlock fails. It uses only the fixed preview RP through
+browser-validated Related Origin Requests and preserves the original keyring,
+master key and wallet. New passkey creation and normal unlock are unchanged.
+The matching production build serves the exact final-origin allowlist at
+`/.well-known/webauthn`; keep the preview hostname under OA control. Account and
+login-generation checks prevent late keyring reads/passkey results from
+restoring an old key into a replacement account. See ENCRYPTION_PASSKEYS.md.
+
+## 2026-10-04: Production verifier outage continuity
+
+- Production now pins `oa-production-station` to its existing Ed25519 public
+  identity and `https://verifier-production-20260917.openanonymity.ai`. The pin
+  was checked independently against the TLS-protected verifier broadcast and
+  production org cache. It grants outage continuity, never fresh verification.
+- The production pin is `outageOnly`: explicit refusals, failed ownership,
+  bans and signature errors block even under an advisory build and even inside
+  5xx/pending/success envelopes. The documented 503 `ownership_check_error`
+  remains temporary only when it contains no explicit negative result.
+- Every outage key still needs a locally valid Ed25519 signature, exact station
+  and verifier origin, and unexpired lifetime. Cached bans remain binding.
+  No wallet data, login flow, contract, SDK pin or storage namespace changes.
+- Proof policy revisions include only pins for their verifier origin, preserving
+  existing staging fallback proofs when the production pin is added. Staging's
+  separate Mainnet zkAPI verifier still has no outage pins; production OA and
+  zkAPI share the production verifier and the same constrained fallback.
+- Recovery uses the existing unverified warning and bounded retry behavior;
+  zkAPI does not copy its private lease key into OA's retry queue. Org grace and
+  encrypted verifier persistence are separate server rollout steps.
+
+## 2026-10-01: Trusted-station fallback and stale proving-key cache repair
+
+- The user's staging response exposes `Invalid org signature`. OA's former
+  advisory policy admitted non-banned stations without an explicit trust pin;
+  the requested restriction now requires pinned `oa-station` identity and a
+  valid local Ed25519 signature over the exact provider key and expiry for
+  every unverified continuation. Ordinary matching verifier approvals remain
+  available for other stations. See [privacy boundaries](PRIVACY_MODEL.md).
+- zkAPI now calls the shared host verifier through a hash-checked SDK callback
+  patch after its original lease/cap/origin checks. Its System Panel receives
+  the actual approval status; cached credential checkout rechecks bans and
+  the current trust policy. No fallback is labeled verified. SDK keys remain
+  in memory and are not queued in OA's ticket retry service. Legacy saved
+  advisory proofs without the current trust binding are discarded on use.
+- Staging's actual browser cache contained a 5,654,800-byte old request proving
+  file with SHA `faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e`.
+  A cookie-free reload returned the expected 5,935,783-byte file with SHA
+  `c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584`.
+  Sepolia's checked cached copy already matched. Both sites serve correct
+  request/withdrawal files. The SDK now versions proof URLs by their expected
+  hash and retries a mismatched cached response once with `cache: reload`;
+  the same digest is still mandatory before decoding. Wallet state is untouched.
+- SDK compatibility patches compose in order with per-file intermediate/final
+  hashes; installation validates the full plan before writing and build
+  provenance records all three patches. Never update the pinned SDK or bypass
+  a hash check without reviewing the complete patch chain.
+
+## 2026-10-01: Sepolia generic 401 comes from lease verification
+
+- Live build `UAG7TFYT` failed in SDK `remoteJson → verifyLease`, before
+  provider inference. The separate Sepolia password failure uses different
+  copy. The SDK ignores the verifier's `detail` field, masking several possible
+  rejections as `HTTP 401`; the subsequent staging screenshot supplies
+  `Invalid org signature`. Error parsing now retains `detail`.
+- Fresh read-only diagnostics found running verifier containers but do not
+  distinguish the signature/ownership rejection paths. See the
+  [investigation record](SEPOLIA_VERIFIER_401_20261001.md). Preserve the wallet
+  journal and fail-closed verification while diagnosing; public station health
+  does not establish verification of a particular key.
+
 ## 2026-10-12: Remove Sepolia test tokens and the ERC-20 funding path
 
 - Sepolia is a native-ETH deployment identical to Mainnet except for the chain,
@@ -863,6 +2414,424 @@ host write to the wallet slot in
   namespace, key, contract, or SDK revision. Existing browser storage is retained.
 - Server alias removal and verification are recorded in the
   [deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
+
+## 2026-09-30: Canonical zkAPI service origins
+
+- The September 30 profiles now select
+  `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai` for manifest/protocol/indexer URLs.
+  Vaults, deployment IDs, signing/proof pins, wallet databases and funding signer
+  scopes are unchanged. Generated proxy routes select the same profile.
+- This Commercial rollout preserves the existing `8074795` frontend and SDK
+  patch. The frontend origin stays the same so browser wallets and history
+  persist. Earlier funded acceptance remains tied to its recorded build.
+
+## 2026-09-30: Withdrawal reveal and modal motion
+
+- Add ETH softly reveals its stacked details, then scrolls only the dialog and
+  only enough to show them after the height transition finishes. Taller sections
+  align at the amount. Copy receives keyboard focus without jumping the scroll.
+- The reveal is an explicit, scoped, one-shot intent. Background renders can
+  carry it forward; later fee polls never replay it. Wheel, touch, key or pointer
+  interaction interrupts the pending scroll, and close/scope changes cancel it.
+- Modal resize uses the shared motion duration, cancels interrupted animations,
+  and restores overflow on finish/cancel. Withdrawal form, confirmation, progress
+  and escape waiting are separate page transitions; fee refreshes are not.
+- Reduced motion skips the reveal/resize/page movement and uses instant minimal
+  scrolling. Existing shared modal entry/exit and inert close behavior remain.
+
+
+## 2026-10-01: Prefer the current device in passkey prompts
+
+Username signup/login, the signup PRF follow-up, and Google encrypted-data
+setup/unlock request the WebAuthn `client-device` UI hint. This asks supporting
+browsers to prefer a local passkey provider (for example Touch ID on a Mac)
+without restricting authenticator attachment or excluding phone/security-key
+fallbacks. Existing server-provided username hints are preserved. Required user
+verification, PRF encryption, credential allowlists, and RP validation are
+unchanged. The browser/OS still selects available providers and may display a QR
+code when a local credential/provider is unavailable; this cannot make a passkey
+created for the temporary Vercel origin valid for the public domain.
+
+## 2026-10-01: Adversarial signup and ticket recovery hardening
+
+- Before registering a username, persist and read back the exact public credential and encrypted key wrapper in tab storage. Block registration if this fails. An uncertain response is retried with the same request, or signs into the account already created; it never creates a replacement passkey for that reservation. Regression tests decrypt the original wrapper after offline retry.
+- Restoration journals are browser-local, account-owned, and survive reloads and wallet snapshot changes. Each retains the uncertain batch and its owned remainder. Another account can restore unrelated tickets; only overlapping tickets wait for the original account. Read/write failures retain recovery state.
+- Persist refused ticket IDs before clearing a journal. Refused tickets stay outside the usable/loading count and are retried only when the server's transfer policy changes. Fresh saved codes carry legacy-transfer provenance; unrelated trial codes cannot block completion. Older untagged codes are retried separately without assuming provenance.
+- Partial recovery displays actual wallet tickets plus remaining saved credit, including after spending/reload. Success notices describe each newly issued batch, not a cumulative total across reloads. A stale tab that loses old-account cleanup refreshes its local account scope.
+- Proxy settings reject disabling during active requests before changing or persisting the setting. This does not resolve the separate RPC TLS handshake failure observed in production rehearsal.
+- Operational gates: keep transfer batch size at 500 throughout migration; cached replies do not extend redeem-code expiry. Public migration remains off pending cap approval and cutover checks. Old production accounts are not imported.
+
+## 2026-10-01: Production rehearsal follow-up fixes
+
+- Closed transfer windows still replay an account-owned durable attempt and redeem saved credit; they never select fresh wallet batches. A closed replay refusal retains the journal and remains retryable.
+- Signup keeps one abort controller through credential creation and its optional PRF assertion, so dismissing either prompt frees the browser for retry.
+- Production builds can set OA_PROXY_URL to an exact root WSS origin without verifier bypass. Demo relay restrictions remain unchanged; staging builds strip the production override.
+- The built-in `oa-1.refraction.network` Wisp URL carries a shared access token and must end with `/` after the token query value. The Wisp client requires a trailing slash, and the relay strips that slash before comparing the token. A bare `?secret=<token>` URL fails to establish the Wisp stream. The token is already public in the browser bundle; it is an access token, not a per-user secret. Console connection diagnostics and the TLS dialog show only the relay hostname so they do not duplicate the token in routine UI/log output.
+- Commercial trial redemption clears account-specific code state immediately during handoff and gates later results by owner and generation. Late failures/successes cannot write into the next account's row or notifications.
+- New-org account-binding and mandatory global transfer-cap validation were deployed with production overlays retained. The final-domain login configuration remains staged while the Vercel-origin rehearsal runs; its RP ID cannot serve the unrelated Vercel origin.
+
+## 2026-09-30: Fix stale cleanup, partial recovery and account-owned progress
+
+The three findings below are now fixed locally (not deployed). Old-account
+cleanup runs under the account-data lock and atomically compares account-settings,
+key bundle, data scope and pending-login marker before deleting only the old
+account/key settings. Tickets/chats are not deletion targets. Transaction aborts
+reject; ownership changes skip cleanup without resetting the newer login.
+LegacyTicketTransfer verifies that durable pending redemptions are empty before
+reporting completion. Partial recovery remains a retryable failure; fresh
+controllers recover the saved remainder after reload without duplicate issuance.
+Display baselines and loading notices carry an account owner; deferred success
+counts use a per-account map. Account handoff hides the old loading toast and
+late completion cannot change the replacement account's stranded state or toast.
+The watcher does not mark a signed-out attempt completed. The caller's account is
+also bound at transfer admission, before an async info fetch can switch owners.
+New tests include real Chromium IndexedDB concurrent-writer/abort tests in the
+commercial test-robustness/migration-storage.test.mjs, plus deterministic account,
+partial-reload and display regressions. Earlier review text below is historical.
+
+## 2026-09-30: Fresh adversarial review — further release work
+
+The prior account-binding/journal fixes pass their tests, but full migration
+readiness is not approved. Additional scratch reproductions show: (1) old-account
+cleanup can erase a newer tab's account-settings after its guarded key cleanup
+correctly declines to delete the newer key bundle; (2) partial saved-code
+redemption returns pendingCount but LegacyTicketTransfer ignores it and marks
+completion; (3) legacyMove/unannouncedLegacyMove have no account owner and can
+show A's restoration count in B. No fixes were applied in this review. Details
+and repro paths are in the commercial docs/RETURNING_USER_RELEASE_GATES_2026-09-30.md.
+
+## 2026-09-30: Bind legacy ticket moves to their original account
+
+Transfer batches send `expected_account_id`; org must advertise and enforce
+`account_binding: true` before this client consumes any old tickets. The backend
+check is required because shared cookies can change after a client scope check.
+Stop on account changes during reads, submits, saves, removals and redemption.
+Late replies save credit under the original scope before stopping; parked removal
+checks the expected account inside `oa-sync`. Redemption startup also accepts an
+expected account so an async scope lookup cannot choose the replacement wallet.
+A transaction-committed browser-local `legacy-transfer-pending-attempt` records
+an exact batch and its owner before sending. Keep the last batch journal until
+the whole run settles: a new run under B must not consume A's remainder after a
+lost response or account switch. Replay this exact request under A before new
+batches, even if login replaced the parked snapshot. This journal is not synced.
+A parked storage read error fails the run for retry instead of silently skipping
+saved tickets. Companion org work is in `oa-org-transfer-account-binding`; deploy
+org before client. Neither is deployed by this local integration work.
+
+## 2026-09-30: Isolated signup/migration gate candidate
+
+- Combined the signup robustness branch, feature/switch-day and reviewed Google startup fix in a separate worktree for testing; no deployment or release pin change.
+- Commercial test-robustness/migration-safety.test.mjs now exposes two release-blocking defects: account switch between parked batches submits under a different account, and a failed parked-wallet read is swallowed. These are intentionally red gates, not accepted failures.
+- The strengthened signup browser harness distinguishes current-issuer restored tickets from untouched old tickets; it validates durable recovery credit and explicit outcomes. Incomplete automatic coverage is marked REVIEW rather than passing.
+- The returning-user toast proposal is an isolated preview only. Old production accounts are not imported; tickets remain local and need a new-system account. Do not describe restoration as running before sign-in/scope setup.
+
+## 2026-09-30: Sign-up robustness (stress-tested against a stateful org fake)
+
+Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
+`docs/SIGNUP_STRESS_2026-09-30.md`.
+
+- **Focus during a passkey wait.** The untitled card is invisible
+  (`data-waiting="true"`), but `focusModal()` used to put focus on its Close,
+  so a second Enter closed the dialog and abandoned the sign-up. Focus now
+  stays on the dialog, and `getModalFocusable()` skips the hidden card's
+  controls.
+- **Saved account, new name.** `prepareUsernameContinuation` used to send
+  every name to login when an account was saved (a signed-out or expired
+  one included): "Authentication failed", forever. The saved name is still a
+  login with no request, and another existing name is still a login. A new
+  name throws `SAVED_ACCOUNT_MISMATCH` ("This browser remembers "x". Forget
+  it to create a new account."), and the form then shows Forget saved account
+  (`savedAccountMismatch`). Forget keeps the typed name.
+- **Reservation across a reload.** `prepareAccount` also writes
+  `oa-held-username-registration-v1` to sessionStorage (name, account number,
+  init options, `at`; no key material). `takeHeldRegistration` falls back to
+  `resumeHeldRegistration()` (fresh master key, same challenge) for 55 s.
+  `/auth/register` clears it, because it spends the challenge whatever it
+  answers. Holds now count from `getPendingReservedAt()`, not from the
+  dismissal.
+- **Unconfirmed finish.** A register failure without an answer
+  (`isAmbiguousAccountFailure`: abort/timeout, fetch TypeError, 5xx), or
+  `SESSION_NOT_ESTABLISHED` (the account was made but no session was kept),
+  sets `registrationUnconfirmed`. Try again then looks the name up and runs
+  the username unlock if it exists.
+- **Errors.** `chat/domain/accountErrors.js` (pure, re-exported by
+  accountService) turns browser, proxy and WebAuthn text into plain lines.
+  The org's own sentences pass through.
+- **Sheets.** A refusal under `SHEET_REFUSED_MS` right after a click on
+  Create passkey (`sheetFromClick`) now says the browser didn't open the
+  prompt. Registration asks once for PRF when the credential reports
+  `prf.enabled` without a value. Closing the dialog calls
+  `abortPasskeyCeremony()`.
+- **Ticket move.** When the move's redeem fails, `legacyMove` is kept with
+  `awaitingRedeem`, so the visible count holds until a retry redeems the saved
+  code. A run that only redeems does not dispatch `move-settled` again.
+- **Toasts** above the composer move above a full-width bottom sheet
+  (`[aria-modal]` spanning ≥ 90% of the width and reaching the bottom). The
+  loading toast has `role="status"`.
+## 2026-09-30: Compact withdrawal review
+
+- Withdrawal review uses smaller type and spacing, a compact receipt, and ETH
+  beside the fiat withdrawal amount. On desktop the form keeps a stable 36rem
+  width. Inline top-up details open below the receipt at full width, as in the
+  original selected Inline design. The compact form stays unchanged until Add ETH
+  is opened; expanded details and small screens retain accessible scrolling.
+- Escape-hatch copy reads: “If the server isn’t responding, you can withdraw
+  yourself. It takes 1 day to finish.” The duration still comes from the network
+  configuration. Address validation, fee readiness and confirmation are unchanged.
+
+## 2026-09-30: Inline withdrawal top-up matches the app theme
+
+- The selected Inline details show the amount, network, full address with the
+  existing copy/check icon treatment, and a status row with Check now. All
+  colors, fonts and controls use existing OA/zkAPI theme styles.
+- The transfer details stay open when funds arrive: the figure changes to
+  Available for network fees and the status confirms sufficient ETH only when
+  the fresh scoped quote passes readiness. Failed or pending reads retain their
+  actual status. The top-up never sends or starts a withdrawal automatically.
+- Copy uses the exact address captured at click and reports clipboard failure
+  beside the selectable address rather than stretching the icon button.
+
+## 2026-09-30: Withdrawal fees use the selected Receipt layout
+
+- Send ETH withdrawal fees show Needed to start (both steps for escape), minus
+  Already available, then a prominent You need to add amount and full-width
+  Add [amount] ETH action. The paid-separately/allowance paragraph is removed.
+- Loading, funded and error states retain three rows and an action slot. Add ETH
+  expands the existing real address/copy/check controls; it never starts a withdrawal.
+  Once opened, the address stays visible without a Hide address button.
+- Receipt formatting rounds reserve up and balance down to six decimals, then
+  derives the displayed top-up from those displayed operands (less than two
+  extra micro-ETH). At a fully funded rounding boundary it increases precision
+  to avoid showing a false shortfall. Raw quote readiness and authorization are
+  unchanged; the transfer instructions use the same amount as the button.
+
+## 2026-09-30: Deposit checks do not imply submission
+
+- The SDK checks the private-vault note even for an unsubmitted quote. That
+  status keeps the current preparation step; it must not complete Send the
+  deposit. The live modal supplies `pending_deposit.phase` so submitted or
+  uncertain recovery stays on the chain step, including during wallet reconnects.
+- Submission matching excludes incidental words such as “account that submitted”
+  and “No ... was submitted”. A live preflight does not inherit the paused
+  deposit step from its prepared quote. Saved, idle recovery still does.
+- Address fee failures say “Deposit not sent”, explain the next action, and
+  retain the explanation and SDK plan. Their activity is Review deposit funding,
+  not Review withdrawal funding. No signing, fee-cap, or retry behavior changes.
+- The reported first attempt returning to Deposit has no captured error or
+  transaction evidence. The premature chain step is reproduced; the specific
+  interruption that required another click remains unconfirmed.
+
+## 2026-09-30: A deposit keeps one page; Send ETH holds its layout while the quote loads
+
+- **One page for a deposit in motion.** `depositInMotion()` (busy, journey
+  `deposit`, no note) makes `buildDialogMarkup` render only
+  `renderDepositInMotion()`: "Deposit $X", the steps, one action row, and
+  the address as a receipt (`renderFundingAccount(owner, { receipt: true })`).
+  It is the same page as a saved submitted/awaiting deposit, so when the SDK
+  persists `pending_deposit` nothing rearranges; `pageKey()` treats both as
+  `deposit-progress`. Before, the Send ETH run showed its status as a loose
+  line under the funding rows (the address branch rendered `renderProgress`
+  below everything), then jumped to the pending page. A real page change
+  fades in (`fadeInPage`) under the height glide.
+- **Send ETH steps say what the browser does.** `walletJourney` takes
+  `addressFunding`: deposit steps "Prepare funding address" → "Send the
+  deposit" → "Waiting for Ethereum confirmation", withdraw "Send your
+  withdrawal"; with Send ETH nothing is `waiting` on the person (the browser
+  signs), so "confirm in your funding account" is gone. First steps now have
+  a detail line too, so the list keeps its height as the current step moves.
+  The busy label for a deposit is "Depositing…" unless MetaMask is waiting.
+- **Nothing moves while the quote loads.** While a transfer is expected, the
+  QR keeps its footprint (`QR_PLACEHOLDER`), Deposit its place
+  (`DEPOSIT_PLACEHOLDER`, never `data-funding-next`) and the breakdown its
+  row (`BREAKDOWN_PLACEHOLDER`, not a `[data-funding-help]` row). The text
+  beside the QR has `min-height: 9.5rem` (8.5rem stacked on phones). The QR
+  fades in once when it replaces the placeholder (`revealFundingQr`).
+- The return explanation is back inside the row: the header is one line.
+
+## 2026-09-30: Dialog height glides; buffer info; return cue in the header; reload keeps open rows
+
+- **Card resize.** `AccountModal.render()` reads the dialog's height before
+  the innerHTML swap and `glideDialogHeight` animates the new dialog from it
+  (WAAPI height, 320 ms, the Transitions.dev ease; the scroll area is held at
+  `overflow-y: hidden` until it lands). MetaMask ↔ Send ETH, a quote arriving
+  or a view change no longer jumps and re-centres the dialog under the pill's
+  slide. A render mid-glide starts from the current height. Skipped for the
+  first render, equal heights and reduced motion.
+- **Optional buffer** has the Settings info button (`settings-info-button`,
+  `data-info-toggle`, `data-info-tooltip`) served by the shared
+  `setupInfoTooltips` (ChatInput installs it app-wide; the harness/demo call it
+  themselves). Escape closes the tooltip before the row and the dialog.
+- **Return cue.** `fundingHelp` takes a `description` that stays visible under
+  the row header (`aria-describedby` on the toggle). The return row uses it for
+  the "This ETH isn't in your private balance…" text only when ETH is at the
+  address; with none, the text stays inside the row.
+- **Reload.** `returnOpen` joins `help` in the running-modal markers
+  (AccountModal and WelcomePanel). `attachFundingHelp` no longer clears a saved
+  open row when another kind renders first: after a reload the first render
+  shows the address receipt before the quote, which used to drop an open
+  breakdown. Open state is by kind, so it can only open its own row;
+  `stopFundingFlow` still clears it on close or method change.
+
+## 2026-09-30: Send ETH motion — sliding signer pill, accordion rows, swap icon
+
+- **MetaMask / Send ETH slides.** `.zkapi-segmented` uses the toolbar's
+  Transitions.dev "Tabs sliding" timing (`--tabs-dur`, `--tabs-ease`), but the
+  pill is a `::before` placed by `data-active`: two equal segments, so nothing
+  is measured (the toolbar's `slideTabs` measures offsets, which are 0 while
+  the dialog is hidden). The dialog re-renders with innerHTML, so the click
+  records `owner.walletMethodSlideFrom`; `playWalletMethodSwitch` draws the new
+  control once with `data-from` (no transition), forces style, and removes it
+  so the pill travels. It holds background renders for `--tabs-dur` through
+  `handleDisclosureMotion`, because address hydration re-renders immediately
+  and a fresh control would cut the slide short. The content after the control
+  fades in (WAAPI, 240 ms).
+- **Transaction breakdown and Return leftover ETH are the `t-acc` accordion**
+  (grid rows 0fr → 1fr, blur-fade, chevron flip), like Payment history.
+  `fundingHelp` renders both; a closed panel is `inert` (tests use that, not
+  `hidden`). Rows open independently: `owner.fundingHelpOpen` (quote/receipt,
+  persisted for reload) and `owner.fundingReturnOpen`. Escape closes the row
+  holding focus, else the last opened, and only then the dialog. The panel
+  has `margin-inline: -4px` with matching body padding so focus rings survive
+  the inner `overflow: hidden`; at rest the inner has `filter: none` for crisp
+  text. The native `<details>` return (and its capture/restore) is gone.
+- **Return ETH to your wallet** (was "Return leftover ETH"). Before a deposit
+  the ETH at the address is what was just sent, not leftover, so the row is
+  named for what it does, shows "X ETH at this address", says it isn't in the
+  private balance (sent but not deposited, or fee left over) and that the
+  browser holds it, labels "Your wallet address"
+  and "Amount (ETH)" (blank = all), and its button says "Return ETH" — "Send
+  ETH" already names the funding method in the switch above.
+- **Currency toggle.** Roomier swap arrows (14 px, 6.5 units apart); on a
+  person's switch (`owner.currencySwitching`) the arrows make a half turn
+  (the icon lands on itself) and the unit blurs in.
+- **Copy.** The breakdown has no notes; the rows say it. The custody line
+  moved into the return row. The address caption is one sentence, "Send from
+  your wallet to this address on <network>" (no separate network tag: the same
+  address exists on every EVM network and the app only watches this one); the
+  amount label is "Send" again.
+
+## 2026-09-30: Send ETH — copy on the button, one instruction, a short breakdown
+
+- **Copy answers on the button.** The copy control is an icon button whose two
+  faces (copy, check) share one grid cell and cross-fade, so its width never
+  changes; a visually hidden `role="status"` says "Address copied" and it
+  resets after 1.8 s (`owner.addressCopied` keeps the check through a
+  re-render). The old "Receiving address copied." line under the field made
+  the page jump; only a blocked clipboard still adds a line, and then the
+  whole address is selected (`selectAddress`, a DOM Range).
+- **The address is never cut off.** It is a read-only `role="textbox"` div
+  that wraps on a narrow screen instead of an `<input>` whose tail was hidden
+  by an ellipsis at 375 px. People verify the start and the end.
+- **One instruction without a paragraph.** The heading label is "Send from
+  your wallet", the amount under it, and the caption over the address "To this
+  address on <network>". The old "Send ETH on <network> from any wallet; it
+  charges its own transfer fee…" note is gone. The wait line adds "Usually
+  arrives within a minute of sending." (balance polled at `latest` every 5 s).
+- **Transaction breakdown.** `renderFundingProgress` is a thin bar plus a short
+  list: Deposit, Network fee (with "about X expected"), Optional buffer, and
+  "Already at this address −X". Values are dollars when the price is known,
+  with the exact ETH in `title`; exact ETH otherwise. Then one "Amount to
+  send" total (ETH rounded up to 1e-6, ≈ USD) and two short notes. The exact
+  story stays in the progressbar's `aria-valuetext`. `availableWei: null`
+  means an unknown balance: no bar and no credit row, instead of an empty bar.
+  The summary line's "Fee allowance" is Network fee + Optional buffer.
+- **Return leftover ETH** shows "X ETH here" in its summary, one line of
+  context, and "To your wallet" / "ETH" (placeholder "All") side by side
+  (stacked under 420 px). Notices now carry `fundingNoticeScope`
+  (`address`, `pending`, `return`) so a return or recovery result appears next
+  to the control that caused it, not under the address.
+
+## 2026-09-30: Ticket move after login, and tickets that cannot move
+
+- A person who logs in to an existing account (made on another device first) on a browser that still holds old tickets used to leave them behind: `activateAccountScope` parks this browser's wallet in `sync-unclaimed-data` and the move read only the live wallet. `LegacyTicketTransfer` now also moves old-key tickets from that set-aside wallet (`syncService.readUnclaimedTickets()` / `removeUnclaimedTickets()`), after the live ones, with the same order: code saved first, then the tickets dropped from the set-aside wallet. Nothing else in it changes, and logging out brings back what is left.
+- Over the allowance, the org answers 409 `LEGACY_TRANSFER_LIMIT` with `remaining`; the client resends the part that fits (`error.remaining`, parsed in `ticketClient`) and reports the rest as `stranded`, with the tickets the org calls `invalid`. `ticketStore.setStrandedTickets()` keeps them held (never spent) but out of `getHeldCount()` and out of `ticketClient.getTicketCount()` / the visible count, so the send preflight no longer says "still being moved" forever and a real shortage reaches the reload path again. One line says it once (`legacy-tickets-stranded`, or appended to the "Moved N tickets" toast; remembered in `localStorage` `oa-legacy-stranded-said` by count). The set is rebuilt by each run (in memory), so a raised allowance moves them on a later page load.
+- A code the recovery store already holds is not saved again, so a repeat answer (lost reply, recovered code) never replaces a record that has redemption progress in it.
+
+## 2026-09-30: Switch-day staging preflight
+
+- The staged release combines the ticket-move/free-trial client with the current deployed Private balance UI and upstream deployment documentation. The legacy move event tests install and restore their window dispatcher per test so the shared bundled test runner cannot silently replace the listener.
+- Production follow-up: the org can replay a completed transfer after the migration deadline, but the browser currently exits when transfer info reports `enabled: false`. Before closing a production window, add recovery of the exact outstanding transfer request before releasing held old tickets. Do not reopen new transfers merely to recover a lost response. This does not block testing an open future-dated window on staging.
+
+## 2026-09-30: Reload brings the dialog back at once; a click during startup is kept
+
+- After a reload the Private balance dialog waited for `initWalletClient()`,
+  i.e. the whole of `zkapiClient.init()` including
+  `reconcileBrowserWithdrawalsOnLoad` (late attempts, submission claims,
+  `syncWithdrawal`, background withdrawals, expiry history — chain reads
+  through MetaMask). With a saved withdrawal that can take many seconds, so
+  the dialog looked like it never came back. Restoration now needs only the
+  saved wallet: the signer choice (`initWalletMethod`) and the SDK's local
+  snapshot (`zkapiClient.config` set by its first refresh, which is
+  published before reconciliation). Nothing is sent by restoring.
+- `run()` used to return silently while `walletMethodReady === false`, so a
+  Continue during startup did nothing and had to be clicked again (once the
+  dialog restores early, that window is exactly when people click). The click
+  is now kept: the primary shows "Getting ready…" and the action runs once
+  `walletReady` resolves. Further clicks are ignored; closing the dialog
+  meanwhile abandons it.
+- Harness (`?slow=8000`): before, the dialog appeared at 8.2 s and a click at
+  0.6 s never ran; after, it appears at ~0.25 s and the one click runs when
+  startup ends. `wallet-modal-restore` tests now start from an empty SDK
+  (`config: null`), as a fresh page does.
+
+## 2026-09-30: Private balance dialog — one page for work in motion, theme-aligned funding
+
+- **Lost clicks after a reload ("click Continue twice").** Every SDK change
+  (price every 60 s, reconcile on focus, withdrawal sync after a reload)
+  rebuilt the whole dialog with `innerHTML`. A button replaced between
+  pointerdown and pointerup gets no click in Chromium, so the first click after
+  a reload was usually eaten. `AccountModal.render()` now (1) skips a render
+  whose markup is identical to what is on screen (`renderedMarkup`), keeping
+  focus, hover and typed text, and (2) defers any render while a pointer is
+  pressed inside the overlay, flushing it after the click. The same rebuild
+  also unchecked "I understand…" on the withdraw form; that choice is now
+  model state (`withdrawConfirmed`).
+- **Same page before and after a reload.** A started withdrawal (busy, or any
+  saved `prepared_withdrawal`) renders one layout: amount, "To <destination> ·
+  <method>", the steps, one action row, recovery choices under "Other options".
+  Only the current step differs: running while busy, `paused` after a reload
+  (`positionForPersistedPhase` maps reserving/prepared/retry_exact to a new
+  `paused` state, drawn as a marked-but-still step). The action row is the
+  primary (Continue in MetaMask, or the phase's check), phase recovery
+  (Recover withdrawal / Resubmit / Try again) and **Cancel**: a plan nothing
+  has been sent for and that holds no clearance is dropped
+  (`cancelPreparedWithdrawal`); anything else only closes the dialog — the
+  mutual-close clearance is irreversible, so the saved withdrawal stays and
+  this page returns with the dialog. After a submission the button reads
+  Close. Escape hatch and Set aside live in the "Other options" disclosure.
+  Pending deposits follow the same shape. The visible steps title is gone
+  (the dialog title names the work); the list keeps it as its aria-label.
+- **Funding UI in the dialog's vocabulary.** The signer choice is a
+  two-segment control (the toolbar's OA | zkAPI switch), shown only while
+  choosing how to deposit or starting a new withdrawal. The deposit amount is
+  the figure (`$ 5.00  USD ⇄`). Send ETH puts the QR beside the amount to send
+  (rounded **up** to 0.000001 ETH for typing; the QR and breakdown stay exact
+  wei), then the address, then Deposit. Transaction breakdown, Funding address
+  and Return leftover ETH are disclosure rows like Payment history — no card
+  inside the card. View bodies pass through `walletMethodText`; the method
+  control and funding section are inserted afterwards via `literal()` so the
+  "MetaMask" segment is never rewritten.
+- **No yellow for normal states.** A paused/actionable withdrawal is a quiet
+  status line in the System Panel ("Withdrawal paused"), and a neutral pill /
+  one line in the balance view with a Continue withdrawal action. Payment
+  history records are hairline-separated rows.
+- Harness: the dialog renders standalone with mocked SDK modules through an
+  import map (no build step), which is how every state above was screenshot
+  and click-tested in Chromium, light and night, desktop and 375 px.
+
+## 2026-09-30: Release previous-version accounts and a steady count during the ticket move
+
+- Browsers that used the previous production client keep `account-settings` = `{accountId, credentialId, recoveryConfirmed, updatedAt}` plus the master key. Old accounts are not imported into the new org (different passkey RP ID), so that record stranded people: every username was treated as a login, the org answered 401/404, and the passkey prompt failed before anyone found "start a new account". With the host policy `signIn.releasePreviousVersionAccounts` (commercial sets it), `accountService.init()` forgets such a record before binding it: `isPreviousVersionAccountRecord()` (none of the current-client fields) and no `account-key-bundle-v1`, `sync-account-scope`, or `account-login-pending`. The cleanup is `clearLocalAccount` without the server logout (`resetSavedAccountState()` was extracted for it). Tested against a browser profile written by old prod: all 541 tickets stayed and sign-up then worked normally. The wallet stays unscoped, so the new account adopts it and the move runs.
+- Scope order matters. `bootstrapLocalAccountScope()` picks the data scope from `account-settings`; for an old-prod record that is the old account while the persisted sync scope is null, so `assertAccountDataAccess()` fails and the ticket store opens EMPTY for the whole page (IndexedDB still holds the tickets). The release therefore runs before any scope is chosen: `accountService.configure()` installs `syncService.setLocalScopeGate()`, and every bootstrap awaits the once-per-page `releasePreviousVersionAccountIfNeeded()`. A preference read at startup runs before the host configures the gate, so when the release finds the scope already set to the released account it clears it and fires `account_scope_changed(null)` (not awaited: listeners may bootstrap, which waits on the release) so stores reopen under the anonymous scope. A read error on the key bundle / sync scope / pending-login markers keeps the account (never releases on a guess).
+- The ticket move now reports its start (`onStart({ tickets })`, count only) and `redeemed`. `ticketClient` dispatches `legacy-tickets-moving`, `legacy-tickets-move-settled`, and `legacy-tickets-moved`; `app.js` shows a loading toast "Moving your N tickets from the previous version…" and then the success toast. A failed redeem settles quietly and the success toast is carried (`unannouncedLegacyMove`) until a later run reports `redeemed`.
+- Display only: `getVisibleTicketCount()` holds at `max(count, baseline)` while a move runs, because the old tickets leave before the code is redeemed. Spending, preflight, and the empty-wallet logic still read `getTicketCount()`. The right panel reads the visible count. `movingTickets` in the extension snapshot is the move's count, or the held (previous-key) ticket count before it starts; `primeLegacyTransfer()` fetches the transfer status once per page at startup when the wallet has tickets, so the held count is known before sign-in finishes.
+
+## 2026-09-30: Move tickets from the previous production org
+
+- Tickets signed by the previous org's key are moved once, automatically, after sign-in (`application/legacyTicketTransfer.js`, started by `ticketClient.startLegacyTransferWatcher()` from app init). The org checks them against the previous org's public key and answers with a redeem code; the code is saved to the durable code-recovery store before the old tickets are removed (with tombstones), then redeemed through the normal `TicketCodeRedeemer`. A crash leaves either the old tickets or a saved code, never neither. `recovered_codes` returns codes the same account already received for tickets another tab or device moved.
+- While the org advertises the transfer (`GET /api/billing/legacy-transfer`), those tickets are held: they stay in the wallet and count, but `consumeTickets`/`peekTickets` never select them. Send preflight waits (bounded) for a running move and never treats held tickets as a shortage, so no automatic reload can be triggered by them. The org answers a legacy ticket on any spend path with 409 `TICKET_KEY_LEGACY` (never `TICKET_KEY_INVALIDATED`, which would delete them); the client then holds the key and starts the move.
+- The POST uses the account-session transport, which only allows `/auth` and `/api/billing`, hence the `/api/billing/...` path. While a move runs, the extension ticket snapshot reports `busy`, so commercial empty-wallet logic does not read the wallet as empty.
 
 ## 2026-09-30: Canonical zkAPI domain configuration
 
@@ -3519,6 +5488,12 @@ shell, not only isolated RightPanel previews, when changing header controls.
 
 # App State and Handoff
 
+- 2026-10-12: Added opt-in, build-time Sentry browser error reporting. The SDK
+  sends only fixed error categories and generated code locations; private scope,
+  error text, request data, breadcrumbs and attachments are discarded. See
+  [SENTRY.md](SENTRY.md) for setup, verification, coverage and network metadata
+  tradeoffs. No deployment is enabled merely by adding this code.
+
 ## 2026-09-22: Recover zkAPI chats interrupted during key issuance
 
 - A failed first Send can retain an ownerless SDK proof journal while the server
@@ -4655,8 +6630,44 @@ reachable from the menu only in the composed commercial app.
   `/auth/*` and `/api/billing/*` routes. Public ticket redemption/inference
   requests do not pass through the identity session bridge.
 
+## 2026-10-09: Refresh ticket pricing for open chats
+
+- OA preflight refreshes the anonymous model-price map before checking a new
+  turn's ticket requirement. New OpenRouter key acquisition independently obtains
+  an authoritative price through the backend's optional `getAccessTicketCost`
+  capability. Council lanes use their own model ID, not a previously computed
+  fixed ticket override. Existing usable keys and non-ticket backends retain
+  their acquisition behavior; explicit ticket-budget overrides remain explicit.
+- Pricing loads coalesce while in flight, bypass the browser HTTP cache, and
+  refresh after ten minutes while visible and immediately on returning to the
+  foreground, updating model-picker badges through the existing update event. New key requests force a refresh even inside
+  that window. Failed refreshes cannot authorize cached prices; unknown models
+  cannot use heuristic prices for redemption. Model IDs stay client-side: only
+  the existing public all-model pricing endpoint is fetched without credentials.
+- HTTP 400 with structured `TIER_TICKETS_MISMATCH` (or the exact legacy
+  `Invalid ticket count` message when no code is present) is classified as
+  `TICKET_PRICE_CHANGED`. The wallet keeps rejected tickets. Acquisition refreshes
+  the model price, rechecks available tickets and cancellation, and retries once.
+  A second rejection is surfaced as a pricing-change message. Network errors and
+  ambiguous failures are not retried by this recovery path.
+- Regression coverage exercises 5-to-9 repricing before/during acquisition,
+  concurrent refreshes, failed refreshes, unknown models, insufficient balance,
+  cancellation, bounded retry, and preservation of rejected tickets. This is a
+  client fix; publication still requires the normal commercial release workflow.
+
 ## 2026-08-24: Live ticket pricing and non-blocking relay fallback
 
+- Investigation on 2026-10-09: `livePricingReady` remains true for the lifetime
+  of the page, so subsequent `ensureModelTiersReady()` calls do not refresh a
+  successfully loaded map after server tier changes. Production's public map
+  priced `openai/gpt-6.1-sol` at 9; its active tiers had no 5-ticket option.
+  Sanitized issuance history showed earlier successful 5-ticket requests and
+  rejected 5-ticket requests beginning at 15:27:18 PDT, matching the reported
+  screenshot, followed by a successful 9-ticket request. The public tier
+  configuration's latest update was 12:43:19 PDT. This supports stale in-page
+  pricing after a tier change; it does not identify an anonymous request's owner
+  or the specific admin edit. The October 9 implementation above addresses
+  stale pricing and recovery from rejected obsolete counts.
 - Key acquisition waits for the live model-ticket map before selecting tickets,
   including the synthetic `openrouter/auto` price. A failed refresh remains
   retryable and fails the send clearly instead of redeeming cached or heuristic
@@ -5627,12 +7638,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     secondary lane.
   - The Council synthesis prompt lives in `chat/domain/councilPrompts.js`. It
     asks the synthesis model to act as an independent reviewer over anonymous
-    `Response A` / `Response B` drafts, briefly compare only material
-    differences, errors, missing caveats, and useful synthesis, then produce a
-    concise final answer to the original request. The review should be fair,
-    critical, concise, and evidence-oriented, but avoid generic praise, model/provider identities,
-    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
-    Partial synthesis is supported when only one draft response is available.
+    `Response A` / `Response B` drafts, briefly compare material differences,
+    errors, missing caveats, and useful synthesis, then produce a concise final
+    answer to the original request. It focuses on specific differences, useful
+    contributions, and limitations while avoiding overall winner declarations.
+    It avoids generic praise, model/provider identities, scores/grades/ranked
+    lists, chatty phrasing, and generic follow-up offers. Partial synthesis is
+    supported when only one draft response is available.
   - `chat/application/councilController.js` runs the selected models in
     parallel through `inferenceService.streamCompletion(...)`, preserving the
     browser-only OpenRouter path and the existing ephemeral access flow. Strict
@@ -5898,10 +7910,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     partial synthesis, and synthesis fallback behavior with small stubs.
   - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It
     intentionally omits Stage 2 peer-ranking inputs, anonymizes first-opinion
-    drafts as `Response A`, `Response B`, and asks the Council model to briefly
-    compare only material differences, errors, missing caveats, and useful
-    synthesis before writing a concise final answer. It avoids model/provider identities,
-    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
+    drafts as `Response A`, `Response B`, and asks for a brief material
+    comparison followed by a concise final answer. It avoids overall winner
+    declarations, model/provider identities, scores/grades/ranked lists,
+    generic praise, chatty phrasing, and generic follow-up offers.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.
@@ -6513,3 +8525,460 @@ Billing history supports verified presentment currency without changing the
 USD entitlement ledger. The backend creation flag stays off pending a separate
 checkout deployment and real sandbox-session checks. Independent review approved
 the disabled local implementation after configured-startup and Stripe CSP fixes.
+
+
+## 2026-09-30: Adversarial withdrawal safeguards and confirmation
+
+- MetaMask now shares the mandatory fee-readiness gate with Send ETH, including
+  SDK checks before settlement/server clearance and revalidation of the reviewed
+  account, chain and reserve. Existing submitted transactions retain recovery.
+- Browser wallet mutations fail closed without Web Locks. Node tests explicitly
+  preload a test-only lock implementation; this must never ship as a fallback.
+- Escape rejects unfinished leases/journals before wallet interaction and checks
+  again inside the preparation lock. The form explains the restriction and has
+  Update chat balance. A settled escape avoids server settlement. **Offline escape
+  with an unfinished key remains a protocol limitation**, not a repaired path.
+- Continue opens the requested warning with Continue/Cancel. If fee polling fails
+  or funds become insufficient there, review returns to the actionable fee form.
+- Payment history has a top back arrow; top-up uses one Send amount line; copied
+  addresses no longer acquire a container ring (keyboard focus stays visible).
+- See [payments](ZKAPI_PAYMENTS.md) for scope and remaining recovery limitation.
+
+
+## 2026-09-30: Withdrawal fee review and strict payment-mode isolation
+
+- Send ETH withdrawal review now has one fee panel: conservative reserve,
+  available ETH and the additional amount/address only when needed. Deposit
+  receipts and public ETH return controls no longer clutter Withdraw. The
+  two close methods explain server approval versus a delayed two-transaction escape.
+- `WithdrawalFees.js` owns scoped, read-only budget polling and rejects late
+  responses after close, signer/mode changes or note replacement. Checks happen
+  before private access settlement and server clearance; increased fees require
+  another explicit click. The provider bounds signed withdrawal fee liability.
+- The reserve uses the SDK transaction gas ceiling because exact proof calldata
+  does not exist before withdrawal preparation. It is conservative, not an exact
+  fee; this limitation and the later escape fee are disclosed. MetaMask's fee
+  confirmation remains wallet-owned. See [payments](ZKAPI_PAYMENTS.md).
+- `createPaymentModeUi` gates saved and late dialog opens on the active zkAPI
+  mode. Moving to OA hides the dialog without canceling any authorized transaction
+  or clearing the SDK journal. An old same-tab marker cannot reopen over OA.
+
+## 2026-09-30: Google handoff and external sign-in completion
+
+- Removed `maybeAutoUnlock` and its idle/timer startup scheduling. A remembered
+  username must not independently start a passkey ceremony during the landing
+  page's Google completion handoff. Explicit username login and the Google
+  encryption-passkey setup/unlock steps remain in AccountModal.
+- An open login dialog closes when authentication and the account wallet scope
+  become ready outside its own handler. Registration, recovery and OAuth handlers
+  retain ownership of completion/Welcome routing; already signed-in Account
+  settings remain open during ordinary updates.
+- A busy OAuth completion now reports a sign-in error without clearing the other
+  operation's busy state. A null completion cannot silently fall back to login
+  without an error; existing specific service errors are preserved.
+- Google key unlock (including deferred sync recovery), locally restored Google
+  login and new account registration broadcast the existing account-login-complete
+  event after the current verified account scope is ready. The payload contains
+  only the account ID. Other tabs reconcile saved state using their existing
+  listener; focus/send reconciliation remains the fallback.
+- Regression coverage: `accountSignInCompletion.test.js` and
+  `accountCompletionBroadcast.test.js`. Real Google and passkey prompts still
+  require the staging browser acceptance test after this patch is integrated.
+
+
+## 2026-09-30: Withdrawal dismissal and quiet recovery
+
+- A blocked send no longer opens withdrawal recovery repeatedly. It stays blocked
+  with an explanatory message pointing to Balance details. Explicit balance-panel
+  actions still open recovery, and OA/zkAPI mode isolation remains enforced.
+- A reserved mutual close cannot restore spendability by clearing browser state.
+  The UI now discloses this before approval and labels dismissal Close. Only an
+  SDK-confirmed cancellable escape offers Cancel. Existing stranded balances need
+  their fee funded to finish (or the existing recovery options).
+- Removed the misleading withdrawing readiness pill, old-key success history, and
+  old deposit fee from the current fee-address explanation. Private expiry help
+  uses the same OA help class in panel and dialog.
+
+## 2026-09-30: Compact withdrawal fee review
+
+- Removed the reserve disclosure and funded-state refresh button; fee polling and
+  pre-submit validation remain. Shortfalls and failed reads keep explicit retry.
+- Fee data failures retry one validated block/history pair, then pause neutrally.
+  Successful refresh clears only the marked fee-read outcome, fixing the stale
+  red warning alongside a subsequently funded quote. No automatic transaction retry.
+- Removed Set aside from the withdrawal dialog, including its click handler:
+  the SDK park guard does not atomically cover all ambiguous-history cases or
+  validate the identity shown by a stale tab. Close still preserves recovery.
+  Existing parked records stay accessible. Shared progress markers are unchanged.
+
+## 2026-09-30: Withdrawal confirmation and reload status
+
+- Fresh MetaMask and Send ETH withdrawals now open a final confirmation before
+  settlement or server approval. The warning explains irreversibility even when
+  a later MetaMask prompt is rejected. Going back has no wallet side effects.
+- Confirmation is tied to note, balance, method and destination, and is consumed
+  once. Send ETH requires a valid destination before review or submission; fee
+  readiness is rechecked at confirmation and by the existing provider preflight.
+- Restored withdrawals say Checking saved withdrawal while SDK initialization
+  reconciles chain state. Actions stay disabled; the header X is hidden, while
+  Close preserves the saved work. Completion requires a new explicit click.
+- A close/reopen invalidates any action previously queued behind startup, even
+  when the new dialog is open by the time initialization resolves. No SDK recovery
+  or reconciliation gates were bypassed to shorten the wait.
+
+## 2026-09-30: Exclusive help and stable withdrawal fee review
+
+- zkAPI billing/expiry help now shares OA's exclusive System Panel controller.
+  Modal help has scoped outside-click/Escape listeners with cleanup on rerender
+  and close. Explanations omit duplicate headings; main dialog titles remain.
+- Withdrawal amount and irreversible-close warning appear together. Fee data
+  preloads from Balance details, with stable rows on direct entry. Add ETH opens
+  transfer instructions only on request; fresh fee readiness still gates submit.
+- Settlement action says Pause update and uses theme colors; it still aborts only
+  waiting, preserving SDK recovery. Refresh feedback is Balance updated.
+- Leaving the withdrawal form invalidates any pending submission intent. A late
+  fee response may refresh the cache but cannot start a cancelled withdrawal,
+  even if the user has already reopened the form.
+
+## 2026-09-30: Balance status without pills
+
+The private-balance side panel and dialog omit ready/expired/claimed pills.
+Expiry and claim information remain in their existing text; clock updates still
+reveal the expired-balance notice. Problems retain readable labels: a triangle
+marks attention, while an octagon with a cross marks failures in balance errors,
+transaction steps and error outcomes. These SVGs are decorative and use theme
+colors. Loading spinners and normal OA access-key controls are unchanged.
+
+## 2026-10-01: Private balance polish — no amount flash, ETH-marked QR, compact signer switch
+
+- **The amount no longer flashes "5.00" → "5" on open.** The suggested deposit
+  was written with `toFixed(2)` while a quoted intent writes `usdAmount` with
+  `formatDecimal` (no trailing zeros), so the field repainted when the quote
+  arrived. `formatSuggestedDeposit()` in `services/depositAmount.mjs` writes the
+  suggestion the quote's way; WalletMethodControls, AccountModal and
+  WelcomePanel all use it. vm-context tests that inject WalletMethodControls'
+  globals must pass `formatSuggestedDeposit` too.
+- **The payment QR carries the ETH mark.** `FundingPaymentQr` now encodes at
+  error correction H (was M) and draws a white plate (`data-qr-logo`, ~22% of
+  the width, ~5% of the area) with the ETH glyph in the centre. The test
+  rasteriser clears the plate and paints the glyph's box solid dark, so a
+  passing decode proves the code survives the occlusion. Caption: "Scan with
+  your phone's wallet".
+- **Signer switch matches Settings.** `.zkapi-segmented` is an inline two-column
+  grid sized to its labels (2px track, 8px/6px radii, 26px segments) instead of
+  a full-width 32px bar; hover changes the label colour only (the hover fill made
+  both halves look selected). The address option is labelled "Ethereum wallet".
+  The sliding pill and `data-from` mechanics are unchanged.
+
+## 2026-10-01: Ethereum wallet funding as transfer details; quiet waiting line; deposit success
+
+- **Rows instead of a QR-and-heading block.** `renderFundingAccount` (quoted and
+  loading states) draws `.zkapi-transfer`: Deposit · Network fee "up to $X" (its
+  ⓘ opens the fee note) · Send / Still to send / Received (copy ETH amount) ·
+  Your address (whole address, ends bold, copy) · Network (its icon opens the
+  QR). The fee note and QR use the same accordion/state path as the other rows
+  (`fundingFeeOpen`, `fundingQrOpen`, cleared by `stopFundingFlow`). The
+  Transaction breakdown row is no longer shown in the funding view.
+- **One slot at the bottom.** While waiting it is a quiet line (`.zkapi-funding-wait`):
+  "Waiting for your ETH · usually under a minute", "Received A ETH · send B more",
+  "Network fee went up · amount updated", "Checking your deposit address…". When
+  enough has arrived it is the Deposit button (`data-funding-next`); funded but
+  with a stale quote it is a disabled "Updating network fee…" button with no
+  `data-funding-next`. No dead, unexplained Deposit button.
+- **The shown total holds still.** `owner.fundingShownTotal` keeps the total (and
+  the QR amount) while it still covers deposit + today's required fee; it changes
+  only when it would fall short (`fundingFeeUpAt` drives the notice for 6 s).
+  Deposit authorization is unchanged: it still needs `flow.ready` and a fresh quote.
+- **Fee hint.** Under the amount, Ethereum wallet only, before any ETH arrives,
+  when the fee reserve is over 25% of the deposit.
+- **Success.** After a deposit confirms, the balance view first shows one
+  confirmation ("$X added to your private balance", the leftover fee at the
+  funding address when it would not read $0.00, Start chatting / View balance).
+  The leftover is read once with `addressFundingWallet.getStatus()` in
+  `recordDepositConfirmation`, since the funding poll stops with the deposit.
+  Closing the dialog clears the outcome, so it shows once.
+
+## 2026-10-01: Private balance round 3 — calm loading, lighter Return ETH, withdraw as a send form
+
+- **Loading without the jolt.** While the fee is estimated, the transfer rows
+  hold `.zkapi-skel` placeholders (with visually hidden "Estimating…"/"Loading"
+  text). When the first quote lands, `owner.fundingRevealAt` marks the moment and
+  the rows fade in. Because the dialog re-renders with innerHTML, the animation
+  carries `--zkapi-reveal-delay:-<age>ms` so a re-render continues it instead of
+  replaying it (`revealAttrs`, 600 ms window). The network-fee hint is wrapped in
+  `.zkapi-fee-hint-wrap` and opens (grid rows 0fr→1fr) via `owner.fundingFeeHintAt`;
+  while the amount is being edited the last hint stays (`fundingLastHintUsd`).
+- **Return ETH (Send ETH route) is one sentence, the address field with Paste,
+  a "Return all" button and a quiet "Return part of it" link** that opens the
+  amount field in place (`owner.fundingReturnPartial`, `t-acc`, labels
+  cross-fade with `.zkapi-swap-text`). Copy no longer says the ETH "isn't part
+  of your private balance"; it keeps the warning that only this browser can
+  move it. Blank amount still means "all". The token route keeps its fields.
+- **Withdraw is a wallet-style send form.** Amount; To (one field with Paste,
+  `data-funding-withdrawal-paste`, or "Your MetaMask account"); one network-fee
+  row from `renderWithdrawalFeeLine()` that says who pays it, or "Add X ETH to
+  your deposit address" with "Show deposit address" (same
+  `data-withdrawal-fee-*` controls and `.zkapi-fee-topup` motion); Continue /
+  Cancel; and the escape hatch as a quiet link (`#zkapi-withdraw-mode-toggle`)
+  instead of radios. The review is rows (You withdraw / To / Network fee / You
+  receive) with "Withdraw $X" and Back. A saved (prepared) withdrawal keeps the
+  full `renderWithdrawalFees()` receipt.
+
+## 2026-10-07: Council model selection uses pinned models
+
+- Council review dropdowns and the Council keyboard picker offer only available
+  pinned models. Primary/secondary selection, inference and wallet flows are
+  unchanged. An existing unpinned selection is shown as disabled `(current)` in
+  the dropdown, preserving the actual session model until an explicit change.
+- Pin updates refresh the settings controls as well as the searchable picker.
+  No available pins means no new selectable Council model, not a full-catalog
+  fallback. See [Parallel and Council](PARALLEL_COUNCIL.md).
+
+## 2026-10-08: Phone scrolling and model picker
+
+- Touch opening focuses the model dialog, not the search input; touch closing
+  returns to the picker button, not the editable composer. This supersedes the
+  older unconditional-autofocus notes. Desktop/hardware-keyboard opening retains
+  search focus and returns to the composer. Cmd/Ctrl+K/J/L pass explicit focus
+  intent even after pointer input cleared the focus-ring modality attribute.
+  Delayed focus and search work cannot run after a close/reopen.
+- Phone/coarse-pointer picker uses a larger, viewport-bounded scrolling area,
+  44px row/close targets, 16px search text and scroll containment. Its visible
+  viewport uses the existing responsive-composer CSS variables, so the search
+  header stays reachable when a keyboard reduces available height.
+- Picker opening still recomputes prices and selection (OA/zkAPI pricing can
+  change without the catalog version changing), but skips replacing identical
+  list markup. Do not cache solely on `getRenderSignature()`.
+- On phones the toolbar avoids geometry reads for the desktop-only floating
+  layout. Message navigation coalesces scroll bursts per animation frame, uses
+  linear ID lookup and changes only indicators whose state changed.
+- Scope, reproduction and verification: [Phone scrolling](PHONE_SCROLLING.md).
+  These are local UI changes; real iPhone Home Screen scroll/keyboard behavior
+  must still be checked before claiming the user's lag is resolved.
+
+## 2026-10-08: Stop idle UI work and recover interrupted scrolling
+
+- Single and Council reasoning reveal timers now stop once the displayed text
+  catches up, retaining the current text and thinking indicator. The next
+  buffered update restarts the timer; same-length corrections still render once.
+  Detached single-reasoning elements also stop the timer rather than polling.
+  Settling the final trace and stored message content are unchanged.
+- Scroll-button fades are reversible and own one hide timer per button. The
+  hidden selector now overrides the component's display style, removing an
+  invisible button from the layout/tab order. The click wait ends on user
+  interruption, chat change, element removal, reaching bottom or 15 100ms checks;
+  no infinite polling or permanently suppressed button after an interrupted jump.
+- Long-history search yields between batches and drops obsolete database
+  responses before sorting. See [Sidebar search](SIDEBAR_SEARCH.md).
+- Verification and measured before/after: [Interaction performance](INTERACTION_PERFORMANCE.md).
+  This work remains local with the phone picker changes, pending staging/device
+  validation. Login, storage format, wallets, payments and inference transport
+  are untouched.
+
+### Phone keyboard / shared motion follow-up (2026-10-08)
+
+See [PHONE_SCROLLING.md](PHONE_SCROLLING.md). No HTML composer autofocus on load;
+startup and async send/regenerate completion use phone-aware automatic focus.
+User-triggered focus remains available. Phone prompt anchoring measures the
+usable space above the fixed composer and can move the top of a tall prompt
+out of view to show the reply; desktop anchor semantics remain unchanged.
+`responsiveComposer` coalesces viewport writes and cancels pending work on cleanup.
+Shared `showSurface` calls must not replay entrance animation on a refresh or
+snap to the starting scale on rapid reopen; close still makes controls inert
+immediately. Disclosure observation visits only added subtrees (including a
+root details), never the entire parent transcript on streamed insertions.
+
+### Compact composer wrapping (2026-10-08)
+
+Compact cards hide the keyboard shortcut, so ordinary input no longer reserves
+its 150px/64px right padding. This applies below 560px of actual card width,
+including narrow desktop columns. Pending rewrite controls still reserve their
+visible space through the existing more-specific selector. Browser regression
+fixture and evidence: [PHONE_SCROLLING.md](PHONE_SCROLLING.md).
+Changing compact state also invokes ChatInput's existing autosizer after the
+CSS state update, so restoring desktop hint padding cannot clip a saved draft.
+Height-only ResizeObserver notifications do not retrigger this callback.
+
+## Council, Settings, and host ticket progress release (2026-10-08)
+
+Integrated Council image/quiet/error states and Settings disclosures on top of the
+phone focus, scrolling, motion, and compact-composer wrapping fixes. See
+PARALLEL_COUNCIL.md and MEMORY_MODE.md. Settings populates and positions before
+showSurface runs. Edited prompts no longer flex-shrink against their manual height.
+The optional host tickets.subscribeRedemption interface emits aggregate progress
+and completion only; it never exposes codes, ticket material, credentials, or
+account identifiers. Paid preparation continues to own its existing status and
+deferred wallet-publication path.
+
+## 2026-10-09: Spent keys arrive as 403; reasoning read from reasoning_details
+
+OpenRouter now reports a spent per-key limit as HTTP 403 with the body
+`{"error":{"message":"Key limit exceeded (total limit). Manage it using
+https://openrouter.ai/…","code":403}}` and no `metadata`, where it used to send
+402 with `limit_source: "openrouter_key_limit"`. `isAccessCreditExhaustedError`
+now accepts a 403 whose retained original message says "Key limit exceeded"
+(`isKeyLimitExceededResponse` in `openRouterCreditRecovery.js`), so the send
+loop, Council lanes and quick ask request a new key once, as they did on 402.
+Every other 403 (moderation, permissions) keeps the key: a refresh spends a
+ticket. The error code for that shape is `INFERENCE_KEY_CREDITS`, and the
+"try again" credit copy covers it when the refresh itself fails.
+
+Reasoning: the stream parser read only `delta.reasoning` (plus the
+Responses-style events). It now also reads the delta's structured
+`reasoning_details` (`reasoning.text` text, `reasoning.summary` summary;
+`reasoningTextFromDetails` in `reasoningParser.js`) when the string is absent, so
+a chunk carrying both is not counted twice. A `reasoning.encrypted` entry means
+the provider reasoned but withheld the words; the stream result reports it as
+`reasoningWithheld: true` and nothing is drawn for it. Council's non-streaming
+`extractReasoning` reads the same details. Tests:
+`test/services/reasoningDetails.test.js`, `test/zkapi/inference-reliability.test.cjs`,
+`test/application/accessController.test.js`, `test/services/openRouterCreditRecovery.test.js`.
+
+## 2026-10-09 — Reasoning not shared by the provider
+
+When a stream carries only `reasoning.encrypted` details before any content, `api.js` calls `onReasoningChunk('', { withheld: true })` once. The send loops set `streamingMessage.reasoningWithheld`, start the reasoning timer, and move the pending indicator to the `thinking` phase ("Thinking..."; `normalizePendingPhase` passes it through in both domain modules, and the zkAPI presentation has a matching entry). The first content chunk sets `reasoningDuration`. `buildReasoningTrace(..., { withheld: true })` with no words renders the header alone: "Thought for 12s · not shared by the provider", no chevron, no body, not a button (`.reasoning-trace-withheld`). Words always win over the flag.
+
+## 2026-10-09: Phone panels and menus (Safari + Home Screen)
+
+- `ui/phoneAppLayout.js` owns the presentation scope: viewport under 768px,
+  physical screen short side under 768px, touch support and a coarse pointer.
+  Both phone Safari and the Home Screen app qualify. Laptop browser windows,
+  large tablet layouts, Electron and `app:` pages retain their released layout. The prelude
+  sets `data-phone-app-panels`; changes to the width/pointer media query update
+  it without polling. Wide phone landscape keeps the existing wide layout.
+- Only in that scope, opening history dismisses System Panel and vice versa.
+  Automatic dismissal uses `persist: false`, so it does not alter synced panel
+  preferences. Local `phoneVisibilityIntent` wins over a late initial preference
+  read or a delayed save notification, even if System Panel was initially hidden.
+  Returning from a wide layout reconciles two open rails, keeping history.
+- Settings anchors to `#input-card`, matching its edges and using at most 70%
+  of the visible viewport. Existing fold/glide helpers keep working. Laptop and
+  Electron use the released 340px/button-based placement.
+- In the same scope, the model list sizes to its rows (up to 55dvh/420px), with
+  the dialog anchored at the top so filtering does not move the search field.
+  Right-panel motion animates transform only; solid segment controls drop their
+  blur. Reduced-motion overrides still disable the transition.
+- Host `oa-commercial/src/chat/phoneAppPanels.css` adds guarded key-row layout,
+  headings, timeline wrapping, hit areas and the 44px account row. The original
+  host `phonePanels.css` is unchanged. Long station names wrap within a bounded
+  value column rather than overflow.
+- Tests: `test/ui/phoneAppLayout.test.js` and
+  `test/components/phoneOverlays.test.js` cover scope, geometry, media changes,
+  delayed preferences and rotation. See [PHONE_SCROLLING.md](PHONE_SCROLLING.md)
+  for the browser fixture and real-device limitations. This is local preparation;
+  no production or staging deployment is implied by these changes.
+
+
+## 2026-10-10: Sources disclosure follows the right response
+
+Sources cards now use the shared Transitions.dev accordion (grid height, opacity,
+blur and chevron), in both directions. Closed links are inert and aria-hidden;
+closing with a card focused returns focus to the Sources button without scrolling.
+Inline citation links use the same opening path and independently center their
+card horizontally. Reduced motion disables the disclosure and scroll animation.
+
+`ui/sourceReveal.js` follows the animated edge for older responses, revealing the
+cards above the composer without skipping later answers. Opening the bottommost
+response follows the effective transcript bottom, excluding a temporary prompt
+spacer; closing stays bottom-anchored only if the reader was already there. A later
+user turn or lower visible Parallel lane/synthesis prevents the bottom follow.
+The scroll-to-bottom pill stays out of the way during motion and is reevaluated
+at completion/cancellation. Scroll targets are recomputed while the CSS height
+changes; measuring only once stops short against the collapsed scroll height.
+Owned animation frames stop on gestures, chat changes and detached panels, so
+native compositor frames cannot move a newly selected chat. Core behavioral
+checks are in `test/ui/sourceReveal.test.js` and `test/components/citationDisclosure.test.js`;
+local browser fixtures also cover phone layouts, both animation directions and
+Parallel ordering. No live inference, accounts or wallet data are needed.
+
+Product clarification: source cards must stay inline **below** the answer and
+its Sources row on desktop as well as phones. The temporary desktop popover
+was removed because placing cards above the trigger and preventing page scroll
+was the wrong interaction. Preserve smooth bottom follow on the latest response
+and local reveal for older responses. A web page cannot reposition the user's
+mouse cursor; do not substitute an above-trigger popup to promise a stationary
+click target while the page scrolls.
+
+## 2026-10-11: First-use scrub charge is reported with the result
+
+The confidential key behind the Scrubber costs one ticket, charged when the key
+is issued, before the scrub itself runs. The composer used to announce it at
+that moment with a second toast (`showToast`, which replaces the current
+toast), so the loading spinner disappeared mid-scrub and the rewrite looked
+finished. The loading toast now stays untouched for the whole scrub; the charge
+is kept and reported on the completion toast instead ("PII removed · 1 ticket
+used", "No PII detected · 1 ticket used"). Scrubs on an already valid key stay
+silent about tickets. `#app-toast` is also sized `width: max-content`: centred
+with `left: 50%` and a translate, its auto width shrank to the right half of the
+viewport, so phone toasts wrapped at roughly half the width the `max-width`
+rule allows. Covered by `test/components/chatInputFeatures.test.js`.
+
+## 2026-10-13 — preserve queued events at the completion-tail deadline
+
+The five-second stream tail must not cancel a reader while a line handler awaits
+usage/accounting or rendering. That discards unread transport chunks and can hide
+a provider error or lose final usage/cost/citations. Tail expiry now races only a
+read. A queued read wins the tie with an expired tail; queued events drain before
+an idle read closes the stream. Native polling likewise drains its event queue
+before ending the tail. Required accounting and message saves remain awaited.
+
+Each read consults the current tail promise. Resumed output disarms and replaces
+an expired tail and clears the obsolete finish reason, so EOF after an incomplete
+continuation fails closed. A new finish arms a fresh deadline; `[DONE]` remains
+immediate. Stop still aborts pending reads and callbacks. No UI, ticket, telemetry,
+or production configuration changes are part of this repair.
+
+Regression coverage: `test/zkapi/inference-tail.test.cjs` includes delayed callback
+queues with provider errors, authoritative usage/cost and citations; output after
+an already-expired tail; truncated continuation; Stop; zero-clock/reset behavior;
+and native queue handling. These are synthetic source tests, not a packaged-app
+or live-provider release approval. Sentry remains outside this branch.
+
+## 2026-10-13: Independent new-chat send ownership
+
+- New-chat submissions use unique in-memory map keys. Duplicate prevention is
+  still scoped to the empty composer's navigation generation until creation
+  binds the submission to its session ID. A background first response no longer
+  reserves every later New Chat through a shared `__new_chat__` sentinel.
+- `getPendingSend` matches uncreated work only to its own empty composer; null
+  session IDs alone are not ownership. Created work remains discoverable by its
+  session, including when revisiting it, so duplicate sends and Stop stay local.
+- New Chat captures its departing submission before advancing navigation and
+  respects the existing runtime cancellation policy (OA ticket streams continue;
+  zkAPI retirement still cancels/drains via its runtime). Completion cleanup
+  removes only its own map entry; ticket and account locks are unchanged.
+- Abandoned session creation returns without inference. Never fall back to the
+  visible currentSessionId after an asynchronous creation: navigation may have
+  selected an unrelated conversation while preferences/storage were pending.
+- Regression coverage exercises rapid A/B/C creation, duplicate clicks, Stop
+  isolation, late cleanup, abandoned creation, runtime retirement, and overlapping
+  redemption through separate ticket stores with one or two available tickets.
+- Release check: start long A, New Chat -> B -> Send before A ends; confirm both
+  transcript ownership and independent Stop. Repeat before A has an ID and during
+  final persistence; switch back, reload, and confirm both histories. Repeat from
+  separate browser tabs and check ticket balances. Keep zkAPI's settlement gate.
+
+## Still-working elapsed clock — 2026-10-18
+
+The stalled-answer line now reads `Still working · Ns` after one second, measured from the last answer output, for single replies and Parallel lanes. Its counter is aria-hidden and the static status remains accessible. The existing runtime display registry owns the single-reply timestamp, so session restoration preserves elapsed time without changing Stop/disposal ownership. Parallel keeps the timestamp on its live lane state; no additional persistence operation or network telemetry is added. A shared DOM clock stops when no lines remain. Flat and bubble spacing follows the answer text edge. Rounded reasoning labels and the model → reasoning → answer order are preserved.
+
+Parallel restoration also reapplies active stalled lanes from the controller’s runtime registry after rendering saved messages. This covers simultaneous quiet lanes whose last persisted snapshots predate the stall. Entries are scoped per invocation, filtered by session/abort signal, and discarded on settlement. Both dynamic and restored lane lines use `role="status"`.
+## October 22, 2026 — sidebar hover cards for every title
+
+The sidebar title/activity-time hover card now appears for fully visible titles
+as well as clipped ones. The existing 500ms delay, pointer-only eligibility,
+rename/menu suppression, and dismissal on scroll, headings, gaps, or pointer
+exit are unchanged. This is a display-only change; no chat storage or account
+behavior changes.
+
+The Account footer separator is always visible using the existing border color
+token, including empty/short histories and when scrolled to the bottom. It no
+longer depends on `has-more-below`. Footer placement and spacing are unchanged.
+
+The fixed 5px white strip above that separator is removed: the main sidebar
+and history frame have no bottom padding. The history viewport now meets the
+separator directly; the Account row and history's scrolling end spacer retain
+their existing dimensions.
+## Tier-aware ticket access production candidate (2026-11-04)
+
+See [TICKET_TIER_ACCESS.md](TICKET_TIER_ACCESS.md). No picker/UI change. Fresh full-price keys on an uncovered upgrade; reuse equal/cheaper access and retained purchases, with cross-tab locking and verifier retirement. Activation requires the corresponding org/station policy rollout. This production-based candidate excludes the staging request-timing experiment.

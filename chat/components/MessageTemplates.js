@@ -6,7 +6,7 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
-import { citationIconHtml } from '../services/citationIcons.js';
+import { citationIconHtml, citationIconUrl } from '../services/citationIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
@@ -14,8 +14,11 @@ import { syncScrollFade } from '../ui/scrollFade.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
+import { isReportedModelId } from '../domain/modelSelection.js';
 import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
+import { buildStillWorkingLabel, stillWorkingSinceAttribute, startStillWorkingClock } from './stillWorkingClock.js';
 import { keptAccessStages } from '../domain/accessTrace.js';
+import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -131,7 +134,7 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
-    if (phase === 'preparing-access') return phase;
+    if (phase === 'preparing-access' || phase === 'thinking' || phase === 'reloading-tickets') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -146,8 +149,11 @@ function formatPendingTimestamp(timestamp) {
     });
 }
 
-function getPendingIndicatorLabel(phase) {
-    return normalizePendingPhase(phase) === 'waiting-response'
+export function getPendingIndicatorLabel(phase, progress = null) {
+    const normalizedPhase = normalizePendingPhase(phase);
+    if (normalizedPhase === 'thinking') return 'Thinking...';
+    if (normalizedPhase === 'reloading-tickets') return 'Reloading tickets…';
+    return normalizedPhase === 'waiting-response'
         ? 'Waiting for response'
         : 'Requesting ephemeral key';
 }
@@ -159,7 +165,7 @@ function buildPendingIndicatorContent(phase = 'requesting-key', progress = null,
         return buildDetailedPendingIndicator(presentation, { phase: normalizedPhase, traceId });
     }
     const shimmerClass = ' pending-response-streaming';
-    const label = getPendingIndicatorLabel(normalizedPhase);
+    const label = getPendingIndicatorLabel(normalizedPhase, progress);
     return `
         <div class="pending-response-line">
             <span class="pending-response-label${shimmerClass}">${escapeHtml(label)}</span>
@@ -278,7 +284,7 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
                 </svg>
-                <span class="text-xs text-muted-foreground ${isStreaming ? 'flex-1 truncate reasoning-subtitle-streaming' : ''}">${escapeHtml(subtitle)}</span>
+                <span class="text-xs text-muted-foreground ${isStreaming ? 'flex-1 truncate reasoning-subtitle-streaming' : ''}">${escapeHtmlAttribute(subtitle)}</span>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${isExpanded ? 'style="transform: rotate(180deg)"' : ''}>
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
@@ -342,6 +348,8 @@ function sanitizeUrl(url, options = {}) {
  * @param {Array} images - Array of image objects with type and image_url
  * @returns {string} HTML string for image display
  */
+let generatedImageSequence = 0;
+
 function buildGeneratedImages(images) {
     if (!images || images.length === 0) return '';
 
@@ -353,7 +361,10 @@ function buildGeneratedImages(images) {
         if (image.image_url?.url) {
             const safeUrl = sanitizeUrl(image.image_url.url, { allowData: true, allowBlob: true, allowHash: false, allowMailto: false, allowTel: false });
             if (!safeUrl) return '';
-            const imageId = `image-${Date.now()}-${index}`;
+            // Unique per render: Parallel lanes render their images in the
+            // same tick, and a shared id would expand the wrong lane's image.
+            generatedImageSequence += 1;
+            const imageId = `image-${Date.now()}-${generatedImageSequence}-${index}`;
             return `
                 <div class="relative inline-block max-w-full">
                     <img
@@ -871,7 +882,7 @@ function extractReasoningSummaries(reasoning) {
  * @returns {string} Formatted duration string
  */
 function formatReasoningDuration(durationMs) {
-    if (!durationMs) return '';
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return '';
 
     const seconds = Math.round(durationMs / 1000);
 
@@ -932,12 +943,31 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
  * @param {boolean} isStreaming - Whether reasoning is currently streaming
  * @param {function} processContent - Function to process and render reasoning content as HTML
  * @param {number} reasoningDuration - Duration in milliseconds (optional)
+ * @param {Array} accessTrace - Private-access steps to show inside the trace (optional)
+ * @param {{withheld?: boolean}} options - withheld: the provider reported thinking but kept the words
  * @returns {string} HTML string or empty string
  */
-function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration, accessTrace = null) {
+function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration, accessTrace = null, options = {}) {
+    const reasoningId = `reasoning-${messageId}`;
+    // Thinking happened, but the provider kept the words (encrypted reasoning
+    // only): the header alone, timed, with nothing to open.
+    if (!reasoning && options?.withheld) {
+        // Streaming here means the model is thinking again after part of its answer.
+        const subtitle = isStreaming ? 'Thinking...'
+            : (formatReasoningDuration(reasoningDuration) || 'Thought');
+        return `
+        <div class="reasoning-trace reasoning-trace-withheld w-full" id="${reasoningId}">
+            <div class="reasoning-toggle inline-flex items-center gap-2 px-2 py-1 text-left rounded">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                </svg>
+                <span id="reasoning-subtitle-${messageId}" class="text-xs text-muted-foreground${isStreaming ? ' reasoning-subtitle-streaming' : ''}">${escapeHtmlAttribute(subtitle)}</span>
+            </div>
+        </div>
+    `;
+    }
     if (!reasoning && !isStreaming) return '';
 
-    const reasoningId = `reasoning-${messageId}`;
     const contentId = `reasoning-content-${messageId}`;
     const toggleId = `reasoning-toggle-${messageId}`;
     const subtitleId = `reasoning-subtitle-${messageId}`;
@@ -1014,7 +1044,7 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
                 </svg>
-                <span id="${subtitleId}" class="text-xs text-muted-foreground ${spanFlexClass} ${spanAnimationClass}">${subtitle}</span>
+                <span id="${subtitleId}" class="text-xs text-muted-foreground ${spanFlexClass} ${spanAnimationClass}">${escapeHtmlAttribute(subtitle)}</span>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground reasoning-chevron transition-transform flex-shrink-0" ${chevronRotation}>
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
@@ -1188,6 +1218,7 @@ function enhanceInlineLinks(content, messageId) {
 
         // Create the enhanced link button with space before
         const linkId = `inline-link-${messageId}-${index}`;
+        const inlineIconUrl = citationIconUrl(safeUrl);
         const enhancedLink = doc.createElement('span');
         enhancedLink.className = 'inline-link-citation';
 
@@ -1198,7 +1229,8 @@ function enhanceInlineLinks(content, messageId) {
             data-link-id="${escapeHtmlAttribute(linkId)}"
             data-url="${escapeHtmlAttribute(safeUrl)}"
             data-domain="${escapeHtmlAttribute(domain)}">
-            <svg class="inline-link-icon-fallback" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            ${inlineIconUrl ? `<img class="inline-link-icon" src="${escapeHtmlAttribute(inlineIconUrl)}" alt="" aria-hidden="true" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.style.display='none';this.nextElementSibling.style.display='';">` : ''}
+            <svg class="inline-link-icon-fallback" aria-hidden="true"${inlineIconUrl ? ' style="display:none"' : ''} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
             </svg>
             <span class="inline-link-domain">${escapeHtml(domain)}</span>
@@ -1222,8 +1254,8 @@ function buildCitationsToggleButton(citations, messageId) {
 
     const toggleId = `citations-toggle-${messageId}`;
 
-    // Build local domain markers. Remote favicons would disclose response-derived
-    // domains and the browser IP before the user chooses to open a source.
+    // Stack the first four sites' icons (see citationIcons.js for what the
+    // icon service learns when these load).
     const seenDomains = new Set();
     const uniqueDomains = [];
     for (const c of citations) {
@@ -1244,8 +1276,11 @@ function buildCitationsToggleButton(citations, messageId) {
 
     return `
         <button
-            class="citations-toggle-btn inline-flex items-center gap-1.5 px-2 py-1 text-left hover:bg-muted/80 rounded transition-colors"
+            class="citations-toggle-btn t-acc inline-flex items-center gap-1.5 px-2 py-1 text-left hover:bg-muted/80 rounded transition-colors"
             id="${toggleId}"
+            data-open="false"
+            aria-expanded="false"
+            aria-controls="citations-content-${messageId}"
             data-message-id="${messageId}"
         >
             <span class="citations-toggle-favicons">${faviconsHtml}</span>
@@ -1253,9 +1288,11 @@ function buildCitationsToggleButton(citations, messageId) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 0 0 8.716-6.747M12 21a9.004 9.004 0 0 1-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 0 1 7.843 4.582M12 3a8.997 8.997 0 0 0-7.843 4.582m15.686 0A11.953 11.953 0 0 1 12 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0 1 21 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0 1 12 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 0 1 3 12c0-1.605.42-3.113 1.157-4.418" />
             </svg>
             <span class="text-xs text-muted-foreground font-medium">${citations.length} source${citations.length > 1 ? 's' : ''}</span>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground citations-chevron transition-transform flex-shrink-0">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-            </svg>
+            <span class="t-acc-chevron citations-chevron flex-shrink-0" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 16 16" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6.5L8 10.5L12 6.5" />
+                </svg>
+            </span>
         </button>
     `;
 }
@@ -1346,9 +1383,13 @@ function buildCitationsSection(citations, messageId) {
     }).join('');
 
     return `
-        <div class="citations-section w-full" id="${citationsId}">
-            <div class="citations-carousel hidden" id="citations-content-${messageId}">
-                ${citationCards}
+        <div class="citations-section t-acc w-full" id="${citationsId}" data-open="false">
+            <div class="t-acc-panel">
+                <div class="t-acc-panel-inner" inert aria-hidden="true">
+                    <div class="citations-carousel" id="citations-content-${messageId}">
+                        ${citationCards}
+                    </div>
+                </div>
             </div>
         </div>
     `;
@@ -1410,7 +1451,13 @@ function resolveCouncilProviderName(modelName, modelId = '') {
 }
 
 function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
-    if (entry?.status !== 'complete' || !entry.response) {
+    const hasImages = Array.isArray(entry?.images) && entry.images.length > 0;
+    const hasReasoning = typeof entry?.reasoning === 'string' && entry.reasoning.trim().length > 0;
+    // A finished lane with output, or a lane stopped after showing something
+    // (text, an image, or reasoning), gets copy and regenerate.
+    const settled = entry?.status === 'complete' || entry?.status === 'cancelled';
+    const failed = entry?.status === 'error';
+    if (!failed && (!settled || !(entry.response || hasImages || (entry.status === 'cancelled' && hasReasoning)))) {
         return '';
     }
 
@@ -1425,14 +1472,14 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     return `
         <div class="assistant-actions-anchor assistant-actions-row council-response-actions flex items-center justify-between gap-2 w-full -mt-1" aria-label="${escapeHtmlAttribute(`${label} actions`)}">
             <div class="flex items-center gap-1">
-                <button
+                ${entry.response?.trim() ? `<button
                     class="message-action-btn council-lane-action-btn copy-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     ${laneAttributes}
                     data-tooltip="Copy response">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
                     </svg>
-                </button>
+                </button>` : ''}
                 <button
                     class="message-action-btn council-lane-action-btn regenerate-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     ${laneAttributes}
@@ -1448,15 +1495,94 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     `;
 }
 
+// A failed lane states the error itself: the HTTP status by its standard
+// name, the code as the detail. No interpretation of what it might mean.
+const HTTP_STATUS_NAMES = Object.freeze({
+    400: 'Bad request.',
+    401: 'Unauthorized.',
+    402: 'Payment required.',
+    403: 'Forbidden.',
+    404: 'Not found.',
+    408: 'Request timeout.',
+    413: 'Request too large.',
+    429: 'Too many requests.',
+    500: 'Internal server error.',
+    502: 'Bad gateway.',
+    503: 'Service unavailable.',
+    504: 'Gateway timeout.'
+});
+
+export function describeCouncilLaneError(errorText) {
+    const raw = typeof errorText === 'string' ? errorText.trim() : '';
+    const httpMatch = raw.match(/HTTP\s+(\d{3})/i);
+    const code = httpMatch ? Number(httpMatch[1]) : null;
+    const providerMatch = raw.match(/\((PROVIDER_(?:CODE_\d{3}|STREAM_ERROR))\)$/);
+    const provider = providerMatch ? parseProviderErrorDiagnostic(providerMatch[1]) : null;
+    if (!code && provider) {
+        return {
+            message: (provider.status && HTTP_STATUS_NAMES[provider.status]) || 'The provider reported an error.',
+            detail: provider.status ? `Provider error ${provider.status}` : ''
+        };
+    }
+    // Stored errors read "Request failed. (HTTP 429, CODE)"; the lead line
+    // is the error's own text when there is no status to name.
+    const stripped = raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const message = (code && HTTP_STATUS_NAMES[code]) || stripped || 'Request failed.';
+    return {
+        message,
+        detail: code ? `Error ${code}` : ''
+    };
+}
+
+function buildCouncilLaneErrorBody(entry, messageId, options = {}) {
+    const { showRetry = false } = options;
+    const { message, detail } = describeCouncilLaneError(entry?.error);
+    // Same line as a failed single reply; retry is the lane's regenerate action.
+    return `
+        <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry?.laneId || entry?.label || 'lane')}">
+            ${buildCouncilErrorNotice({ message, detail })}
+        </div>
+        ${showRetry ? buildCouncilLaneActionRow(entry, messageId) : ''}
+    `;
+}
+
+function buildCouncilErrorNotice({ message, detail = '' }) {
+    // Keep the error's origin in the compact line: a provider code inside
+    // an HTTP 200 stream is not the HTTP response status.
+    const source = detail.replace(/^Error /, 'HTTP ').replace(/^Provider /, 'provider ');
+    return buildResponseErrorHtml(source ? `${message.replace(/\.$/, '')} (${source}).` : message);
+}
+
+function buildCouncilLaneWorkingIndicator(since) {
+    // A re-render keeps the lane's count: it runs from the stored start time.
+    const start = Number.isFinite(since) ? since : Date.now() - 1000;
+    startStillWorkingClock();
+    return `
+        <div class="council-lane-working" role="status" data-council-lane-working${stillWorkingSinceAttribute(start)}>
+            ${buildStillWorkingLabel(start)}
+        </div>
+    `;
+}
+
+// The model a lane shows: the one that answered when the stream named a
+// concrete one, else the one that was asked for. A stored "unknown" (what the
+// router puts on an error event; saved by builds before 2026-10-14) names
+// nothing and is not shown.
+function councilLaneResponseModel(entry) {
+    return isReportedModelId(entry?.responseModel) ? entry.responseModel.trim() : '';
+}
+
 function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
     const { showLaneActions = false } = options;
     const status = typeof entry?.status === 'string' ? entry.status : 'pending';
+    const laneImages = Array.isArray(entry?.images) ? entry.images : [];
     const hasRenderableOutput = !!(
         entry?.response ||
+        laneImages.length > 0 ||
         entry?.reasoning ||
         entry?.streamingReasoning
     );
-    if ((status === 'complete' || status === 'running') && hasRenderableOutput) {
+    if ((status === 'complete' || status === 'running' || status === 'cancelled') && hasRenderableOutput) {
         const citations = Array.isArray(entry.citations) ? entry.citations : [];
         const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || 'lane');
         const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
@@ -1478,7 +1604,9 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
             `${messageId}-${entry.laneId || entry.label || 'lane'}`,
             entry.streamingReasoning || false,
             processContentWithLatex,
-            entry.reasoningDuration
+            entry.reasoningDuration,
+            null,
+            { withheld: entry.reasoningWithheld === true }
         );
         const contentHtml = entry.response
             ? `
@@ -1489,29 +1617,61 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
                 </div>
             `
             : '';
+        const imagesHtml = laneImages.length > 0
+            ? `<div class="council-lane-images">${buildGeneratedImages(laneImages)}</div>`
+            : '';
+        // Text or an image can arrive before the model is finished; keep
+        // saying it is still working until the lane completes.
+        const isStillWorking = status === 'running'
+            && entry.stillWorking === true
+            && !entry.streamingReasoning;
+        // Stopped mid-answer: everything it had shown stays, with one line
+        // saying why it ends there. Retry lives in the lane actions.
+        const stoppedNote = status === 'cancelled'
+            ? '<div class="council-response-stopped" role="status">Stopped here.</div>'
+            : '';
         return `
             <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
                 ${reasoningHtml}
                 ${contentHtml}
+                ${imagesHtml}
+                ${isStillWorking ? buildCouncilLaneWorkingIndicator(entry.stillWorkingSince) : ''}
+                ${stoppedNote}
             </div>
-            ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
-            ${!showLaneActions && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${showLaneActions || status === 'cancelled' ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
+            ${!showLaneActions && status !== 'cancelled' && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
             ${citationsSection}
         `;
     }
 
     if (entry?.status === 'error') {
-        return `
-            <div class="council-response-placeholder council-response-placeholder-error">
-                ${escapeHtml(entry.error || 'This model failed to return a first opinion.')}
-            </div>
-        `;
+        return buildCouncilLaneErrorBody(entry, messageId, { showRetry: showLaneActions });
     }
 
     if (entry?.status === 'cancelled') {
+        // Stopped before it said anything: say so, and offer the lane again.
+        const laneId = entry?.laneId || '';
+        const label = entry?.label || laneId || 'response';
+        const retryButton = laneId
+            ? `
+            <button
+                type="button"
+                class="council-lane-retry-btn regenerate-council-lane-btn"
+                data-message-id="${escapeHtmlAttribute(messageId)}"
+                data-council-lane-id="${escapeHtmlAttribute(laneId)}"
+                data-council-label="${escapeHtmlAttribute(label)}"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
+                </svg>
+                <span>Try again</span>
+            </button>
+        `
+            : '';
         return `
-            <div class="council-response-placeholder">
-                Cancelled before this model finished.
+            <div class="council-response-placeholder council-response-placeholder-stopped">
+                <span>Stopped before this model answered.</span>
+                ${retryButton}
             </div>
         `;
     }
@@ -1577,7 +1737,9 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
             `${messageId}-synthesis`,
             synthesis.streamingReasoning || false,
             processContentWithLatex,
-            synthesis.reasoningDuration
+            synthesis.reasoningDuration,
+            null,
+            { withheld: synthesis.reasoningWithheld === true }
         );
         const contentHtml = synthesis.response
             ? `
@@ -1600,9 +1762,10 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
     } else if (status === 'error') {
         const fallbackLabel = synthesis.fallbackLabel || 'Response A';
         bodyHtml = `
-            <div class="council-response-placeholder council-response-placeholder-error">
-                Council synthesis failed. Continuing from ${escapeHtml(fallbackLabel)}.
-            </div>
+            ${buildCouncilErrorNotice({
+                message: `The Council review didn’t finish. Continuing from ${fallbackLabel}.`,
+                detail: describeCouncilLaneError(synthesis.error).detail
+            })}
             ${synthesisActionsRow}
         `;
     } else if (status === 'cancelled') {
@@ -1671,9 +1834,10 @@ function formatCouncilResponseStatus(status, options = {}) {
     const normalizedStatus = typeof status === 'string'
         ? status.trim().toLowerCase()
         : '';
-    const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);
+    const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting', 'error']);
+    // A failed lane explains itself in its body; a "Failed" tag beside the
+    // model name only repeats it.
     const statusLabel = {
-        error: 'Failed',
         cancelled: 'Cancelled',
         partial: 'Partial'
     }[normalizedStatus] || (normalizedStatus && !hiddenStatuses.has(normalizedStatus) ? status : '');
@@ -1768,6 +1932,27 @@ function shouldShowCouncilAssistantActions(synthesis) {
     return !COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES.has(status);
 }
 
+/**
+ * The one way a failed reply reads, wherever it fails: a plain answer-style
+ * line, "Error: …", the same as a turn that failed before any text. Retry
+ * lives in the reply's own action row (regenerate), not in a second button.
+ */
+export function buildResponseErrorHtml(text) {
+    const value = String(text || '').trim() || 'The response failed.';
+    return `
+        <div class="${CLASSES.assistantBubble} response-error" role="status">
+            <div class="min-w-0 w-full overflow-hidden prose"><p><strong>Error:</strong> ${escapeHtml(value)}</p></div>
+        </div>
+    `;
+}
+
+function buildRegenerationStatus(message) {
+    return message.regenerationNotice ? `<div class="regeneration-status" role="status">
+        <div>${message.regenerationNotice === 'stopped' ? 'Stopped. Your previous answer was kept.' : 'The replacement did not finish. Your previous answer was kept.'}</div>
+        <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+    </div>` : '';
+}
+
 function buildCouncilAssistantMessage({
     message,
     processContentWithLatex
@@ -1780,9 +1965,6 @@ function buildCouncilAssistantMessage({
         ? 'Stage 1'
         : 'Council';
     const canonicalLabel = council.canonicalStage1Label || null;
-    const stage1ErrorCount = Array.isArray(council.errors)
-        ? council.errors.filter((error) => !error?.stage || error.stage === 'stage1').length
-        : 0;
     const synthesis = council.synthesis || null;
     const showLaneActions = !hasSynthesis;
     const useSideBySide = stage1Entries.length > 1 && stage1Entries.length <= 2;
@@ -1798,7 +1980,7 @@ function buildCouncilAssistantMessage({
                             : entry.status === 'cancelled'
                                 ? 'Cancelled'
                                 : 'Pending';
-                    const shortName = extractShortModelName(entry.responseModel || entry.model || '');
+                    const shortName = extractShortModelName(councilLaneResponseModel(entry) || entry.model || '');
                     return `
                         <button
                             type="button"
@@ -1818,6 +2000,7 @@ function buildCouncilAssistantMessage({
 
     const stage1Panels = stage1Entries.map((entry) => {
         const isActive = useSideBySide || entry.label === activeLabel;
+        const laneResponseModel = councilLaneResponseModel(entry);
         return `
             <div
                 class="council-response-panel${isActive ? '' : ' hidden'}"
@@ -1825,7 +2008,7 @@ function buildCouncilAssistantMessage({
                 data-council-lane-id="${escapeHtmlAttribute(entry.laneId || '')}"
             >
                 <div class="council-response-meta">
-                    <span class="council-response-model">${buildCouncilModelLabel(entry.responseModel || entry.model || entry.modelId || '', { modelId: entry.responseModel ? '' : (entry.modelId || '') })}</span>
+                    <span class="council-response-model">${buildCouncilModelLabel(laneResponseModel || entry.model || entry.modelId || '', { modelId: laneResponseModel ? '' : (entry.modelId || '') })}</span>
                     ${buildCouncilResponseStatus(entry.status || 'pending', {
                         isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
                     })}
@@ -1858,12 +2041,12 @@ function buildCouncilAssistantMessage({
                 <div class="council-stage-block">
                     ${stageStatusRow}
                     ${stageNoteRow}
-                    ${stage1ErrorCount > 0 ? `<div class="council-stage-warning">${stage1ErrorCount} model request${stage1ErrorCount === 1 ? '' : 's'} failed.</div>` : ''}
                     ${stage1Tabs}
                     <div class="${useSideBySide ? 'council-response-grid' : 'council-response-stack'}">
                         ${stage1Panels}
                     </div>
                     ${synthesisSection}
+                    ${buildRegenerationStatus(message)}
                 </div>
             </div>
         </div>
@@ -1904,7 +2087,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         return `
             <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}" data-streaming-pending="true" data-pending-session-id="${escapeHtmlAttribute(message.sessionId || '')}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
-                    <div class="${CLASSES.assistantHeader}">
+                    <div class="${CLASSES.assistantHeader}" data-assistant-header>
                         <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                             ${iconData.html}
                         </div>
@@ -1930,7 +2113,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // The private-access steps that secured this request stay with the
     // message: inside its thinking disclosure when there is one, as their
     // own disclosure when the model showed no thinking.
-    const hasReasoningStream = Boolean((message.reasoning || '').trim()) || Boolean(message.streamingReasoning);
+    // Wordless thinking (the provider withheld the words) has no disclosure to hold the access steps.
+    const hasReasoningStream = Boolean((message.reasoning || '').trim())
+        || (Boolean(message.streamingReasoning) && message.reasoningWithheld !== true);
     // Once the response has started every stage is finished, whatever step
     // its last report was on.
     const accessStages = keptAccessStages(message.accessTrace, !message.streamingPending);
@@ -1942,7 +2127,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         message.streamingReasoning || false,
         processContentWithLatex,
         message.reasoningDuration,
-        accessStages
+        accessStages,
+        { withheld: message.reasoningWithheld === true }
     );
     const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
     const agentTraceBubble = hasAgentTrace
@@ -2020,6 +2206,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace;
     const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
+    // Painted from storage while another tab writes it (restoredResponse.js):
+    // what has arrived so far, no actions yet, and where the rest comes from.
+    const isAnsweringElsewhere = message.answeringElsewhere === true;
     // Message is complete if:
     // - Not actively streaming reasoning
     // - streamingTokens is null/undefined (finalized)
@@ -2027,7 +2216,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const isMessageComplete = !message.streamingReasoning &&
         (message.streamingTokens === null || message.streamingTokens === undefined);
     const isSessionStreaming = options.isSessionStreaming || false;
-    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming && !message.inferenceError) ? `
+    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming && !message.inferenceError && !isAnsweringElsewhere) ? `
         <span class="text-xs text-muted-foreground opacity-70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
 
@@ -2122,7 +2311,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
-    const shouldShowMemoryStatusSpacer = hideAssistantActionsDuringReasoning && !isMemoryStatusMessage;
+    const shouldShowMemoryStatusSpacer = (hideAssistantActionsDuringReasoning || isAnsweringElsewhere) && !isMemoryStatusMessage;
     const assistantActionsRow = (shouldShowMemoryStatusSpacer || isMemoryStatusMessage) ? (
         isMemoryStatusMessage
             ? ''
@@ -2171,7 +2360,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
             <div class="${CLASSES.assistantGroup}">
                 ${isMemoryAgent ? `
-                <div class="${CLASSES.assistantHeader}">
+                <div class="${CLASSES.assistantHeader}" data-assistant-header>
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow bg-muted">
                         ${memoryAgentIcon}
                     </div>
@@ -2179,7 +2368,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                 </div>
                 ` : `
-                <div class="${CLASSES.assistantHeader}">
+                <div class="${CLASSES.assistantHeader}" data-assistant-header>
                     <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                         ${iconData.html}
                     </div>
@@ -2193,10 +2382,11 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
-                ${message.inferenceError ? `<div class="inference-failure-warning" role="status">
-                    <div>${escapeHtml(message.inferenceError)}</div>
-                    <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+                ${message.inferenceError ? buildResponseErrorHtml(message.inferenceError) : ''}
+                ${isAnsweringElsewhere ? `<div class="px-2 py-1 answering-elsewhere" role="status" aria-live="polite">
+                    <div class="pending-response-line"><span class="pending-response-label pending-response-streaming">Answering in another tab</span></div>
                 </div>` : ''}
+                ${buildRegenerationStatus(message)}
                 ${memoryApprovalActions}
                 ${assistantActionsRow}
                 ${citationsBubble}
@@ -2231,7 +2421,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
     return `
         <div id="${id}" class="typing-indicator ${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}"${sessionId ? ` data-pending-session-id="${escapeHtmlAttribute(sessionId)}"` : ''}>
             <div class="${CLASSES.assistantGroup}">
-                <div class="${CLASSES.assistantHeader}">
+                <div class="${CLASSES.assistantHeader}" data-assistant-header>
                     <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
                         ${iconData.html}
                     </div>

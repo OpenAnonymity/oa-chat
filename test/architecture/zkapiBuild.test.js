@@ -33,6 +33,28 @@ test('zkAPI network selection is explicit and rejects ambiguous build settings',
     }
 });
 
+test('private-payment builds retain their verifier pin with and without a registry deployment', async () => {
+    const { planFromRegistry, readZkapiBuildConfig, resolveZkapiVerifierOrigin } = await sourceBuildHelpers();
+    assert.equal(resolveZkapiVerifierOrigin({ network: '' }), '');
+    for (const network of ['mainnet', 'sepolia']) {
+        for (const deployment of ['', 'fresh-20260930']) {
+            const plan = planFromRegistry({ network, deployment });
+            const expected = readZkapiBuildConfig({ network, deployment }).trusted_deployment.verifier_url;
+            assert.equal(resolveZkapiVerifierOrigin({ network, plan }), expected);
+            assert.ok(expected.startsWith('https://'));
+        }
+    }
+    const plan = { mode: 'registry', versions: [
+        { config: { trusted_deployment: { verifier_url: 'https://one.test' } } },
+        { config: { trusted_deployment: { verifier_url: 'https://two.test' } } }
+    ] };
+    assert.throws(() => resolveZkapiVerifierOrigin({ network: 'mainnet', plan }), /different verifier/);
+    plan.versions[1].config.trusted_deployment.verifier_url = '';
+    assert.throws(() => resolveZkapiVerifierOrigin({ network: 'mainnet', plan }), /pin is required/);
+    plan.versions[1].config.trusted_deployment.verifier_url = 'https://one.test/path';
+    assert.throws(() => resolveZkapiVerifierOrigin({ network: 'mainnet', plan }), /exact HTTPS origin/);
+});
+
 test('fresh deployment selection is explicit, named and requires a network', () => {
     assert.equal(resolveZkapiDeployment({}), '');
     for (const deployment of deployments) for (const network of ['mainnet', 'sepolia']) {
@@ -82,11 +104,15 @@ test('Vercel source uploads include only reviewed public deployment pin files', 
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     await fs.copyFile('.vercelignore', path.join(directory, '.vercelignore'));
     execFileSync('git', ['init', '-q', directory]);
+    // Derive the required patch files from the patcher's actual imports so a
+    // newly chained patch cannot be omitted from a remote source upload.
+    const patcher = await fs.readFile('scripts/patch-zkapi-sdk.mjs', 'utf8');
+    const patchFiles = [...patcher.matchAll(/from '\.\.\/(patches\/[^']+)'/g)].map(match => match[1]);
+    assert.deepEqual(patchFiles.sort(), ['patches/zkapi-browser-sdk-proof-cache.mjs',
+        'patches/zkapi-browser-sdk-provider-verification.mjs', 'patches/zkapi-browser-sdk-server-time.mjs',
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs']);
     const included = [...['mainnet', 'sepolia'].map(network =>
-        `deployments/zkapi/${network}.json`),
-        // The version registry is the one logic-bearing deployment file.
-        'deployments/zkapi/registry.json',
-        'patches/zkapi-browser-sdk-wallet-recovery.mjs'];
+        `deployments/zkapi/${network}.json`), 'deployments/zkapi/registry.json', ...patchFiles];
     const excluded = ['deployments/private/key.json', 'deployments/zkapi/other/mainnet.json',
         ...['secret.json', 'nested/secret.json', 'nested/registry.json', 'registry.json.bak', '.env', '.git/config']
             .map(file => `deployments/zkapi/${file}`), 'patches/private-test.json'];
@@ -141,6 +167,11 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.equal(config.trusted_deployment.protocol_server_url,
             `https://zkapi-${network}.openanonymity.ai`);
         assert.equal(result.deployment, deployment);
+        if (deployment === 'fresh-20260930' && network === 'mainnet') {
+            assert.equal(config.deployment_manifest_url, 'https://zkapi-mainnet.openanonymity.ai/config.json');
+            assert.equal(config.trusted_deployment.contract_address, '0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe');
+            assert.equal(config.trusted_deployment.protocol_server_url, 'https://zkapi-mainnet.openanonymity.ai');
+        }
         assert.deepEqual(result.manifest, manifest);
         assert.equal(manifest.deployment, deployment);
         for (const [relative, hash] of Object.entries(manifest.files)) {
@@ -161,10 +192,49 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.deepEqual(provenance.sdk.assets, manifest);
         assert.equal(provenance.sdk.patches[0].name, 'wallet-recovery-v1');
         assert.equal(provenance.sdk.patches[0].revision, provenance.sdk.revision);
-        for (const [relative, hash] of Object.entries(provenance.sdk.patches[0].files)) {
+        const patchedFiles = Object.assign({}, ...provenance.sdk.patches.map(patch => patch.files));
+        for (const [relative, hash] of Object.entries(patchedFiles)) {
             assert.equal(digest(await fs.readFile(path.join(root, 'node_modules/@openanonymity/zkapi-browser-sdk', relative))), hash);
         }
         assert.equal(provenance.files['zkapi/sdk-assets.json'], digest(await fs.readFile(path.join(result.directory, 'sdk-assets.json'))));
+    }
+});
+
+test('SDK manifest trust accepts reviewed production verifier pins and rejects stale or substituted verifiers', async () => {
+    const { root, readZkapiBuildConfig } = await sourceBuildHelpers();
+    const runtimePath = createRequire(path.join(root, 'package.json'))
+        .resolve('@openanonymity/zkapi-browser-sdk/runtime');
+    const { BrowserWalletRuntime } = await import(pathToFileURL(runtimePath).href);
+    const productionVerifier = 'https://verifier-production-20260917.openanonymity.ai';
+    const stagingVerifier = 'https://verifier2.openanonymity.ai';
+    for (const network of ['mainnet', 'sepolia']) {
+        const runtime = new BrowserWalletRuntime();
+        runtime.browserConfig = readZkapiBuildConfig({ network, deployment: 'fresh-20260930' });
+        const pins = runtime.browserConfig.trusted_deployment;
+        const verifier = network === 'mainnet' ? productionVerifier : stagingVerifier;
+        const manifest = {
+            ...structuredClone(pins),
+            proof_setup: {
+                circuit_id: pins.circuit_id,
+                request_proving_key_sha256: pins.request_proving_key_sha256,
+                withdrawal_proving_key_sha256: pins.withdrawal_proving_key_sha256
+            },
+            privacy_mode: { openrouter_inference_base: pins.openrouter_inference_base, verifier_url: verifier }
+        };
+        assert.equal(pins.verifier_url, verifier);
+        assert.equal(runtime.browserConfig.require_oa_key_source, true);
+        assert.doesNotThrow(() => runtime.validateManifestTrust(manifest));
+        for (const changedVerifier of [network === 'mainnet' ? stagingVerifier : productionVerifier,
+            'https://untrusted.example']) {
+            const changed = structuredClone(manifest);
+            changed.privacy_mode.verifier_url = changedVerifier;
+            assert.throws(() => runtime.validateManifestTrust(changed), /pinned OA verifier/);
+        }
+        if (network === 'mainnet') {
+            pins.verifier_url = stagingVerifier;
+            assert.throws(() => runtime.validateManifestTrust(manifest), /pinned OA verifier/,
+                'reproduce the pre-update frontend rejection of the production manifest');
+        }
     }
 });
 

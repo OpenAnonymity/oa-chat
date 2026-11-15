@@ -79,3 +79,20 @@ test('live toasts respond to viewport events and detach listeners on dismissal',
     view.dispatchEvent(new Event('resize'));
     assert.equal(f.toast.style.top, '344px');
 });
+
+test('toasts centre on the chat column, not the window, when side panels are open', t => {
+    const f = fixture(t, { centered: true, position: 'top-center' });
+    // Sidebar on the left, tickets panel on the right: the composer runs 300..1100.
+    f.rect = { top: 400, bottom: 500, left: 300, width: 800 };
+    f.update();
+    assert.equal(f.toast.style.left, '700px');
+    assert.equal(f.toast.style.maxWidth, 'min(calc(100vw - 32px), 768px)');
+    f.toast.dataset.position = 'composer';
+    f.rect = { top: 400, bottom: 500, left: 250, width: 600 };
+    f.update();
+    assert.equal(f.toast.style.left, '550px');
+    // No measurable composer: back to the stylesheet's window centre.
+    f.rect = { top: 400, bottom: 500 };
+    f.update();
+    assert.equal(f.toast.style.left, '');
+});

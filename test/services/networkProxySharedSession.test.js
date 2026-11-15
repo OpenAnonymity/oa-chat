@@ -107,3 +107,78 @@ test('an aborted relayed request does not mark the relay as failed', async () =>
         restore();
     }
 });
+
+
+test('refused disable cannot persist a disabled setting during an active relay request', async () => {
+    const { networkProxy, restore } = await loadProxy();
+    const original = { ...networkProxy.state.settings, enabled: true };
+    const save = networkProxy.saveSettings;
+    let persisted = 0;
+    networkProxy.state.settings = original;
+    networkProxy.activeRequestCount = 1;
+    networkProxy.saveSettings = async () => { persisted++; };
+    try {
+        await assert.rejects(networkProxy.updateSettings({ enabled: false }), /requests are in progress/);
+        assert.equal(networkProxy.getSettings().enabled, true);
+        assert.equal(persisted, 0);
+    } finally {
+        networkProxy.activeRequestCount = 0;
+        networkProxy.saveSettings = save;
+        restore();
+    }
+});
+
+for (const supportsCancel of [true, false]) for (const ending of ['complete', 'error', 'cancel']) {
+    test(`stream ${ending} releases one request (transformer.cancel supported: ${supportsCancel})`, async () => {
+        const { networkProxy, restore } = await loadProxy();
+        const NativeTransformStream = globalThis.TransformStream;
+        // Chrome in the live run ignores the newer hook; Node 24 implements it.
+        if (!supportsCancel) globalThis.TransformStream = class extends NativeTransformStream {
+            constructor({ cancel, ...transformer }, ...strategies) { super(transformer, ...strategies); }
+        };
+        let source, cancelled = false;
+        const body = new ReadableStream({ start(c) { source = c; }, cancel() { cancelled = true; } });
+        networkProxy.activeRequestCount = 2;
+        const tracked = networkProxy.wrapResponseForTracking(new Response(body));
+        const reader = tracked.body.getReader();
+        try {
+            if (ending === 'complete') { source.close(); await reader.read(); }
+            if (ending === 'error') {
+                source.error(new Error('synthetic upstream failure'));
+                await assert.rejects(reader.read(), /synthetic upstream failure/);
+            }
+            if (ending === 'cancel') await reader.cancel();
+            await new Promise(resolve => setImmediate(resolve));
+            if (ending === 'cancel') assert.equal(cancelled, true);
+            assert.equal(networkProxy.activeRequestCount, 1);
+            await reader.cancel().catch(() => {});
+            await new Promise(resolve => setImmediate(resolve));
+            assert.equal(networkProxy.activeRequestCount, 1, 'no second release');
+        } finally {
+            globalThis.TransformStream = NativeTransformStream;
+            networkProxy.activeRequestCount = 0;
+            restore();
+        }
+    });
+}
+
+test('supported cancellation releases tracking before slow source cleanup completes', async () => {
+    const { networkProxy, restore } = await loadProxy();
+    let finishCleanup;
+    const cleanup = new Promise(resolve => { finishCleanup = resolve; });
+    networkProxy.activeRequestCount = 2;
+    const body = new ReadableStream({ cancel: () => cleanup });
+    const tracked = networkProxy.wrapResponseForTracking(new Response(body));
+    try {
+        await tracked.body.cancel();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(networkProxy.activeRequestCount, 1);
+        finishCleanup();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(networkProxy.activeRequestCount, 1, 'late pipe settlement cannot release twice');
+    } finally {
+        finishCleanup();
+        networkProxy.activeRequestCount = 0;
+        restore();
+    }
+});
