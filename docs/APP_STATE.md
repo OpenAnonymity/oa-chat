@@ -5989,6 +5989,12 @@ shell, not only isolated RightPanel previews, when changing header controls.
 
 # App State and Handoff
 
+## 2026-11-17 — Longer ticket expiry notice (local, not deployed)
+
+The confirmed ticket-invalidation toast now lasts 12 seconds instead of five.
+Its positive-removal guard and copy are unchanged. This remains discovery-driven,
+not a scheduled advance reminder or a change to expiry or automatic billing.
+
 - 2026-10-12: Added opt-in, build-time Sentry browser error reporting. The SDK
   sends only fixed error categories and generated code locations; private scope,
   error text, request data, breadcrumbs and attachments are discarded. See

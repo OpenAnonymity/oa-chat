@@ -19,7 +19,7 @@ function fixture() {
 test('confirmed invalidation explains monthly expiry and where to get more tickets', () => {
     const { listener, notices } = fixture();
     listener({ detail: { removedCount: 23 } });
-    assert.deepEqual(notices, [['Your unused tickets have expired. Tickets expire at the end of each month. Open Account to get more tickets.', 'info', 5000]]);
+    assert.deepEqual(notices, [['Your unused tickets have expired. Tickets expire at the end of each month. Open Account to get more tickets.', 'info', 12000]]);
 });
 
 test('empty, duplicate zero-removal and malformed invalidations remain silent', () => {
