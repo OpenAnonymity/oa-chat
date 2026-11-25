@@ -1,3 +1,9 @@
+## 2026-11-25 — Nova Micro titles (staging candidate)
+
+Staging title generation uses `amazon/nova-micro-v1` for ticket and zkAPI chats.
+Both use the shared title request with the original 24-token cap and no reasoning parameter. With ZDR on, the live eligible-provider list governs the
+request. A missing route keeps the local first-message title.
+
 ## 2026-11-11 — Retry/Resend follows the selected model (candidate)
 
 Single-model Retry and Resend capture `session.model` at click time and pass

@@ -42,7 +42,7 @@ import { hasWithheldReasoning, reasoningTextFromDetails } from './services/reaso
 import { paragraphBreakBefore } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
-const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
+const TITLE_SUMMARY_MODEL_ID = 'amazon/nova-micro-v1';
 const TITLE_SUMMARY_MAX_INPUT_CHARS = 4000;
 
 // Wire shape for one chat-completion message. Assistant tool calls and
@@ -638,7 +638,7 @@ export class OpenRouterAPI {
             ],
             temperature: 0.2,
             max_tokens: 24,
-            reasoning: { effort: 'minimal' }
+            ...(titleModelId === TITLE_SUMMARY_MODEL_ID ? {} : { reasoning: { effort: 'minimal' } })
         };
 
         try {

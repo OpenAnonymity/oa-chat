@@ -250,7 +250,7 @@ describe('request layer', () => {
         return {
             calls,
             fetchWithRetryJson: async (url, init) => {
-                calls.push({ url, body: JSON.parse(init.body) });
+                calls.push({ url, headers: init.headers, body: JSON.parse(init.body) });
                 return { response: { ok: true, status: 200 }, data: { choices: [{ message: { content: 'Title' } }] } };
             }
         };
@@ -465,6 +465,27 @@ describe('request layer', () => {
             ZdrUnavailableError);
         assert.equal(transport.calls.length, 0);
         assert.equal(acquired, 0, 'refuse before paid request access');
+    });
+
+    test('default title uses the existing key and only eligible Nova Micro endpoints', async () => {
+        const model = 'amazon/nova-micro-v1';
+        zeroDataRetention.configure({ fetchJson: async () => ({ data: [
+            { model_id: model, tag: 'amazon-bedrock', safety_retention: false },
+            { model_id: model, tag: 'other', safety_retention: true }
+        ] }) });
+        await zeroDataRetention.ensureCatalog({ force: true });
+        await zeroDataRetention.setEnabled(true);
+        const transport = recordingTransport();
+        const api = new OpenRouterAPI({ networkTransport: transport });
+        assert.equal(await api.generateSessionTitle('Why do wages rise with productivity?', 'chat-key'), 'Title');
+        assert.equal(transport.calls.length, 1);
+        const { body, headers } = transport.calls[0];
+        assert.equal(headers.Authorization, 'Bearer chat-key');
+        assert.equal(body.model, model);
+        assert.deepEqual(body.provider, { zdr: true, data_collection: 'deny', only: ['amazon-bedrock'] });
+        assert.equal('reasoning' in body, false);
+        assert.equal(body.max_tokens, 24);
+        assert.equal(body.temperature, 0.2);
     });
 
     test('title generation is skipped, without acquiring access, when its model has no ZDR provider', async () => {

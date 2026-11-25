@@ -12,7 +12,6 @@ import {
     estimateTextTokens
 } from './services/modelPricing.mjs';
 
-const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 // The only provider-visible request headers. Every protocol version's SDK
 // builds its own set and they differ (`x-title` is `oa-chat` in one and `zkAPI`
 // in another), which would let the inference provider split users by version.
@@ -147,13 +146,6 @@ export class ZkapiAPI extends OpenRouterAPI {
         return this.getCachedModels().find(model => model.id === modelId)
             || super.getModelBudgetMetadata(modelId)
             || BUNDLED_MODEL_CATALOG[baseModelId(modelId)] || null;
-    }
-
-    generateSessionTitle(prompt, sessionId, options = {}) {
-        return super.generateSessionTitle(prompt, sessionId, {
-            ...options,
-            modelId: options.modelId || TITLE_SUMMARY_MODEL_ID
-        });
     }
 
     // Payment failures must surface; never substitute OA's offline demo response.
